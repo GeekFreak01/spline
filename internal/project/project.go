@@ -73,12 +73,20 @@ type Info struct {
 	CapHeight  int    `json:"capHeight"`
 }
 
+// Guide is a ruler guide shared by all glyphs: a horizontal line at
+// y = Pos (Axis "y") or a vertical line at x = Pos (Axis "x").
+type Guide struct {
+	Axis string  `json:"axis"`
+	Pos  float64 `json:"pos"`
+}
+
 // Project is the root object of a .sp file.
 type Project struct {
 	Format  string  `json:"format"`
 	Version int     `json:"version"`
 	Info    Info    `json:"info"`
 	Glyphs  []Glyph `json:"glyphs"`
+	Guides  []Guide `json:"guides,omitempty"`
 }
 
 // Parse decodes and validates a .sp document.
@@ -129,6 +137,11 @@ func (p *Project) Validate() error {
 		in.CapHeight = 700
 	}
 
+	for _, g := range p.Guides {
+		if (g.Axis != "x" && g.Axis != "y") || !okCoord(g.Pos) {
+			return errors.New("invalid guide")
+		}
+	}
 	if len(p.Glyphs) > maxGlyphs {
 		return fmt.Errorf("too many glyphs (%d, max %d)", len(p.Glyphs), maxGlyphs)
 	}

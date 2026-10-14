@@ -206,6 +206,10 @@ function menuDefs() {
       { label: 'zoomOut', key: '−', run: () => editor.zoomBy(0.8), enabled: inEditor },
       { label: 'zoomFit', key: '0', run: () => editor.fit(), enabled: inEditor },
       '-',
+      { label: 'rulers', key: `${MOD}R`, check: editor.showRulers, run: () => toggleView('showRulers') },
+      { label: 'userGuides', key: `${MOD};`, check: editor.showUserGuides, run: () => toggleView('showUserGuides') },
+      { label: 'clearGuides', run: clearGuides, enabled: (app.project?.guides?.length || 0) > 0 },
+      '-',
       { label: 'showGuide', check: editor.showGuide, run: () => toggleView('showGuide') },
       { label: 'showGrid', check: editor.showGrid, run: () => toggleView('showGrid') },
       { label: 'snapGrid', key: 'F9', check: editor.snapGrid, run: () => toggleView('snapGrid') },
@@ -927,6 +931,8 @@ editor.showGuide = store.get('spline.showGuide', '1') === '1';
 editor.showGrid = store.get('spline.showGrid', '1') === '1';
 editor.brushRadius = Number(store.get('spline.brush', '40')) || 40;
 editor.tool = store.get('spline.tool', 'brush');
+editor.showRulers = store.get('spline.showRulers', '0') === '1';
+editor.showUserGuides = store.get('spline.showUserGuides', '1') === '1';
 editor.gridStep = Math.max(1, Number(store.get('spline.gridStep', '50')) || 50);
 editor.snapGrid = store.get('spline.snapGrid', '0') === '1';
 editor.snapGuides = store.get('spline.snapGuides', '1') === '1';
@@ -978,6 +984,30 @@ function startTransform() {
 }
 
 app.onKnifeMiss = () => toast(t('knifeMiss'), 'error');
+
+// Ruler guides belong to the whole font and are saved in the .sp file.
+app.onGuidesChanged = () => { markChanged(); renderMenus(); };
+app.onGuideEdit = async (g) => {
+  const data = await showDialog({
+    title: t('guidePosition'),
+    body: `<label class="field">${esc(g.axis === 'y' ? t('guideHorizontal') : t('guideVertical'))}
+      <input type="number" name="pos" value="${g.pos}" step="1" required></label>
+      <label class="check"><input type="checkbox" name="remove">${esc(t('removeGuide'))}</label>`,
+  });
+  if (!data) return;
+  const list = app.project.guides;
+  if (data.get('remove')) list.splice(list.indexOf(g), 1);
+  else g.pos = Math.round(Number(data.get('pos')));
+  app.onGuidesChanged();
+  editor.render();
+};
+
+async function clearGuides() {
+  if (!app.project.guides?.length || !(await confirmDialog(t('confirmClearGuides'), t('clearGuides')))) return;
+  app.project.guides = [];
+  app.onGuidesChanged();
+  editor.render();
+}
 
 function renderEditorOptions() {
   const g = app.current;
@@ -1423,6 +1453,8 @@ document.addEventListener('keydown', (e) => {
   if (mod && key === 'z') { e.preventDefault(); undo(); return; }
   if (mod && key === 'a') { e.preventDefault(); selectAll(); return; }
   if (mod && key === 't' && app.mode === 'editor') { e.preventDefault(); startTransform(); return; }
+  if (mod && key === 'r' && !e.shiftKey) { e.preventDefault(); toggleView('showRulers'); return; }
+  if (mod && (e.code === 'Semicolon' || key === ';')) { e.preventDefault(); toggleView('showUserGuides'); return; }
   if (app.mode !== 'editor') {
     if ((e.key === 'Delete' || e.key === 'Backspace') && app.selected.size && e.target.closest?.('#glyphGrid')) {
       e.preventDefault();

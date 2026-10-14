@@ -24,6 +24,7 @@ function snap45(o, p) {
   return { x: o.x + Math.cos(a) * proj, y: o.y + Math.sin(a) * proj };
 }
 
+const RULER = 20; // ruler thickness, px
 const ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-linecap="round"><g stroke="black" stroke-width="4"><path d="M20 12a8 8 0 1 1-2.6-5.9L20 8.5"/><path d="M20 3.5v5h-5"/></g><g stroke="white" stroke-width="2"><path d="M20 12a8 8 0 1 1-2.6-5.9L20 8.5"/><path d="M20 3.5v5h-5"/></g></svg>')}") 12 12, crosshair`;
 
 function pointInQuad(p, q) {
@@ -50,6 +51,8 @@ export class Editor {
     this.stabilizer = 4;     // 0..10, smooths brush input
     this.snapMark = null;    // last snapped point, drawn as a marker
     this.xform = null;       // free transform (Ctrl+T) state
+    this.showRulers = false; // Ctrl+R
+    this.showUserGuides = true;
     this.view = { scale: 0.5, ox: 0, oy: 0 };
     this.sel = new Set(); // "contourIndex:nodeIndex"
     this.drag = null;
@@ -232,8 +235,9 @@ export class Editor {
         for (const c of list) if (Math.abs(v - c) <= tol && (best === null || Math.abs(v - c) < Math.abs(v - best))) best = c;
         return best;
       };
-      const gy = near(y, [info.ascender, info.capHeight, info.xHeight, 0, info.descender]);
-      const gx = near(x, [0, this.glyph.advance]);
+      const ug = this.showUserGuides ? this.guides() : [];
+      const gy = near(y, [info.ascender, info.capHeight, info.xHeight, 0, info.descender, ...ug.filter((g) => g.axis === 'y').map((g) => g.pos)]);
+      const gx = near(x, [0, this.glyph.advance, ...ug.filter((g) => g.axis === 'x').map((g) => g.pos)]);
       if (gy !== null) { y = gy; hy = true; }
       if (gx !== null) { x = gx; hx = true; }
     }
@@ -254,7 +258,16 @@ export class Editor {
     const p = this.toFont(sx, sy);
     const tool = e.button === 1 ? 'hand' : this.activeTool();
 
-    if (this.xform && tool !== 'hand') {
+    const zone = this.rulerZone(sx, sy);
+    const guide = !zone && !this.xform && (tool === 'select' || e.ctrlKey || e.metaKey) ? this.guideAt(sx, sy) : null;
+    if (zone && e.button === 0) {
+      // Pull a new guide out of a ruler: the top one gives a horizontal
+      // guide, the left one a vertical guide.
+      const g = { axis: zone === 'top' ? 'y' : 'x', pos: zone === 'top' ? p.y : p.x };
+      this.drag = { kind: 'guide', guide: g, isNew: true };
+    } else if (guide && e.button === 0) {
+      this.drag = { kind: 'guide', guide };
+    } else if (this.xform && tool !== 'hand') {
       this.downTransform(e, sx, sy, p);
     } else if (tool === 'hand') {
       this.drag = { kind: 'pan', sx, sy, ox: this.view.ox, oy: this.view.oy };
@@ -379,6 +392,14 @@ export class Editor {
       case 'knife':
         d.end = e.shiftKey ? snap45(d.start, p) : this.snap(p);
         break;
+      case 'guide': {
+        let v = d.guide.axis === 'y' ? p.y : p.x;
+        if (this.snapGrid) v = Math.round(v / this.gridStep) * this.gridStep;
+        d.guide.pos = Math.round(v);
+        d.overRuler = !!this.rulerZone(sx, sy) || sx < 0 || sy < 0;
+        if (d.isNew && !d.added && !d.overRuler) { this.guides().push(d.guide); d.added = true; }
+        break;
+      }
       case 'xmove': case 'xscale': case 'xrotate':
         this.moveTransform(d, e, p);
         break;
@@ -483,6 +504,13 @@ export class Editor {
       case 'knife':
         this.knife(d.start, d.end);
         break;
+      case 'guide': {
+        const list = this.guides();
+        // Dropping a guide back on a ruler removes it.
+        if (d.overRuler) { const i = list.indexOf(d.guide); if (i >= 0) list.splice(i, 1); }
+        if (d.added || !d.isNew) this.app.onGuidesChanged?.();
+        break;
+      }
       case 'xmove': case 'xscale': case 'xrotate':
         this.app.onTransformChange?.();
         break;
@@ -586,6 +614,111 @@ export class Editor {
     this.glyph.contours = [...this.glyph.contours.filter((c) => !gone.has(c)), ...merged];
     this.sel.clear();
     this.afterEdit();
+  }
+
+  // ---------------------------------------------------------------- rulers & guides
+
+  guides() {
+    const p = this.app.project;
+    if (!Array.isArray(p.guides)) p.guides = [];
+    return p.guides;
+  }
+
+  rulerZone(sx, sy) {
+    if (!this.showRulers) return null;
+    if (sx < RULER && sy < RULER) return 'corner';
+    if (sy < RULER) return 'top';
+    if (sx < RULER) return 'left';
+    return null;
+  }
+
+  guideAt(sx, sy) {
+    if (!this.showUserGuides) return null;
+    let best = null, bestD = 5;
+    for (const g of this.guides()) {
+      const d = g.axis === 'y' ? Math.abs(this.toScreen({ x: 0, y: g.pos }).y - sy) : Math.abs(this.toScreen({ x: g.pos, y: 0 }).x - sx);
+      if (d <= bestD) { best = g; bestD = d; }
+    }
+    return best;
+  }
+
+  drawUserGuides(colors) {
+    const ctx = this.ctx;
+    const list = this.showUserGuides ? this.guides() : [];
+    const dragging = this.drag?.kind === 'guide' ? this.drag.guide : null;
+    ctx.lineWidth = 1;
+    for (const g of [...list, ...(dragging && !list.includes(dragging) ? [dragging] : [])]) {
+      ctx.strokeStyle = g === dragging && this.drag.overRuler ? colors.text : colors.userGuide;
+      ctx.beginPath();
+      if (g.axis === 'y') {
+        const y = Math.round(this.toScreen({ x: 0, y: g.pos }).y) + 0.5;
+        ctx.moveTo(0, y); ctx.lineTo(this.w, y);
+      } else {
+        const x = Math.round(this.toScreen({ x: g.pos, y: 0 }).x) + 0.5;
+        ctx.moveTo(x, 0); ctx.lineTo(x, this.h);
+      }
+      ctx.stroke();
+    }
+    if (dragging && !this.drag.overRuler) {
+      const s = this.toScreen({ x: dragging.pos, y: dragging.pos });
+      const at = dragging.axis === 'y' ? { x: RULER + 8, y: s.y + 6 } : { x: s.x + 6, y: RULER + 8 };
+      this.label(`${dragging.axis === 'y' ? 'Y' : 'X'} ${dragging.pos}`, at.x, at.y, colors);
+    }
+  }
+
+  // Photoshop-like rulers in font units along the top and left edges.
+  drawRulers(colors) {
+    const ctx = this.ctx;
+    const scale = this.view.scale;
+    // Label every `major` units, with at least ~60 px between labels.
+    const steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
+    const major = steps.find((s) => s * scale >= 60) || 10000;
+    const minor = major / ([25, 250, 2500].includes(major) ? 5 : 10);
+    ctx.fillStyle = colors.rulerBg;
+    ctx.fillRect(0, 0, this.w, RULER);
+    ctx.fillRect(0, 0, RULER, this.h);
+    ctx.strokeStyle = colors.rulerLine;
+    ctx.fillStyle = colors.rulerText;
+    ctx.lineWidth = 1;
+    ctx.font = `10px ${css('--font-ui')}`;
+    ctx.textBaseline = 'top';
+    ctx.beginPath();
+    const a = this.toFont(RULER, this.h), b = this.toFont(this.w, RULER);
+    for (let v = Math.floor(a.x / minor) * minor; v <= b.x; v += minor) {
+      const x = Math.round(this.toScreen({ x: v, y: 0 }).x) + 0.5;
+      if (x < RULER) continue;
+      const isMajor = Math.abs(v / major - Math.round(v / major)) < 1e-6;
+      ctx.moveTo(x, RULER); ctx.lineTo(x, isMajor ? 2 : RULER - 5);
+      if (isMajor) ctx.fillText(String(Math.round(v)), x + 3, 2);
+    }
+    for (let v = Math.floor(a.y / minor) * minor; v <= b.y; v += minor) {
+      const y = Math.round(this.toScreen({ x: 0, y: v }).y) + 0.5;
+      if (y < RULER) continue;
+      const isMajor = Math.abs(v / major - Math.round(v / major)) < 1e-6;
+      ctx.moveTo(RULER, y); ctx.lineTo(isMajor ? 2 : RULER - 5, y);
+      if (isMajor) {
+        ctx.save();
+        ctx.translate(2, y - 3);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(String(Math.round(v)), 0, 0);
+        ctx.restore();
+      }
+    }
+    // Borders and the pointer position.
+    ctx.moveTo(0, RULER + 0.5); ctx.lineTo(this.w, RULER + 0.5);
+    ctx.moveTo(RULER + 0.5, 0); ctx.lineTo(RULER + 0.5, this.h);
+    ctx.stroke();
+    if (this.hover) {
+      const s = this.toScreen(this.hover);
+      ctx.strokeStyle = colors.primary;
+      ctx.beginPath();
+      ctx.moveTo(Math.round(s.x) + 0.5, 0); ctx.lineTo(Math.round(s.x) + 0.5, RULER);
+      ctx.moveTo(0, Math.round(s.y) + 0.5); ctx.lineTo(RULER, Math.round(s.y) + 0.5);
+      ctx.stroke();
+    }
+    ctx.fillStyle = colors.rulerBg;
+    ctx.fillRect(0, 0, RULER, RULER);
+    ctx.textBaseline = 'alphabetic';
   }
 
   // Knife: cuts the contours crossed by the segment a→b into pieces.
@@ -895,6 +1028,11 @@ export class Editor {
 
   onDblClick(e) {
     if (this.xform) { this.commitTransform(); return; }
+    {
+      const { sx, sy } = this.eventPos(e);
+      const g = this.rulerZone(sx, sy) ? null : this.guideAt(sx, sy);
+      if (g) { this.app.onGuideEdit?.(g); return; }
+    }
     if (!this.glyph || this.tool !== 'select') return;
     const { sx, sy } = this.eventPos(e);
     const n = this.nodeAt(sx, sy);
@@ -942,6 +1080,12 @@ export class Editor {
   }
 
   updateCursor(sx, sy) {
+    const zone = this.rulerZone(sx, sy);
+    if (zone) { this.canvas.style.cursor = zone === 'top' ? 'row-resize' : 'col-resize'; return; }
+    if (this.activeTool() === 'select' && !this.xform) {
+      const g = this.guideAt(sx, sy);
+      if (g && !this.nodeAt(sx, sy) && !this.handleAt(sx, sy)) { this.canvas.style.cursor = g.axis === 'y' ? 'row-resize' : 'col-resize'; return; }
+    }
     const tool = this.activeTool();
     let cur = 'crosshair';
     if (this.xform && tool !== 'hand') {
@@ -1092,6 +1236,7 @@ export class Editor {
       ink: css('--canvas-ink'), primary: css('--accent'), accent: css('--dot-orange'),
       guide: css('--canvas-guide'), handle: css('--canvas-handle'), bg: css('--canvas-bg'),
       grid: css('--canvas-grid'), gridMajor: css('--canvas-grid-major'), nodeFill: css('--canvas-node-fill'),
+      userGuide: css('--canvas-user-guide'), rulerBg: css('--ruler-bg'), rulerLine: css('--ruler-line'), rulerText: css('--ruler-text'),
     };
     const info = this.app.project.info;
     const S = (p) => this.toScreen(p);
@@ -1193,6 +1338,7 @@ export class Editor {
       this.drawPoints(colors);
     }
 
+    this.drawUserGuides(colors);
     this.drawOverlay(colors);
 
     // Snap marker: a small cross where the point is held.
@@ -1211,6 +1357,7 @@ export class Editor {
       const m = S(this.snapMark);
       this.label(`${Math.round(this.snapMark.x)}, ${Math.round(this.snapMark.y)}`, m.x + 10, m.y + 10, colors);
     }
+    if (this.showRulers) this.drawRulers(colors);
     this.app.onDraw?.();
   }
 

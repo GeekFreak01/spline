@@ -13,6 +13,7 @@ export function newProject({ family = 'Мой шрифт', sets = ['latin', 'cyr
       unitsPerEm: 1000, ascender: 800, descender: -200, xHeight: 500, capHeight: 700,
     },
     glyphs: [],
+    guides: [], // ruler guides: { axis: 'x' | 'y', pos }
   };
   for (const s of sets) for (const ch of SETS[s] || []) addGlyphForChar(p, ch);
   return p;
@@ -43,6 +44,8 @@ export function validateProject(p) {
   const base = newProject({ sets: [] });
   p.info = { ...base.info, ...(p.info || {}) };
   if (!Array.isArray(p.glyphs)) p.glyphs = [];
+  p.guides = (Array.isArray(p.guides) ? p.guides : [])
+    .filter((g) => g && (g.axis === 'x' || g.axis === 'y') && Number.isFinite(g.pos));
   for (const g of p.glyphs) {
     g.contours = Array.isArray(g.contours) ? g.contours : [];
     g.advance = Number.isFinite(g.advance) ? g.advance : 600;

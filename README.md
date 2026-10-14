@@ -55,6 +55,7 @@ go run .
 | **Сетка и привязка** | Настраиваемый шаг сетки, основные линии через 5 шагов. Привязка к узлам сетки (`F9`) и к линиям: базовая, высоты строчных и прописных, выносные, края ширины (`F10`) |
 | **Нож** | Проведите линию через фигуру, и контур разрежется на отдельные части с общим краем, без зазора (`K`, Shift — 45°) |
 | **Свободная трансформация** | `Ctrl+T`, как в Photoshop: рамка с маркерами. Углы и стороны масштабируют (Shift — пропорции, Alt — от центра), за рамкой поворот (Shift — по 15°), внутри перемещение. Точные %, ° в панели параметров; Enter — применить, Esc — отмена |
+| **Линейки и направляющие** | `Ctrl+R`, как в Photoshop: линейки в единицах шрифта. Тяните из линейки, чтобы создать направляющую, обратно на линейку, чтобы удалить; двойной щелчок задаёт точное значение. К направляющим прилипают точки и фигуры, они сохраняются в `.sp` |
 | **Операции с контурами** | Объединить, вычесть верхнюю, пересечение, исключить, разделить, убрать перекрытия, как в векторных редакторах |
 | **Трансформации** | Масштаб, поворот, наклон, отражение для выделенных точек или целых букв |
 | **Метрики** | Отступы слева/справа и ширина числами, «ровные отступы» одной кнопкой |
@@ -118,6 +119,7 @@ go run .
 | Клавиша | Действие |
 |---|---|
 | `V` `P` `B` `E` `R` `O` `K` `H` | Выбор, перо, кисть, ластик, прямоугольник, эллипс, нож, рука |
+| `Ctrl+R` / `Ctrl+;` | Линейки / показать направляющие |
 | `Ctrl+T` | Свободная трансформация (в окне программы; в браузере — меню «Правка») |
 | `F1` | Список горячих клавиш |
 | `F9` / `F10` | Привязка к сетке / к линиям |
@@ -183,6 +185,7 @@ go build -ldflags "-H=windowsgui" -o spline.exe .
 - Standard modifiers: **Shift** constrains to 45°, **Ctrl/Alt** breaks or removes one handle (curved on one side, sharp on the other).
 - Transformations (scale, rotate, slant, flip), sidebearing metrics, dark and light themes.
 - Exact coordinates of points, handles and shapes; configurable grid with snapping to grid intersections (F9) and guide lines (F10).
+- Photoshop-style rulers (Ctrl+R) with draggable guides saved in the project.
 - Knife tool (K) and Photoshop-style free transform (Ctrl+T: scale, rotate, move with exact values).
 - Path operations: unite, subtract, intersect, exclude, divide, remove overlap. Brush strokes are merged by vector union, so the rest of the outline keeps its curves.
 - A faint **guide letter** helps you trace; the **preview** shows your real font as you draw.
