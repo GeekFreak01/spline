@@ -35,6 +35,13 @@ const P = {
   type: '<path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+  // Path operations: two overlapping squares, the result is filled.
+  opUnite: '<path d="M4 4h10v6h6v10H10v-6H4z" fill="currentColor" fill-opacity=".35"/><path d="M4 4h10v6h6v10H10v-6H4z"/>',
+  opSubtract: '<path d="M4 4h10v6h-4v4H4z" fill="currentColor" fill-opacity=".35"/><path d="M4 4h10v10H4z"/><path d="M10 10h10v10H10z" stroke-dasharray="2 2"/>',
+  opIntersect: '<path d="M10 10h4v4h-4z" fill="currentColor" fill-opacity=".5"/><path d="M4 4h10v10H4z"/><path d="M10 10h10v10H10z"/>',
+  opExclude: '<path d="M4 4h10v6h-4v4H4zM14 10h6v10H10v-6h4z" fill="currentColor" fill-opacity=".35"/><path d="M4 4h10v10H4z"/><path d="M10 10h10v10H10z"/>',
+  opDivide: '<path d="M4 4h10v10H4z"/><path d="M10 10h10v10H10z"/><path d="M10 10h4v4h-4z" fill="currentColor" fill-opacity=".5"/><path d="M3 21 21 3" stroke-dasharray="1 3"/>',
+  opRemoveOverlap: '<path d="M4 4h10v6h6v10H10v-6H4z"/><path d="M10 10h4v4" stroke-dasharray="2 2"/>',
   eye: '<path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/>',
 };
 

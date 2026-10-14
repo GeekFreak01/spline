@@ -206,6 +206,8 @@ function menuDefs() {
       '-',
       { label: 'showGuide', check: editor.showGuide, run: () => toggleView('showGuide') },
       { label: 'showGrid', check: editor.showGrid, run: () => toggleView('showGrid') },
+      { label: 'snapGrid', key: 'F9', check: editor.snapGrid, run: () => toggleView('snapGrid') },
+      { label: 'snapGuides', key: 'F10', check: editor.snapGuides, run: () => toggleView('snapGuides') },
       '-',
       { label: 'themeDark', check: theme === 'dark', run: () => setTheme('dark') },
       { label: 'themeLight', check: theme === 'light', run: () => setTheme('light') },
@@ -222,6 +224,8 @@ function menuDefs() {
       { label: 'flipH', run: () => applyTransform('flipH'), enabled: inEditor || app.selected.size > 0 },
       { label: 'flipV', run: () => applyTransform('flipV'), enabled: inEditor || app.selected.size > 0 },
       { label: 'clear', run: () => glyphAction('clear'), enabled: inEditor },
+      '-',
+      ...PATH_OPS.map((op) => ({ label: op.label, key: op.key, run: () => runPathOp(op.id), enabled: inEditor })),
       '-',
       { label: 'fontInfo', run: editFontInfo },
     ] },
@@ -530,6 +534,11 @@ $('optionsBar').addEventListener('input', (e) => {
     $('glyphGrid').style.setProperty('--tile', `${e.target.value}px`);
     store.set('spline.tile', e.target.value);
   }
+  if (e.target.dataset.opt === 'stabilizer') {
+    editor.stabilizer = Number(e.target.value);
+    store.set('spline.stabilizer', e.target.value);
+    $('stabOut').textContent = e.target.value;
+  }
   if (e.target.dataset.opt === 'brush') {
     editor.brushRadius = Number(e.target.value) / 2;
     store.set('spline.brush', String(editor.brushRadius));
@@ -538,8 +547,13 @@ $('optionsBar').addEventListener('input', (e) => {
   }
 });
 $('optionsBar').addEventListener('change', (e) => {
-  if (e.target.dataset.opt === 'guide' || e.target.dataset.opt === 'grid') {
-    toggleView(e.target.dataset.opt === 'guide' ? 'showGuide' : 'showGrid');
+  const opt = e.target.dataset.opt;
+  if (opt === 'guide' || opt === 'grid') toggleView(opt === 'guide' ? 'showGuide' : 'showGrid');
+  if (opt === 'snapGrid' || opt === 'snapGuides') toggleView(opt);
+  if (opt === 'gridStep') {
+    const v = Math.round(Number(e.target.value));
+    if (v >= 1) { editor.gridStep = v; store.set('spline.gridStep', String(v)); editor.render(); }
+    e.target.value = editor.gridStep;
   }
 });
 $('optionsBar').addEventListener('click', (e) => {
@@ -621,6 +635,10 @@ function renderGlyphPanel() {
       <div class="title-row"><b>${esc(charOf(g).trim() || '␣')}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>
       ${metricInputs(g)}
       <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(g.color)}</div>`)
+    + section('selection', t('selection'), '<div id="selBox"></div>')
+    + section('pathops', t('pathOps'), `<div class="op-row">${PATH_OPS.map((op) => `<button class="btn btn-icon" type="button"
+        data-pathop="${op.id}" data-tip="${esc(t(op.label))}" ${op.key ? `data-key="${op.key}"` : ''} aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
+        <p class="hint">${esc(t('pathOpsHint'))}</p>`)
     + transformSection()
     + section('actions', t('actions'), `
       <button class="btn btn-block" type="button" data-cmd="spacing">${icon('spacing', 15)}<span>${esc(t('autoSpacing'))}</span></button>
@@ -628,6 +646,54 @@ function renderGlyphPanel() {
       <button class="btn btn-block btn-danger" type="button" data-cmd="clear">${icon('eraseAll', 15)}<span>${esc(t('clear'))}</span></button>`)
     + fontSection();
 }
+
+const PATH_OPS = [
+  { id: 'unite', icon: 'opUnite', label: 'opUnite', key: `${MOD}Alt+U` },
+  { id: 'subtract', icon: 'opSubtract', label: 'opSubtract', key: `${MOD}Alt+M` },
+  { id: 'intersect', icon: 'opIntersect', label: 'opIntersect', key: `${MOD}Alt+I` },
+  { id: 'exclude', icon: 'opExclude', label: 'opExclude', key: `${MOD}Alt+E` },
+  { id: 'divide', icon: 'opDivide', label: 'opDivide', key: `${MOD}Alt+D` },
+  { id: 'removeOverlap', icon: 'opRemoveOverlap', label: 'opRemoveOverlap', key: `${MOD}Alt+O` },
+];
+
+function runPathOp(kind) {
+  if (app.mode !== 'editor') return;
+  try {
+    if (!editor.pathOp(kind)) toast(t('pathOpNeedTwo'), 'error');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// Selection panel: exact coordinates of one point (and its handles) or the
+// position and size of several points / whole shapes.
+let selKey = '';
+const fmt = (v) => (v === undefined ? '' : Math.round(v * 10) / 10);
+function selectionHTML(info) {
+  if (!info) return `<p class="hint">${esc(t('selectionHint'))}</p>`;
+  const f = (k, label) => `<label><span>${esc(label)}</span><input type="number" step="1" data-sel="${k}"></label>`;
+  if (info.single) {
+    return `<div class="xy-grid">${f('x', 'X')}${f('y', 'Y')}</div>
+      ${info.inX !== undefined ? `<div class="sub-head">${esc(t('handleIn'))}</div><div class="xy-grid">${f('inX', 'X')}${f('inY', 'Y')}</div>` : ''}
+      ${info.outX !== undefined ? `<div class="sub-head">${esc(t('handleOut'))}</div><div class="xy-grid">${f('outX', 'X')}${f('outY', 'Y')}</div>` : ''}`;
+  }
+  return `<div class="xy-grid">${f('x', 'X')}${f('y', 'Y')}${f('w', t('w'))}${f('h', t('h'))}</div>
+    <label class="check"><input type="checkbox" id="selLock" ${store.get('spline.lockRatio', '1') === '1' ? 'checked' : ''}>${esc(t('keepRatio'))}</label>
+    <p class="hint">${esc(t('pointsSelected', { n: info.count }))}</p>`;
+}
+
+app.onDraw = () => {
+  if (app.mode !== 'editor') return;
+  const box = $('selBox');
+  if (!box) return;
+  const info = editor.selectionInfo();
+  const key = JSON.stringify(info);
+  if (key === selKey && box.childElementCount) return;
+  selKey = key;
+  const shape = info ? (info.single ? `s${info.inX !== undefined}${info.outX !== undefined}` : 'm') : 'n';
+  if (box.dataset.shape !== shape || !box.childElementCount) { box.dataset.shape = shape; box.innerHTML = selectionHTML(info); }
+  box.querySelectorAll('[data-sel]').forEach((el) => { if (document.activeElement !== el) el.value = fmt(info[el.dataset.sel]); });
+};
 
 function updateMetricInputs() {
   const g = app.mode === 'editor' ? app.current : selectedGlyphs()[0];
@@ -646,6 +712,13 @@ for (const dock of [$('inspector'), $('glyphPanel')]) {
     if (sec) store.set(`spline.sec.${sec}`, e.target.open ? '1' : '0');
   }, true);
   dock.addEventListener('change', (e) => {
+    if (e.target.id === 'selLock') store.set('spline.lockRatio', e.target.checked ? '1' : '0');
+    if (e.target.dataset.sel) {
+      editor.setSelectionValue(e.target.dataset.sel, Number(e.target.value), $('selLock')?.checked);
+      selKey = '';
+      editor.render();
+      return;
+    }
     if (e.target.dataset.tf) store.set(`spline.tf.${e.target.dataset.tf}`, e.target.value);
     onMetricChange(e);
   });
@@ -655,6 +728,8 @@ for (const dock of [$('inspector'), $('glyphPanel')]) {
   dock.addEventListener('click', (e) => {
     const sw = e.target.closest('[data-role="colorPick"] [data-color]');
     if (sw) { setColor(sw.dataset.color); return; }
+    const po = e.target.closest('[data-pathop]');
+    if (po) { runPathOp(po.dataset.pathop); return; }
     const ap = e.target.closest('[data-apply]');
     if (ap) {
       const input = dock.querySelector(`[data-tf="${ap.dataset.apply}"]`);
@@ -846,6 +921,11 @@ editor.showGuide = store.get('spline.showGuide', '1') === '1';
 editor.showGrid = store.get('spline.showGrid', '1') === '1';
 editor.brushRadius = Number(store.get('spline.brush', '40')) || 40;
 editor.tool = store.get('spline.tool', 'brush');
+editor.gridStep = Math.max(1, Number(store.get('spline.gridStep', '50')) || 50);
+editor.snapGrid = store.get('spline.snapGrid', '0') === '1';
+editor.snapGuides = store.get('spline.snapGuides', '1') === '1';
+editor.stabilizer = Number(store.get('spline.stabilizer', '4'));
+if (!Number.isFinite(editor.stabilizer)) editor.stabilizer = 4;
 if (!TOOLS.some((x) => x.id === editor.tool)) editor.tool = 'brush';
 
 function renderToolbar() {
@@ -866,10 +946,20 @@ function renderEditorOptions() {
     <div class="sep"></div>
     ${brush ? `<div class="group"><label>${esc(t('brushSize'))}
       <input type="range" data-opt="brush" min="4" max="300" step="2" value="${editor.brushRadius * 2}">
-      <input type="number" data-opt="brush" min="4" max="300" step="2" value="${editor.brushRadius * 2}"></label></div><div class="sep"></div>` : ''}
+      <input type="number" data-opt="brush" min="4" max="300" step="2" value="${editor.brushRadius * 2}"></label>
+      <label data-tip="${esc(t('stabilizerTip'))}">${esc(t('stabilizer'))}
+      <input type="range" data-opt="stabilizer" min="0" max="10" step="1" value="${editor.stabilizer}"><output class="mono" id="stabOut">${editor.stabilizer}</output></label>
+      </div><div class="sep"></div>` : ''}
     <div class="group">
       <label class="check"><input type="checkbox" data-opt="guide" ${editor.showGuide ? 'checked' : ''}>${esc(t('guide'))}</label>
       <label class="check"><input type="checkbox" data-opt="grid" ${editor.showGrid ? 'checked' : ''}>${esc(t('grid'))}</label>
+      <label>${esc(t('gridStep'))}<input type="number" data-opt="gridStep" min="1" max="500" step="1" value="${editor.gridStep}"></label>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <span class="opt-label">${esc(t('snap'))}</span>
+      <label class="check" data-tip="${esc(t('snapGridTip'))}" data-key="F9"><input type="checkbox" data-opt="snapGrid" ${editor.snapGrid ? 'checked' : ''}>${esc(t('snapGrid'))}</label>
+      <label class="check" data-tip="${esc(t('snapGuidesTip'))}" data-key="F10"><input type="checkbox" data-opt="snapGuides" ${editor.snapGuides ? 'checked' : ''}>${esc(t('snapGuides'))}</label>
     </div>
     <div class="sep"></div>
     <div class="group">
@@ -1276,6 +1366,12 @@ document.addEventListener('keydown', (e) => {
   const key = keyOf(e);
   if (mod && key === 's') { e.preventDefault(); save(e.shiftKey); return; }
   if (e.key === 'F1') { e.preventDefault(); helpDialog(); return; }
+  if (e.key === 'F9') { e.preventDefault(); toggleView('snapGrid'); return; }
+  if (e.key === 'F10') { e.preventDefault(); toggleView('snapGuides'); return; }
+  if (mod && e.altKey && app.mode === 'editor') {
+    const op = { u: 'unite', m: 'subtract', i: 'intersect', e: 'exclude', d: 'divide', o: 'removeOverlap' }[key];
+    if (op) { e.preventDefault(); runPathOp(op); return; }
+  }
   if (typing(e.target) || e.target.closest?.('#menus')) return;
   if (mod && key === 'o') { e.preventDefault(); openDialog(); return; }
   if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }

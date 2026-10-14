@@ -4,6 +4,7 @@ import {
   rectContour, ellipseContour, movePoint, charOf,
 } from './model.js';
 import { applyStroke } from './trace.js';
+import { unite, subtract, removeOverlap, shapesOf, pathOperation } from './boolean.js';
 import { t } from './i18n.js';
 
 const HIT = 9; // px
@@ -33,6 +34,11 @@ export class Editor {
     this.brushRadius = 45;
     this.showGuide = true;
     this.showGrid = true;
+    this.gridStep = 50;      // font units
+    this.snapGrid = false;   // snap to grid intersections
+    this.snapGuides = true;  // snap to metric lines and sidebearings
+    this.stabilizer = 4;     // 0..10, smooths brush input
+    this.snapMark = null;    // last snapped point, drawn as a marker
     this.view = { scale: 0.5, ox: 0, oy: 0 };
     this.sel = new Set(); // "contourIndex:nodeIndex"
     this.drag = null;
@@ -199,6 +205,34 @@ export class Editor {
     }
   }
 
+  // Snaps a point like a CAD program: to a guide line (baseline, x-height,
+  // cap height, ascender, descender, sidebearings) when it is close, and to
+  // the grid intersections when grid snapping is on.
+  snap(p, { guides = true } = {}) {
+    let { x, y } = p;
+    let hx = false, hy = false;
+    if (this.snapGuides && guides && this.glyph) {
+      const info = this.app.project.info;
+      const tol = 7 / this.view.scale;
+      const near = (v, list) => {
+        let best = null;
+        for (const c of list) if (Math.abs(v - c) <= tol && (best === null || Math.abs(v - c) < Math.abs(v - best))) best = c;
+        return best;
+      };
+      const gy = near(y, [info.ascender, info.capHeight, info.xHeight, 0, info.descender]);
+      const gx = near(x, [0, this.glyph.advance]);
+      if (gy !== null) { y = gy; hy = true; }
+      if (gx !== null) { x = gx; hx = true; }
+    }
+    if (this.snapGrid) {
+      const st = this.gridStep;
+      if (!hx) { x = Math.round(x / st) * st; hx = true; }
+      if (!hy) { y = Math.round(y / st) * st; hy = true; }
+    }
+    this.snapMark = hx || hy ? { x, y } : null;
+    return { x, y };
+  }
+
   onDown(e) {
     if (!this.glyph || e.button > 1) return;
     this.canvas.setPointerCapture(e.pointerId);
@@ -214,7 +248,8 @@ export class Editor {
     } else if (tool === 'pen') {
       this.downPen(e, sx, sy, p);
     } else if (tool === 'rect' || tool === 'ellipse') {
-      this.drag = { kind: 'shape', tool, start: p, end: p };
+      const sp = this.snap(p);
+      this.drag = { kind: 'shape', tool, start: sp, end: sp };
     } else if (tool === 'brush' || tool === 'eraser') {
       this.drag = { kind: 'stroke', erase: tool === 'eraser', points: [p], start: p, lastS: { sx, sy } };
     }
@@ -236,7 +271,11 @@ export class Editor {
         this.sel = new Set([key]);
       }
       // Ctrl/Alt-click on a point makes it sharp on both sides.
-      this.drag = { kind: 'move', start: p, applied: { x: 0, y: 0 }, cuspNode: isCuspKey(e) ? n : null };
+      const grabbed = this.glyph.contours[n.ci].nodes[n.ni];
+      this.drag = {
+        kind: 'move', start: p, applied: { x: 0, y: 0 }, ref: { x: grabbed.x, y: grabbed.y },
+        cuspNode: isCuspKey(e) ? n : null,
+      };
       return;
     }
     if (this.nearAdvance(sx)) {
@@ -249,7 +288,8 @@ export class Editor {
       const all = keys.every((k) => this.sel.has(k));
       if (!e.shiftKey && !all) this.sel = new Set();
       keys.forEach((k) => this.sel.add(k));
-      this.drag = { kind: 'move', start: p, applied: { x: 0, y: 0 } };
+      const first = this.glyph.contours[ci].nodes[0];
+      this.drag = { kind: 'move', start: p, applied: { x: 0, y: 0 }, ref: { x: first.x, y: first.y } };
       return;
     }
     if (!e.shiftKey) this.sel.clear();
@@ -284,6 +324,7 @@ export class Editor {
     }
     this.app.history.push(this.glyph);
     if (e.shiftKey && last) p = snap45(last, p);
+    else p = this.snap(p);
     const node = { x: Math.round(p.x), y: Math.round(p.y) };
     if (open) {
       open.nodes.push(node);
@@ -304,6 +345,10 @@ export class Editor {
     this.app.onCursor?.(p);
     const d = this.drag;
     if (!d) {
+      // Preview where a new point would land.
+      const t0 = this.activeTool();
+      if (t0 === 'pen' || t0 === 'rect' || t0 === 'ellipse') this.app.onCursor?.(this.snap(p));
+      else this.snapMark = null;
       this.updateCursor(sx, sy);
       this.render();
       return;
@@ -316,7 +361,13 @@ export class Editor {
       case 'move': {
         // Shift keeps the movement horizontal, vertical or diagonal.
         let total = { x: p.x - d.start.x, y: p.y - d.start.y };
-        if (e.shiftKey) total = snap45({ x: 0, y: 0 }, total);
+        if (e.shiftKey) {
+          total = snap45({ x: 0, y: 0 }, total);
+        } else {
+          // The grabbed point lands exactly on the grid / guide line.
+          const target = this.snap({ x: d.ref.x + total.x, y: d.ref.y + total.y });
+          total = { x: target.x - d.ref.x, y: target.y - d.ref.y };
+        }
         const dx = total.x - d.applied.x, dy = total.y - d.applied.y;
         if (!d.moved && Math.hypot(total.x, total.y) * this.view.scale < 2) break;
         if (dx || dy) {
@@ -331,7 +382,7 @@ export class Editor {
         if (!d.moved && Math.hypot(p.x - d.start.x, p.y - d.start.y) * this.view.scale < 2) break;
         this.checkpoint();
         const n = this.glyph.contours[d.ci].nodes[d.ni];
-        const hp = e.shiftKey ? snap45(n, p) : p;
+        const hp = e.shiftKey ? snap45(n, p) : this.snap(p);
         n[d.which] = { x: hp.x, y: hp.y };
         const other = d.which === 'in' ? 'out' : 'in';
         // Ctrl/Alt breaks the link: only this side of the point changes.
@@ -348,7 +399,7 @@ export class Editor {
       }
       case 'advance':
         this.checkpoint();
-        this.glyph.advance = Math.max(0, Math.round(p.x));
+        this.glyph.advance = Math.max(0, Math.round(this.snapGrid ? this.snap(p, { guides: false }).x : p.x));
         d.moved = true;
         this.app.onGlyphMetricsChanged?.();
         break;
@@ -357,7 +408,7 @@ export class Editor {
         break;
       case 'penHandle':
         if (Math.hypot(sx - d.start.sx, sy - d.start.sy) > 3) {
-          const hp = e.shiftKey ? snap45(d.node, p) : p;
+          const hp = e.shiftKey ? snap45(d.node, p) : this.snap(p);
           d.node.out = { x: hp.x, y: hp.y };
           // Ctrl/Alt: only the outgoing handle, the incoming side stays as it is.
           if (d.outOnly || isCuspKey(e)) {
@@ -370,7 +421,7 @@ export class Editor {
         }
         break;
       case 'shape':
-        d.end = p;
+        d.end = this.snap(p);
         d.shift = e.shiftKey;
         break;
       case 'stroke': {
@@ -381,11 +432,16 @@ export class Editor {
           break;
         }
         if (d.straight) { d.points = [d.start]; d.straight = false; }
+        // The stabilizer lets the stroke trail behind the pointer, which
+        // removes hand jitter (like a "lazy brush" in drawing programs).
+        const k = 1 - Math.min(10, Math.max(0, this.stabilizer)) * 0.085;
         const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
         for (const ev of evs.length ? evs : [e]) {
           const q = this.eventPos(ev);
           if (Math.hypot(q.sx - d.lastS.sx, q.sy - d.lastS.sy) < 1.5) continue;
-          d.points.push(this.toFont(q.sx, q.sy));
+          const raw = this.toFont(q.sx, q.sy);
+          const last = d.points[d.points.length - 1];
+          d.points.push({ x: last.x + (raw.x - last.x) * k, y: last.y + (raw.y - last.y) * k });
           d.lastS = q;
         }
         break;
@@ -457,15 +513,19 @@ export class Editor {
     this.render();
   }
 
+  // A brush stroke is traced on its own and then merged into the outline by
+  // a vector union (or subtracted for the eraser). Parts of the outline away
+  // from the stroke keep their exact curves.
   finishStroke(d) {
     const r = this.brushRadius;
-    const sb = polyBox(d.points);
-    let area = { minX: sb.minX - r, minY: sb.minY - r, maxX: sb.maxX + r, maxY: sb.maxY + r };
+    const strokeShape = applyStroke([], d.points, r, false);
+    if (!strokeShape.length) return;
+    let area = polyBox(strokeShape.flatMap((c) => flatten(c, 6)));
     const cs = this.glyph.contours.filter((c) => c.closed && c.nodes.length >= 2);
     const boxes = cs.map((c) => polyBox(flatten(c, 6)));
     const hit = (a, b) => a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
-    // Grow the affected set until it is closed under overlap, so outer
-    // contours and their holes are always re-traced together.
+    // Touched contours plus everything overlapping them, so the holes of a
+    // touched outline stay with it.
     const affected = new Set();
     let grew = true;
     while (grew) {
@@ -482,11 +542,97 @@ export class Editor {
       });
     }
     if (d.erase && affected.size === 0) return;
-    const merged = applyStroke([...affected].map((i) => cs[i]), d.points, r, d.erase);
+    const base = [...affected].map((i) => cs[i]);
+    let merged;
+    try {
+      merged = d.erase ? subtract(base, strokeShape) : (base.length ? unite(base, strokeShape) : strokeShape);
+    } catch (err) {
+      // Fall back to re-tracing the bitmap if the vector operation fails.
+      console.warn('boolean operation failed, re-tracing', err);
+      merged = applyStroke(base, d.points, r, d.erase);
+    }
     this.app.history.push(this.glyph);
-    const keep = this.glyph.contours.filter((c) => !cs.includes(c) || !affected.has(cs.indexOf(c)));
-    this.glyph.contours = [...keep, ...merged];
+    const gone = new Set(base);
+    this.glyph.contours = [...this.glyph.contours.filter((c) => !gone.has(c)), ...merged];
     this.sel.clear();
+    this.afterEdit();
+  }
+
+  // Vector-editor path operations on the selected contours (or all of them).
+  pathOp(kind) {
+    const cs = this.glyph.contours;
+    const closed = cs.map((c, i) => (c.closed && c.nodes.length >= 2 ? i : -1)).filter((i) => i >= 0);
+    let picked = new Set([...this.sel].map((k) => Number(k.split(':')[0])).filter((i) => closed.includes(i)));
+    if (kind === 'removeOverlap' || !picked.size) picked = new Set(closed);
+    let result, used;
+    if (kind === 'removeOverlap') {
+      used = picked;
+      result = removeOverlap([...picked].map((i) => cs[i]));
+    } else {
+      const shapes = shapesOf(cs, picked);
+      if (shapes.length < 2 && kind !== 'unite') return false;
+      result = pathOperation(kind, shapes.map((sh) => sh.map((i) => cs[i])));
+      used = new Set(shapes.flat());
+    }
+    if (!result) return false;
+    this.app.history.push(this.glyph);
+    const keep = cs.filter((_, i) => !used.has(i));
+    this.glyph.contours = [...keep, ...result];
+    this.sel = new Set();
+    for (let ci = keep.length; ci < this.glyph.contours.length; ci++) {
+      this.glyph.contours[ci].nodes.forEach((_, ni) => this.sel.add(`${ci}:${ni}`));
+    }
+    this.penContour = null;
+    this.afterEdit();
+    return true;
+  }
+
+  // Numbers for the selection panel: one point (with its handles) or the
+  // bounding box of several points.
+  selectionInfo() {
+    const nodes = this.selectedNodes();
+    if (!nodes.length) return null;
+    if (nodes.length === 1) {
+      const n = nodes[0];
+      return { single: true, x: n.x, y: n.y, inX: n.in?.x, inY: n.in?.y, outX: n.out?.x, outY: n.out?.y };
+    }
+    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+    const x = Math.min(...xs), y = Math.min(...ys);
+    return { single: false, count: nodes.length, x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+  }
+
+  // Applies a value typed into the selection panel.
+  setSelectionValue(field, v, keepRatio = false) {
+    const nodes = this.selectedNodes();
+    const info = this.selectionInfo();
+    if (!info || !Number.isFinite(v)) return;
+    this.app.history.push(this.glyph);
+    if (info.single) {
+      const n = nodes[0];
+      if (field === 'x') movePoint(n, v - n.x, 0, true);
+      if (field === 'y') movePoint(n, 0, v - n.y, true);
+      const h = { inX: ['in', 'x'], inY: ['in', 'y'], outX: ['out', 'x'], outY: ['out', 'y'] }[field];
+      if (h) {
+        if (!n[h[0]]) n[h[0]] = { x: n.x, y: n.y };
+        n[h[0]][h[1]] = v;
+        n.smooth = false;
+      }
+    } else {
+      let dx = 0, dy = 0, sx = 1, sy = 1;
+      if (field === 'x') dx = v - info.x;
+      if (field === 'y') dy = v - info.y;
+      if (field === 'w' && info.w > 0 && v > 0) { sx = v / info.w; if (keepRatio) sy = sx; }
+      if (field === 'h' && info.h > 0 && v > 0) { sy = v / info.h; if (keepRatio) sx = sy; }
+      const f = (p) => ({
+        x: Math.round(info.x + (p.x - info.x) * sx + dx),
+        y: Math.round(info.y + (p.y - info.y) * sy + dy),
+      });
+      for (const n of nodes) {
+        if (n.in) n.in = f(n.in);
+        if (n.out) n.out = f(n.out);
+        Object.assign(n, f(n));
+      }
+    }
     this.afterEdit();
   }
 
@@ -680,7 +826,7 @@ export class Editor {
       line: css('--canvas-line'), metric: css('--canvas-metric'), text: css('--canvas-text'),
       ink: css('--canvas-ink'), primary: css('--accent'), accent: css('--dot-orange'),
       guide: css('--canvas-guide'), handle: css('--canvas-handle'), bg: css('--canvas-bg'),
-      grid: css('--canvas-grid'), nodeFill: css('--canvas-node-fill'),
+      grid: css('--canvas-grid'), gridMajor: css('--canvas-grid-major'), nodeFill: css('--canvas-node-fill'),
     };
     const info = this.app.project.info;
     const S = (p) => this.toScreen(p);
@@ -691,21 +837,27 @@ export class Editor {
     const yAsc = S({ x: 0, y: info.ascender }).y, yDesc = S({ x: 0, y: info.descender }).y;
     ctx.fillRect(x0, yAsc, xa - x0, yDesc - yAsc);
 
-    // Measurement grid every 50 units (AutoCAD-style), when it is not too dense.
-    if (this.showGrid && this.view.scale * 50 >= 8) {
-      ctx.strokeStyle = colors.grid;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
+    // Measurement grid (AutoCAD-style): minor lines every step, major lines
+    // every 5 steps. Minor lines are hidden when they would be too dense.
+    if (this.showGrid) {
+      const step = this.gridStep;
       const a = this.toFont(0, this.h), b = this.toFont(this.w, 0);
-      for (let x = Math.ceil(a.x / 50) * 50; x <= b.x; x += 50) {
-        const sx = Math.round(S({ x, y: 0 }).x) + 0.5;
-        ctx.moveTo(sx, 0); ctx.lineTo(sx, this.h);
+      for (const major of [false, true]) {
+        const st = major ? step * 5 : step;
+        if (st * this.view.scale < 6) continue;
+        ctx.strokeStyle = major ? colors.gridMajor : colors.grid;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let x = Math.ceil(a.x / st) * st; x <= b.x; x += st) {
+          const sx = Math.round(S({ x, y: 0 }).x) + 0.5;
+          ctx.moveTo(sx, 0); ctx.lineTo(sx, this.h);
+        }
+        for (let y = Math.ceil(a.y / st) * st; y <= b.y; y += st) {
+          const sy = Math.round(S({ x: 0, y }).y) + 0.5;
+          ctx.moveTo(0, sy); ctx.lineTo(this.w, sy);
+        }
+        ctx.stroke();
       }
-      for (let y = Math.ceil(a.y / 50) * 50; y <= b.y; y += 50) {
-        const sy = Math.round(S({ x: 0, y }).y) + 0.5;
-        ctx.moveTo(0, sy); ctx.lineTo(this.w, sy);
-      }
-      ctx.stroke();
     }
 
     // Metric lines with labels.
@@ -777,6 +929,37 @@ export class Editor {
     }
 
     this.drawOverlay(colors);
+
+    // Snap marker: a small cross where the point is held.
+    const showMark = this.snapMark && (this.drag ? ['move', 'handle', 'shape', 'penHandle'].includes(this.drag.kind)
+      : ['pen', 'rect', 'ellipse'].includes(this.activeTool()) && this.hover);
+    if (showMark) {
+      const m = S(this.snapMark);
+      ctx.strokeStyle = colors.accent;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(m.x - 7, m.y); ctx.lineTo(m.x + 7, m.y);
+      ctx.moveTo(m.x, m.y - 7); ctx.lineTo(m.x, m.y + 7);
+      ctx.stroke();
+    }
+    if (this.drag?.kind === 'move' && this.drag.moved && this.snapMark) {
+      const m = S(this.snapMark);
+      this.label(`${Math.round(this.snapMark.x)}, ${Math.round(this.snapMark.y)}`, m.x + 10, m.y + 10, colors);
+    }
+    this.app.onDraw?.();
+  }
+
+  // Small dark tag with text (sizes, coordinates) next to the cursor.
+  label(text, x, y, colors) {
+    const ctx = this.ctx;
+    ctx.font = `11px ${css('--font-mono')}`;
+    ctx.textBaseline = 'top';
+    const w = ctx.measureText(text).width + 10;
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(x, y, w, 18);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(text, x + 5, y + 3);
+    ctx.textBaseline = 'alphabetic';
   }
 
   guideFontSize(capPx) {
@@ -846,6 +1029,9 @@ export class Editor {
       else ctx.ellipse((p.x + q.x) / 2, (p.y + q.y) / 2, Math.abs(q.x - p.x) / 2, Math.abs(q.y - p.y) / 2, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
+      // Live size of the shape.
+      const w = Math.round(Math.abs(b.x - d.start.x)), h = Math.round(Math.abs(b.y - d.start.y));
+      this.label(`${w} × ${h}`, Math.max(p.x, q.x) + 8, Math.max(p.y, q.y) + 8, colors);
     }
     if (d?.kind === 'stroke') {
       ctx.strokeStyle = d.erase ? 'rgba(220,38,38,0.35)' : colors.ink;

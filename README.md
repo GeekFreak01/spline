@@ -47,10 +47,13 @@ go run .
 |---|---|
 | **Интерфейс** | Тёмная рабочая среда как в Photoshop/Glyphs: меню, панель параметров, инструменты, панели справа, строка состояния с координатами. Есть светлая тема |
 | **Сетка букв** | Разделы по категориям, цветные метки, коды Unicode, размер плиток, фильтры «нарисованы / не нарисованы» |
-| **Кисть и ластик** | Рисуйте мышью или пером: мазки сами превращаются в гладкие кривые и сливаются друг с другом |
+| **Кисть и ластик** | Рисуйте мышью или пером: мазок превращается в кривые и вливается в контур векторным объединением (ластик вычитает), остальная часть контура не меняется. Стабилизатор убирает дрожание руки |
 | **Перо** | Кривые Безье: щелчок ставит угол, протяжка делает кривую |
 | **Прямоугольник и эллипс** | Фигура внутри другой фигуры становится дыркой (как в «О») |
 | **Импорт SVG** | Из Illustrator, Figma, Inkscape: меню «Файл → Импорт SVG», перетаскивание в окно или вставка SVG-кода (`Ctrl+V`). Заливки переносятся точно, рисунки из обводок обводятся в контуры. Файлы `A.svg`, `uni0416.svg`, `Ж.svg` сами попадают в нужные буквы |
+| **Точные координаты** | Панель «Выделение»: X/Y точки и её усов или X, Y, ширина, высота выделенных фигур (с сохранением пропорций). Размер фигуры виден при рисовании |
+| **Сетка и привязка** | Настраиваемый шаг сетки, основные линии через 5 шагов. Привязка к узлам сетки (`F9`) и к линиям: базовая, высоты строчных и прописных, выносные, края ширины (`F10`) |
+| **Операции с контурами** | Объединить, вычесть верхнюю, пересечение, исключить, разделить, убрать перекрытия, как в векторных редакторах |
 | **Трансформации** | Масштаб, поворот, наклон, отражение для выделенных точек или целых букв |
 | **Метрики** | Отступы слева/справа и ширина числами, «ровные отступы» одной кнопкой |
 | **Просмотр** | Любой текст вашим шрифтом в реальном времени; недорисованные буквы приглушены |
@@ -114,6 +117,8 @@ go run .
 |---|---|
 | `V` `P` `B` `E` `R` `O` `H` | Выбор, перо, кисть, ластик, прямоугольник, эллипс, рука |
 | `F1` | Список горячих клавиш |
+| `F9` / `F10` | Привязка к сетке / к линиям |
+| `Ctrl+Alt+U` `M` `I` `E` `D` `O` | Объединить, вычесть, пересечь, исключить, разделить, убрать перекрытия |
 | `Пробел` (зажать) | Двигать холст |
 | `Ctrl+Z` / `Ctrl+Shift+Z` (или `Ctrl+Y`) | Отменить / повторить |
 | Стрелки (`Shift` — по 10) | Сдвинуть выбранные точки |
@@ -136,7 +141,9 @@ spline (один исполняемый файл на Go)
 ├── internal/fontgen      сборка шрифта: TrueType (glyf) и OpenType/CFF
 └── web/                  интерфейс (HTML/CSS/JS без сборки), встроен через go:embed
     ├── js/trace.js       кисть: растр → контур → подгонка кривых Безье
-    └── js/svg.js         импорт SVG (пути, фигуры, дуги, трансформации)
+    ├── js/svg.js         импорт SVG (пути, фигуры, дуги, трансформации)
+    ├── js/boolean.js     операции с контурами (на Paper.js)
+    └── vendor/           Paper.js, встроен в программу (работает офлайн)
 ```
 
 - Сервер слушает только `127.0.0.1` и не принимает запросы от других сайтов.
@@ -172,6 +179,8 @@ go build -ldflags "-H=windowsgui" -o spline.exe .
 - **Import SVG** from Illustrator/Figma/Inkscape (menu, drag & drop, or paste SVG code); `A.svg` / `uni0416.svg` go to the matching glyph.
 - Standard modifiers: **Shift** constrains to 45°, **Ctrl/Alt** breaks or removes one handle (curved on one side, sharp on the other).
 - Transformations (scale, rotate, slant, flip), sidebearing metrics, dark and light themes.
+- Exact coordinates of points, handles and shapes; configurable grid with snapping to grid intersections (F9) and guide lines (F10).
+- Path operations: unite, subtract, intersect, exclude, divide, remove overlap. Brush strokes are merged by vector union, so the rest of the outline keeps its curves.
 - A faint **guide letter** helps you trace; the **preview** shows your real font as you draw.
 - **Download font** exports `.ttf` (TrueType) or `.otf` (OpenType/CFF).
 - Projects are plain-JSON **`.sp` files**: send them to friends, open them by double-click (`spline file.sp`),
@@ -182,4 +191,4 @@ Development: `go run . --dev`, tests: `go test ./...`.
 
 ## Лицензия / License
 
-[MIT](LICENSE). Иконки: [Lucide](https://lucide.dev) (ISC). Окно на Windows: [go-webview2](https://github.com/jchv/go-webview2) (MIT).
+[MIT](LICENSE). Иконки: [Lucide](https://lucide.dev) (ISC). Окно на Windows: [go-webview2](https://github.com/jchv/go-webview2) (MIT). Операции с контурами: [Paper.js](http://paperjs.org) (MIT).
