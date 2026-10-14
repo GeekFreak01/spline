@@ -190,6 +190,7 @@ function menuDefs() {
       '-',
       { label: 'exportTTF', run: () => exportFont('ttf') },
       { label: 'exportOTF', run: () => exportFont('otf') },
+      ...(app.platform?.canAssociate ? ['-', { label: 'associate', check: app.platform.associated, run: associateFiles }] : []),
     ] },
     { id: 'menuEdit', items: [
       { label: 'undo', key: `${MOD}Z`, run: undo, enabled: app.history.undoStack.length > 0 },
@@ -1378,6 +1379,10 @@ async function save(saveAs = false) {
     autosave();
     renderAll();
     toast(t('savedAs', { name: app.fileName }));
+    if (app.platform?.canAssociate && !app.platform.associated && !store.get('spline.assocHint')) {
+      store.set('spline.assocHint', '1');
+      setTimeout(() => toast(t('associateHint')), 600);
+    }
   } catch (err) {
     if (err.name !== 'AbortError') toast(err.message, 'error');
   }
@@ -1507,6 +1512,19 @@ async function importSvgFiles(files) {
   markChanged();
   if (files.length === 1) { app.selected = new Set([last.name]); app.focusName = last.name; }
   renderAll();
+}
+
+// Windows: register Spline for .sp files (icon in Explorer, double-click).
+async function associateFiles() {
+  try {
+    const r = await fetch('/api/associate', { method: 'POST', headers: { 'X-Spline': '1' } });
+    if (!r.ok) throw new Error(await r.text());
+    app.platform.associated = true;
+    renderMenus();
+    toast(t('associated'));
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 async function exportFont(format) {
@@ -1808,6 +1826,7 @@ async function start() {
 
   let session = null;
   try { session = await (await fetch('/api/session')).json(); } catch { /* opened without the Go server */ }
+  app.platform = { canAssociate: !!session?.canAssociate, associated: !!session?.associated };
 
   let loaded = false;
   if (session?.filePath) {

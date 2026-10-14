@@ -1,7 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect x="2" y="2" width="60" height="60" rx="18" fill="#2563EB"/>
-  <rect x="2" y="2" width="60" height="60" rx="18" fill="none" stroke="#1D4ED8" stroke-width="3"/>
-  <path d="M44 20c-3-4-8-6-13-6-7 0-12 4-12 10 0 13 26 8 26 21 0 6-6 10-13 10-6 0-11-2-14-7" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round"/>
-  <circle cx="44" cy="20" r="5" fill="#F59E0B" stroke="#fff" stroke-width="2.5"/>
-  <circle cx="18" cy="48" r="5" fill="#EC4899" stroke="#fff" stroke-width="2.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4C9BF0"/>
+      <stop offset="1" stop-color="#1E62C8"/>
+    </linearGradient>
+  </defs>
+  <path d="M64 8H192C222.9 8 248 33.1 248 64V192C248 222.9 222.9 248 192 248H64C33.1 248 8 222.9 8 192V64C8 33.1 33.1 8 64 8Z" fill="url(#bg)"/>
+  <!-- Bézier handles of the two end points -->
+  <path d="M176 76 L136 52 M80 180 L120 204" stroke="#FFFFFF" stroke-opacity="0.75" stroke-width="7" stroke-linecap="round"/>
+  <!-- The "S": one smooth spline -->
+  <path d="M176 76 C150 46 80 52 80 98 C80 146 176 118 176 164 C176 208 104 210 80 180" fill="none" stroke="#FFFFFF" stroke-width="26" stroke-linecap="round"/>
+  <!-- Anchor points and handle tips -->
+  <rect x="164" y="64" width="24" height="24" rx="4" fill="#FFFFFF" stroke="#1E62C8" stroke-width="5"/>
+  <rect x="68" y="168" width="24" height="24" rx="4" fill="#FFFFFF" stroke="#1E62C8" stroke-width="5"/>
+  <circle cx="136" cy="52" r="10" fill="#FFB547" stroke="#FFFFFF" stroke-width="5"/>
+  <circle cx="120" cy="204" r="10" fill="#FFB547" stroke="#FFFFFF" stroke-width="5"/>
 </svg>

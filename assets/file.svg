@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E6EAF0"/>
+    </linearGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4C9BF0"/>
+      <stop offset="1" stop-color="#1E62C8"/>
+    </linearGradient>
+  </defs>
+  <!-- Sheet with a folded corner -->
+  <path d="M48 12 H164 L216 64 V236 C216 241 212 244 208 244 H48 C43 244 40 241 40 236 V20 C40 15 43 12 48 12 Z" fill="url(#page)" stroke="#9AA6B6" stroke-width="5"/>
+  <path d="M164 12 V56 C164 61 167 64 172 64 H216" fill="#C9D1DC" stroke="#9AA6B6" stroke-width="5" stroke-linejoin="round"/>
+  <!-- Spline mark -->
+  <path d="M96 92H160C175.5 92 188 104.5 188 120V184C188 199.5 175.5 212 160 212H96C80.5 212 68 199.5 68 184V120C68 104.5 80.5 92 96 92Z" fill="url(#badge)"/>
+  <path d="M156 122 C143 107 108 110 108 133 C108 157 156 143 156 166 C156 188 120 189 108 174" fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round"/>
+  <rect x="148" y="114" width="16" height="16" rx="3" fill="#FFFFFF" stroke="#1E62C8" stroke-width="3"/>
+  <rect x="100" y="166" width="16" height="16" rx="3" fill="#FFFFFF" stroke="#1E62C8" stroke-width="3"/>
+</svg>

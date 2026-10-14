@@ -7,6 +7,8 @@
 //	spline --browser    use the regular web browser
 package main
 
+//go:generate go run ./tools/genicons
+
 import (
 	"embed"
 	"encoding/json"
@@ -115,6 +117,19 @@ func (s *server) watchdog() {
 	}
 }
 
+// handleAssociate registers Spline for .sp files (Windows, current user).
+func (s *server) handleAssociate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := associate(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"associated": true})
+}
+
 func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.lastPing = time.Now()
@@ -133,6 +148,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/export", s.handleExport)
 	mux.HandleFunc("/api/file", s.handleFile)
 	mux.HandleFunc("/api/ping", s.handlePing)
+	mux.HandleFunc("/api/associate", s.handleAssociate)
 	return s.guard(mux)
 }
 
@@ -158,18 +174,22 @@ func (s *server) guard(next http.Handler) http.Handler {
 }
 
 type sessionInfo struct {
-	Version  string          `json:"version"`
-	FilePath string          `json:"filePath,omitempty"`
-	FileName string          `json:"fileName,omitempty"`
-	Project  json.RawMessage `json:"project,omitempty"`
-	Error    string          `json:"error,omitempty"`
+	Version string `json:"version"`
+	// CanAssociate is true on Windows, where Spline can register itself
+	// for .sp files; Associated tells whether that is already done.
+	CanAssociate bool            `json:"canAssociate"`
+	Associated   bool            `json:"associated"`
+	FilePath     string          `json:"filePath,omitempty"`
+	FileName     string          `json:"fileName,omitempty"`
+	Project      json.RawMessage `json:"project,omitempty"`
+	Error        string          `json:"error,omitempty"`
 }
 
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	path := s.filePath
 	s.mu.Unlock()
-	info := sessionInfo{Version: version}
+	info := sessionInfo{Version: version, CanAssociate: canAssociate, Associated: associated()}
 	if path != "" {
 		info.FilePath = path
 		info.FileName = filepath.Base(path)

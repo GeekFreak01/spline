@@ -25,6 +25,7 @@ func openWindow(url string) (opened, blocked bool) {
 			Width:  1440,
 			Height: 900,
 			Center: true,
+			IconId: 1, // resource from rsrc_windows_*.syso
 		},
 	})
 	if w == nil {
