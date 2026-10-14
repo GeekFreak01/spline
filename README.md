@@ -1,12 +1,12 @@
 # Spline
 
-**Простой редактор шрифтов с интерфейсом профессиональной программы.**
-Рисуйте буквы кистью или пером, импортируйте SVG, экспортируйте TTF/OTF. Освоить можно за вечер, даже школьнику.
+**Облегчённое создание шрифтов.**
+Рисуйте буквы кистью или пером, импортируйте SVG и экспортируйте готовый TTF/OTF без долгого изучения программы.
 
-*A friendly font editor simple enough for school kids. [English below](#english).*
+*Lightweight font creation. [English below](#english).*
 
 Идеи взяты из [Glyphs](https://glyphsapp.com) и [FontForge](https://github.com/fontforge/fontforge),
-но всё сделано максимально просто: один файл программы, никакой установки.
+но всё сделано максимально просто: один файл программы, никакой установки, своё окно без браузера.
 
 ---
 
@@ -16,11 +16,14 @@
    - Windows: `spline-windows-amd64.exe`
    - macOS: `spline-macos-arm64` (Apple M1/M2/M3) или `spline-macos-amd64` (Intel)
    - Linux: `spline-linux-amd64`
-2. Запустите её. Редактор сам откроется в браузере.
-3. Чтобы выйти, закройте чёрное окно программы.
+2. Запустите её двойным щелчком. Откроется окно редактора.
+   - **Windows 10/11**: собственное окно программы (движок WebView2, уже встроен в Windows), без браузера и без консоли.
+   - **macOS / Linux**: отдельное окно Chrome или Edge в режиме приложения, без вкладок и адресной строки.
+   - Если ничего из этого нет, редактор откроется в обычном браузере.
+3. Чтобы выйти, просто закройте окно.
 
-> На macOS при первом запуске: правый клик по файлу → «Открыть».
-> На Linux/macOS, возможно, понадобится `chmod +x spline-*`.
+> Windows может показать «Windows защитила ваш компьютер»: «Подробнее» → «Выполнить в любом случае».
+> На macOS при первом запуске: правый клик по файлу → «Открыть». На Linux/macOS: `chmod +x spline-*`.
 
 ### Собрать самому
 
@@ -65,7 +68,7 @@ go run .
 | Перо: щелчок по последней точке | Острый выход из скруглённой точки; протяжка с `Ctrl`/`Alt` задаёт только исходящий ус |
 | Двойной щелчок по точке / линии | Переключить «гладкая / угловая» / добавить точку |
 
-Работа сохраняется в браузере автоматически, так что случайно закрытая вкладка ничего не испортит.
+Работа автоматически сохраняется, так что случайно закрытое окно ничего не испортит.
 
 ## Файлы `.sp`: делитесь проектами
 
@@ -112,18 +115,23 @@ go run .
 | `V` `P` `B` `E` `R` `O` `H` | Выбор, перо, кисть, ластик, прямоугольник, эллипс, рука |
 | `F1` | Список горячих клавиш |
 | `Пробел` (зажать) | Двигать холст |
-| `Ctrl+Z` / `Ctrl+Y` | Отменить / вернуть |
+| `Ctrl+Z` / `Ctrl+Shift+Z` (или `Ctrl+Y`) | Отменить / повторить |
 | Стрелки (`Shift` — по 10) | Сдвинуть выбранные точки |
 | `Delete` | Удалить точки |
 | `PageUp` / `PageDown` | Соседняя буква |
 | `Esc` | Назад ко всем буквам |
-| `Ctrl+S` | Сохранить |
+| `Ctrl+S` / `Ctrl+Shift+S` | Сохранить / сохранить как |
+| `Ctrl+O` | Открыть |
+
+Сочетания работают при любой раскладке, в том числе русской.
 
 ## Как это устроено
 
 ```
 spline (один исполняемый файл на Go)
-├── main.go               локальный веб-сервер 127.0.0.1:7878 + открытие браузера
+├── main.go               локальный сервер 127.0.0.1:7878
+├── window_windows.go     окно программы на WebView2 (Windows)
+├── window_other.go       окно Chrome/Edge в режиме приложения (macOS, Linux)
 ├── internal/project      формат .sp: чтение и проверка
 ├── internal/fontgen      сборка шрифта: TrueType (glyf) и OpenType/CFF
 └── web/                  интерфейс (HTML/CSS/JS без сборки), встроен через go:embed
@@ -142,7 +150,13 @@ go run . --dev        # интерфейс читается с диска, пр�
 go test ./...         # проверка сборки шрифтов
 ```
 
-Флаги: `--port 7878`, `--no-browser`, `--dev`.
+Флаги: `--browser` (открыть в обычном браузере), `--port 7878`, `--no-browser` (только сервер), `--dev`.
+
+Собрать Windows-версию без консольного окна:
+
+```bash
+go build -ldflags "-H=windowsgui" -o spline.exe .
+```
 
 Идеи и исправления приветствуются: открывайте issue или pull request.
 
@@ -150,9 +164,9 @@ go test ./...         # проверка сборки шрифтов
 
 ## English
 
-**Spline** is a simple font editor with a professional dark workspace, inspired by Glyphs and FontForge.
+**Spline** makes font creation lightweight: a simple font editor with a professional dark workspace, inspired by Glyphs and FontForge.
 
-- Download a binary from [Releases](https://github.com/GeekFreak01/spline/releases) and run it: the editor opens in your browser.
+- Download a binary from [Releases](https://github.com/GeekFreak01/spline/releases) and run it: the editor opens in its own window (WebView2 on Windows, a Chrome/Edge app window on macOS/Linux, the browser as a fallback).
   Or run `go run github.com/GeekFreak01/spline@latest`.
 - Draw letters with the **brush** (strokes become smooth Bézier curves), **eraser**, **pen**, **rectangle** and **ellipse**.
 - **Import SVG** from Illustrator/Figma/Inkscape (menu, drag & drop, or paste SVG code); `A.svg` / `uni0416.svg` go to the matching glyph.
@@ -168,4 +182,4 @@ Development: `go run . --dev`, tests: `go test ./...`.
 
 ## Лицензия / License
 
-[MIT](LICENSE). Иконки: [Lucide](https://lucide.dev) (ISC).
+[MIT](LICENSE). Иконки: [Lucide](https://lucide.dev) (ISC). Окно на Windows: [go-webview2](https://github.com/jchv/go-webview2) (MIT).

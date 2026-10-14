@@ -118,6 +118,15 @@ function setProject(p, { fileName = null, fileHandle = null, serverFile = null }
 function setDirty(v) {
   app.dirty = v;
   $('dirtyDot').hidden = !v;
+  updateTitle();
+}
+
+// Page title; inside the desktop window it also becomes the window title.
+function updateTitle() {
+  if (!app.project) return;
+  const title = `${app.dirty ? '• ' : ''}${app.fileName || app.project.info.familyName} — Spline`;
+  document.title = title;
+  window.splineSetTitle?.(title);
 }
 
 let autosaveTimer;
@@ -140,7 +149,7 @@ app.onZoom = (s) => { $('statusZoom').textContent = `${Math.round(s * 100)}%`; }
 
 function renderAll() {
   $('fontName').textContent = app.fileName ? `${app.project.info.familyName} — ${app.fileName}` : app.project.info.familyName;
-  document.title = `${app.project.info.familyName} — Spline`;
+  updateTitle();
   renderMenus();
   if (app.mode === 'grid') {
     renderSidebar();
@@ -181,7 +190,7 @@ function menuDefs() {
     ] },
     { id: 'menuEdit', items: [
       { label: 'undo', key: `${MOD}Z`, run: undo, enabled: app.history.undoStack.length > 0 },
-      { label: 'redo', key: `${MOD}Y`, run: redo, enabled: app.history.redoStack.length > 0 },
+      { label: 'redo', key: `${MOD}Shift+Z`, run: redo, enabled: app.history.redoStack.length > 0 },
       '-',
       { label: 'cut', key: `${MOD}X`, run: () => document.execCommand('cut'), enabled: inEditor && hasSel },
       { label: 'copy', key: `${MOD}C`, run: () => document.execCommand('copy'), enabled: hasSel || inEditor },
@@ -865,7 +874,7 @@ function renderEditorOptions() {
     <div class="sep"></div>
     <div class="group">
       <button class="btn btn-icon" type="button" data-cmd="undo" data-tip="${esc(t('undo'))}" data-key="${MOD}Z" aria-label="${esc(t('undo'))}">${icon('undo', 15)}</button>
-      <button class="btn btn-icon" type="button" data-cmd="redo" data-tip="${esc(t('redo'))}" data-key="${MOD}Y" aria-label="${esc(t('redo'))}">${icon('redo', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="redo" data-tip="${esc(t('redo'))}" data-key="${MOD}Shift+Z" aria-label="${esc(t('redo'))}">${icon('redo', 15)}</button>
     </div>
     <div class="glyph-nav">
       <button class="btn btn-icon" type="button" data-cmd="zoomOut" data-tip="${esc(t('zoomOut'))}" data-key="−" aria-label="${esc(t('zoomOut'))}">${icon('zoomOut', 15)}</button>
@@ -1258,9 +1267,13 @@ const COMMANDS = {
   prev: () => stepGlyph(-1), next: () => stepGlyph(1),
 };
 
+// Letters come from the physical key (e.code), so shortcuts work with any
+// keyboard layout: Ctrl+Z is Ctrl+Z even when the Russian layout is active.
+const keyOf = (e) => (/^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase());
+
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
-  const key = e.key.toLowerCase();
+  const key = keyOf(e);
   if (mod && key === 's') { e.preventDefault(); save(e.shiftKey); return; }
   if (e.key === 'F1') { e.preventDefault(); helpDialog(); return; }
   if (typing(e.target) || e.target.closest?.('#menus')) return;
@@ -1439,5 +1452,11 @@ async function start() {
   if (m && findGlyph(decodeURIComponent(m[1]))) openEditor(decodeURIComponent(m[1]), false);
   else history.replaceState({}, '', location.pathname);
 }
+
+// Lets the program know the editor is still open (it quits after the last
+// browser window is closed).
+const ping = () => fetch('/api/ping', { method: 'POST', headers: { 'X-Spline': '1' } }).catch(() => {});
+ping();
+setInterval(ping, 20000);
 
 start();

@@ -1,8 +1,10 @@
-// Spline is a friendly font editor. It runs a small local web server and
-// opens the editor in your browser. Usage:
+// Spline is a lightweight font editor. It runs a small local server and
+// shows the editor in its own window (WebView2 on Windows, an app window of
+// Chrome/Edge elsewhere, or the default browser as a fallback). Usage:
 //
 //	spline              start with the last project
 //	spline myfont.sp    open a project file
+//	spline --browser    use the regular web browser
 package main
 
 import (
@@ -22,6 +24,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/GeekFreak01/spline/internal/fontgen"
 	"github.com/GeekFreak01/spline/internal/project"
@@ -40,11 +43,13 @@ type server struct {
 	filePath string // project opened from the command line, saved in place
 	port     int
 	dev      bool
+	lastPing time.Time
 }
 
 func main() {
 	port := flag.Int("port", 7878, "port to listen on (127.0.0.1 only)")
-	noBrowser := flag.Bool("no-browser", false, "do not open the browser")
+	noBrowser := flag.Bool("no-browser", false, "only start the server, do not open a window")
+	useBrowser := flag.Bool("browser", false, "open the editor in the default web browser instead of an app window")
 	dev := flag.Bool("dev", false, "serve ./web from disk (for developing the UI)")
 	flag.Parse()
 
@@ -72,13 +77,49 @@ func main() {
 	}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/", s.port)
-	fmt.Printf("Spline %s\n", version)
-	fmt.Printf("Редактор открыт / Editor is running: %s\n", url)
-	fmt.Println("Закройте это окно, чтобы выйти / Close this window to quit.")
-	if !*noBrowser {
+	fmt.Printf("Spline %s: %s\n", version, url)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- http.Serve(ln, s.routes()) }()
+
+	switch {
+	case *noBrowser:
+		// Server only (development).
+	case !*useBrowser:
+		opened, blocked := openWindow(url)
+		if blocked {
+			return // the app window was closed
+		}
+		if !opened {
+			openBrowser(url)
+		}
+		go s.watchdog()
+	default:
 		openBrowser(url)
+		go s.watchdog()
 	}
-	log.Fatal(http.Serve(ln, s.routes()))
+	log.Fatal(<-serveErr)
+}
+
+// watchdog stops the program a while after the last open editor page went
+// away, so no invisible process is left behind when a browser window is
+// used instead of the built-in one.
+func (s *server) watchdog() {
+	const idle = 3 * time.Minute
+	for range time.Tick(15 * time.Second) {
+		s.mu.Lock()
+		last := s.lastPing
+		s.mu.Unlock()
+		if !last.IsZero() && time.Since(last) > idle {
+			os.Exit(0)
+		}
+	}
+}
+
+func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	s.lastPing = time.Now()
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) routes() http.Handler {
@@ -91,6 +132,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/session", s.handleSession)
 	mux.HandleFunc("/api/export", s.handleExport)
 	mux.HandleFunc("/api/file", s.handleFile)
+	mux.HandleFunc("/api/ping", s.handlePing)
 	return s.guard(mux)
 }
 

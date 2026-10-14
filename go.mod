@@ -2,6 +2,13 @@ module github.com/GeekFreak01/spline
 
 go 1.22
 
-require golang.org/x/image v0.24.0
+require (
+	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
+	golang.org/x/image v0.24.0
+)
 
-require golang.org/x/text v0.22.0 // indirect
+require (
+	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
+	golang.org/x/sys v0.0.0-20210218145245-beda7e5e158e // indirect
+	golang.org/x/text v0.22.0 // indirect
+)
