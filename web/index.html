@@ -1,133 +1,101 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spline</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700&family=Comic+Neue:wght@400;700&display=swap">
   <link rel="stylesheet" href="css/app.css">
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
-  <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
-
-  <header class="topbar">
-    <div class="brand">
-      <img src="favicon.svg" alt="" width="36" height="36">
-      <div>
-        <div class="brand-name">Spline</div>
-        <div class="brand-tag" data-i18n="appTagline"></div>
-      </div>
-    </div>
-
-    <button class="font-name" id="fontNameBtn" type="button" data-i18n-title="fontInfo">
-      <span id="fontName"></span>
-      <i data-icon="settings" data-size="18"></i>
+  <!-- ============ Menu bar ============ -->
+  <header class="menubar">
+    <img class="app-logo" src="favicon.svg" alt="Spline" width="18" height="18">
+    <nav class="menus" id="menus" role="menubar" aria-label="Menu"></nav>
+    <button class="doc-title" id="fontNameBtn" type="button" data-i18n-title="fontInfo">
+      <span id="fontName"></span><span class="dirty-dot" id="dirtyDot" hidden></span>
     </button>
-    <span class="dirty-dot" id="dirtyDot" hidden data-i18n-title="unsaved"></span>
-
-    <div class="topbar-actions">
-      <button class="btn btn-ghost" id="newBtn" type="button"><i data-icon="filePlus"></i><span data-i18n="new"></span></button>
-      <button class="btn btn-ghost" id="openBtn" type="button"><i data-icon="open"></i><span data-i18n="open"></span></button>
-      <button class="btn btn-secondary" id="saveBtn" type="button"><i data-icon="save"></i><span data-i18n="save"></span></button>
-      <div class="menu-wrap">
-        <button class="btn btn-accent" id="exportBtn" type="button" aria-haspopup="menu" aria-expanded="false">
-          <i data-icon="download"></i><span data-i18n="export"></span><i data-icon="chevronDown" data-size="16"></i>
-        </button>
-        <div class="menu" id="exportMenu" role="menu" hidden>
-          <button role="menuitem" type="button" data-format="ttf"><b>.ttf</b><span data-i18n="exportTTF"></span></button>
-          <button role="menuitem" type="button" data-format="otf"><b>.otf</b><span data-i18n="exportOTF"></span></button>
-        </div>
-      </div>
-      <div class="lang-switch" role="group" data-i18n-title="language">
-        <button type="button" data-lang="ru">RU</button>
-        <button type="button" data-lang="en">EN</button>
-      </div>
-      <button class="btn btn-icon" id="helpBtn" type="button" data-i18n-title="help"><i data-icon="help"></i></button>
+    <div class="menubar-right">
+      <button class="btn btn-primary" id="exportBtn" type="button"><i data-icon="download" data-size="15"></i><span data-i18n="export"></span></button>
     </div>
-    <input type="file" id="fileInput" accept=".sp,.json,application/json" hidden>
+    <input type="file" id="fileInput" hidden>
   </header>
 
-  <main id="main">
+  <!-- ============ Options bar (context of the current tool/view) ============ -->
+  <div class="optionsbar" id="optionsBar"></div>
+
+  <main class="workspace" id="main">
     <!-- ============ Glyph overview ============ -->
     <section class="view view-grid" id="gridView">
-      <aside class="sidebar clay">
-        <label class="search">
-          <i data-icon="search" data-size="18"></i>
-          <span class="sr-only" data-i18n="search"></span>
-          <input type="search" id="searchInput" data-i18n-placeholder="search" autocomplete="off">
-        </label>
-        <div class="progress" id="progress">
-          <div class="progress-label" id="progressLabel"></div>
-          <div class="progress-bar"><div id="progressFill"></div></div>
+      <aside class="panel side" aria-label="Filters">
+        <div class="panel-head" data-i18n="categories"></div>
+        <div class="panel-body">
+          <nav class="cat-list" id="catList"></nav>
+          <div class="sub-head" data-i18n="colors"></div>
+          <div class="color-filter" id="colorFilter"></div>
+          <div class="sub-head" data-i18n="progressTitle"></div>
+          <div class="progress" id="progress">
+            <div class="progress-bar"><div id="progressFill"></div></div>
+            <div class="progress-label" id="progressLabel"></div>
+          </div>
         </div>
-        <h2 class="side-title" data-i18n="categories"></h2>
-        <nav class="cat-list" id="catList" aria-label="categories"></nav>
-        <h2 class="side-title" data-i18n="colors"></h2>
-        <div class="color-filter" id="colorFilter"></div>
-        <button class="btn btn-secondary btn-block" id="addGlyphBtn" type="button"><i data-icon="plus"></i><span data-i18n="addGlyph"></span></button>
+        <div class="side-metrics" id="sideMetrics"></div>
       </aside>
 
-      <div class="grid-wrap">
+      <div class="grid-wrap" id="gridWrap">
         <div class="glyph-grid" id="glyphGrid" role="listbox" aria-multiselectable="true" tabindex="0"></div>
       </div>
 
-      <aside class="inspector clay" id="inspector"></aside>
+      <aside class="dock" id="inspector"></aside>
     </section>
 
     <!-- ============ Glyph editor ============ -->
     <section class="view view-editor" id="editorView" hidden>
-      <nav class="toolbar clay" id="toolbar" aria-label="tools">
-        <button class="tool back-tool" id="backBtn" type="button"><i data-icon="grid" data-size="22"></i><span data-i18n="back"></span></button>
+      <nav class="toolstrip" id="toolbar" aria-label="Tools">
+        <button class="tool" id="backBtn" type="button" data-i18n-title="back"><i data-icon="grid" data-size="18"></i></button>
         <div class="tool-sep"></div>
-        <div id="toolButtons" role="radiogroup"></div>
-        <div class="tool-sep"></div>
-        <button class="tool" id="undoBtn" type="button"><i data-icon="undo" data-size="22"></i><span data-i18n="undo"></span></button>
-        <button class="tool" id="redoBtn" type="button"><i data-icon="redo" data-size="22"></i><span data-i18n="redo"></span></button>
+        <div id="toolButtons" role="radiogroup" aria-label="Tools"></div>
       </nav>
 
-      <div class="canvas-area">
-        <div class="canvas-top">
-          <button class="btn btn-icon" id="prevGlyph" type="button" data-i18n-title="prev"><i data-icon="chevronLeft"></i></button>
-          <div class="glyph-title"><span id="editorChar"></span><small id="editorName"></small></div>
-          <button class="btn btn-icon" id="nextGlyph" type="button" data-i18n-title="next"><i data-icon="chevronRight"></i></button>
-        </div>
-        <div class="canvas-wrap clay">
-          <canvas id="canvas" tabindex="0" role="img"></canvas>
-          <p class="tool-tip" id="toolTip" aria-live="polite"></p>
-          <div class="zoom-ctl">
-            <button class="btn btn-icon" id="zoomOut" type="button" data-i18n-title="zoomOut"><i data-icon="zoomOut"></i></button>
-            <button class="btn btn-icon" id="zoomFit" type="button" data-i18n-title="zoomFit"><i data-icon="fit"></i></button>
-            <button class="btn btn-icon" id="zoomIn" type="button" data-i18n-title="zoomIn"><i data-icon="zoomIn"></i></button>
-          </div>
-        </div>
+      <div class="canvas-wrap">
+        <canvas id="canvas" tabindex="0" role="img"></canvas>
       </div>
 
-      <aside class="inspector clay" id="glyphPanel"></aside>
+      <aside class="dock" id="glyphPanel"></aside>
     </section>
   </main>
 
-  <!-- ============ Live preview ============ -->
-  <section class="preview clay" id="preview" aria-labelledby="previewTitle">
+  <!-- ============ Preview ============ -->
+  <section class="preview" id="preview" aria-labelledby="previewTitle">
     <div class="preview-head">
-      <h2 id="previewTitle" data-i18n="preview"></h2>
-      <label class="preview-size">
-        <span data-i18n="previewSize"></span>
-        <input type="range" id="previewSize" min="16" max="160" value="56">
+      <button class="collapse" id="previewToggle" type="button" aria-expanded="true" aria-controls="previewBody">
+        <i data-icon="chevronDown" data-size="14"></i><span id="previewTitle" data-i18n="preview"></span>
+      </button>
+      <input id="previewInput" spellcheck="false" aria-labelledby="previewTitle">
+      <label class="preview-size"><span data-i18n="previewSize"></span>
+        <input type="range" id="previewSize" min="12" max="160" value="48"><output id="previewSizeOut">48</output>
       </label>
     </div>
-    <div class="preview-body">
-      <textarea id="previewInput" rows="1" spellcheck="false" aria-labelledby="previewTitle"></textarea>
-      <div class="preview-out" id="previewOut" aria-live="off"></div>
+    <div class="preview-body" id="previewBody">
+      <div class="preview-out" id="previewOut"></div>
       <p class="preview-msg" id="previewMsg"></p>
     </div>
   </section>
 
-  <div class="drop-overlay" id="dropOverlay" hidden><div><i data-icon="open" data-size="48"></i><p data-i18n="dropHere"></p></div></div>
+  <!-- ============ Status bar ============ -->
+  <footer class="statusbar">
+    <span id="statusTip" aria-live="polite"></span>
+    <span class="status-right">
+      <span id="statusPos" class="mono"></span>
+      <span id="statusZoom" class="mono"></span>
+      <span id="statusInfo"></span>
+    </span>
+  </footer>
+
+  <div class="drop-overlay" id="dropOverlay" hidden><div><i data-icon="open" data-size="40"></i><p data-i18n="dropHere"></p></div></div>
   <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
-  <dialog class="dialog clay" id="dialog"></dialog>
+  <dialog class="dialog" id="dialog"></dialog>
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
 </body>
 </html>

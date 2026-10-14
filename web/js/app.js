@@ -3,41 +3,49 @@ import { icon, fillIcons } from './icons.js';
 import { CATEGORIES, COLORS } from './glyphsets.js';
 import {
   newProject, validateProject, serialize, addGlyphForChar, charOf, isDrawn, svgPath, glyphBox,
-  translateGlyph, transformGlyph, normalizeDirections,
+  translateGlyph, normalizeDirections,
 } from './model.js';
 import { History } from './history.js';
 import { Editor } from './editor.js';
+import { importSVG, looksLikeSVG } from './svg.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const store = {
+  get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
+};
 const AUTOSAVE_KEY = 'spline.autosave';
+const isMac = /Mac/.test(navigator.platform);
+const MOD = isMac ? '⌘' : 'Ctrl+';
 
 const TOOLS = [
+  { id: 'select', icon: 'select', key: 'V' },
+  { id: 'pen', icon: 'pen', key: 'P' },
   { id: 'brush', icon: 'brush', key: 'B' },
   { id: 'eraser', icon: 'eraser', key: 'E' },
-  { id: 'pen', icon: 'pen', key: 'P' },
-  { id: 'select', icon: 'select', key: 'V' },
   { id: 'rect', icon: 'rect', key: 'R' },
   { id: 'ellipse', icon: 'ellipse', key: 'O' },
   { id: 'hand', icon: 'hand', key: 'H' },
 ];
-const toolName = (id) => t('tool' + id[0].toUpperCase() + id.slice(1));
-const toolTip = (id) => t('tip' + id[0].toUpperCase() + id.slice(1));
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
+const toolName = (id) => t('tool' + cap(id));
+const toolTip = (id) => t('tip' + cap(id));
 
 const app = {
   project: null,
   history: new History(),
   selected: new Set(), // glyph names
-  anchor: null, // for shift-range selection
+  anchor: null,
   focusName: null,
   category: 'all',
   colorFilter: null,
   search: '',
   mode: 'grid',
-  current: null, // glyph in the editor
+  current: null,
   dirty: false,
-  fileHandle: null, // File System Access handle
-  serverFile: null, // path when opened from the command line
+  fileHandle: null,
+  serverFile: null,
   fileName: null,
 };
 
@@ -46,28 +54,26 @@ const app = {
 function toast(msg, kind = 'ok') {
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
-  el.innerHTML = icon(kind === 'error' ? 'alert' : 'check') + `<span>${esc(msg)}</span>`;
+  el.innerHTML = icon(kind === 'error' ? 'alert' : 'check', 16) + `<span>${esc(msg)}</span>`;
   $('toasts').append(el);
-  setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 200); }, kind === 'error' ? 5000 : 2600);
+  setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 200); }, kind === 'error' ? 6000 : 2500);
 }
 
-// Shows a modal. `body` is HTML; resolves with FormData (submit) or null.
+// Modal dialog. Resolves with FormData (OK) or null (cancel).
 function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true }) {
   const dlg = $('dialog');
   dlg.innerHTML = `<form method="dialog">
     <h2>${esc(title)}</h2>
-    ${body}
+    <div class="body">${body}</div>
     <div class="actions">
-      ${cancel ? `<button class="btn btn-ghost" value="cancel" formnovalidate>${esc(t('cancel'))}</button>` : ''}
+      ${cancel ? `<button class="btn" value="cancel" formnovalidate>${esc(t('cancel'))}</button>` : ''}
       <button class="btn ${okClass}" value="ok">${esc(okLabel)}</button>
     </div>
   </form>`;
   return new Promise((resolve) => {
     const form = dlg.querySelector('form');
     let data = null;
-    form.addEventListener('submit', (e) => {
-      if (e.submitter?.value === 'ok') data = new FormData(form);
-    });
+    form.addEventListener('submit', (e) => { if (e.submitter?.value === 'ok') data = new FormData(form); });
     dlg.addEventListener('close', () => resolve(data), { once: true });
     dlg.showModal();
     const first = dlg.querySelector('input:not([type=checkbox])');
@@ -76,8 +82,7 @@ function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', c
 }
 
 async function confirmDialog(msg, okLabel, danger = true) {
-  const r = await showDialog({ title: msg, body: '', okLabel, okClass: danger ? 'btn-danger' : 'btn-primary' });
-  return !!r;
+  return !!(await showDialog({ title: msg, body: '', okLabel, okClass: danger ? 'btn-danger' : 'btn-primary' }));
 }
 
 function glyphSVG(g, cls = 'glyph') {
@@ -85,14 +90,16 @@ function glyphSVG(g, cls = 'glyph') {
   const b = glyphBox(g);
   const minX = Math.min(0, b ? b.minX : 0), maxX = Math.max(g.advance, b ? b.maxX : 0, 1);
   const top = Math.max(asc, b ? b.maxY : 0), bottom = Math.min(desc, b ? b.minY : 0);
-  const pad = 40;
+  const pad = 30;
   return `<svg class="${cls}" viewBox="${minX - pad} ${-top - pad} ${maxX - minX + 2 * pad} ${top - bottom + 2 * pad}" aria-hidden="true">
     <path transform="scale(1 -1)" d="${svgPath(g)}" fill="currentColor"/></svg>`;
 }
 
 const findGlyph = (name) => app.project.glyphs.find((g) => g.name === name);
+const hex = (g) => (g.unicode ? g.unicode.toString(16).toUpperCase().padStart(4, '0') : '');
+const selectedGlyphs = () => [...app.selected].map(findGlyph).filter(Boolean);
 
-// ================================================================ state changes
+// ================================================================ project state
 
 function setProject(p, { fileName = null, fileHandle = null, serverFile = null } = {}) {
   app.project = p;
@@ -122,43 +129,218 @@ function markChanged() {
 }
 
 function autosave() {
-  try {
-    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ fileName: app.fileName, project: serialize(app.project) }));
-  } catch { /* storage full or blocked */ }
+  store.set(AUTOSAVE_KEY, JSON.stringify({ fileName: app.fileName, project: serialize(app.project) }));
 }
 
-// Called by the editor after every edit.
-app.commitGlyph = () => {
-  markChanged();
-  updatePanelMetrics();
-};
-app.onGlyphMetricsChanged = () => updatePanelMetrics();
+// Editor callbacks.
+app.commitGlyph = () => { markChanged(); updateMetricInputs(); };
+app.onGlyphMetricsChanged = () => updateMetricInputs();
+app.onCursor = (p) => { $('statusPos').textContent = p ? `X ${Math.round(p.x)}   Y ${Math.round(p.y)}` : ''; };
+app.onZoom = (s) => { $('statusZoom').textContent = `${Math.round(s * 100)}%`; };
 
 function renderAll() {
-  $('fontName').textContent = app.project.info.familyName;
+  $('fontName').textContent = app.fileName ? `${app.project.info.familyName} — ${app.fileName}` : app.project.info.familyName;
   document.title = `${app.project.info.familyName} — Spline`;
-  renderSidebar();
-  renderGrid();
-  renderInspector();
+  renderMenus();
+  if (app.mode === 'grid') {
+    renderSidebar();
+    renderGrid();
+    renderInspector();
+    renderGridOptions();
+  }
+  updateStatus();
 }
 
+function updateStatus() {
+  $('statusTip').textContent = app.mode === 'editor' ? toolTip(editor.tool) : t('tipGrid');
+  $('statusInfo').textContent = t('selectedCount', {
+    sel: app.selected.size, n: visibleGlyphs().length, total: app.project.glyphs.length,
+  });
+  if (app.mode === 'grid') { $('statusPos').textContent = ''; $('statusZoom').textContent = ''; }
+}
+
+// ================================================================ menus
+
+function menuDefs() {
+  const inEditor = app.mode === 'editor';
+  const hasSel = inEditor ? editor.sel.size > 0 : app.selected.size > 0;
+  const theme = document.documentElement.dataset.theme;
+  return [
+    { id: 'menuFile', items: [
+      { label: 'new', run: newFontDialog },
+      { label: 'open', key: `${MOD}O`, run: openDialog },
+      '-',
+      { label: 'importSvg', run: () => pickFiles('svg') },
+      { label: 'importSp', run: () => pickFiles('import') },
+      '-',
+      { label: 'save', key: `${MOD}S`, run: () => save() },
+      { label: 'saveAs', key: `${MOD}Shift+S`, run: () => save(true) },
+      '-',
+      { label: 'exportTTF', run: () => exportFont('ttf') },
+      { label: 'exportOTF', run: () => exportFont('otf') },
+    ] },
+    { id: 'menuEdit', items: [
+      { label: 'undo', key: `${MOD}Z`, run: undo, enabled: app.history.undoStack.length > 0 },
+      { label: 'redo', key: `${MOD}Y`, run: redo, enabled: app.history.redoStack.length > 0 },
+      '-',
+      { label: 'cut', key: `${MOD}X`, run: () => document.execCommand('cut'), enabled: inEditor && hasSel },
+      { label: 'copy', key: `${MOD}C`, run: () => document.execCommand('copy'), enabled: hasSel || inEditor },
+      { label: 'paste', key: `${MOD}V`, run: pasteFromMenu },
+      '-',
+      { label: 'selectAll', key: `${MOD}A`, run: selectAll },
+      { label: 'delete', key: 'Del', run: deleteSelection, enabled: hasSel },
+    ] },
+    { id: 'menuView', items: [
+      { label: 'zoomIn', key: '+', run: () => editor.zoomBy(1.25), enabled: inEditor },
+      { label: 'zoomOut', key: '−', run: () => editor.zoomBy(0.8), enabled: inEditor },
+      { label: 'zoomFit', key: '0', run: () => editor.fit(), enabled: inEditor },
+      '-',
+      { label: 'showGuide', check: editor.showGuide, run: () => toggleView('showGuide') },
+      { label: 'showGrid', check: editor.showGrid, run: () => toggleView('showGrid') },
+      '-',
+      { label: 'themeDark', check: theme === 'dark', run: () => setTheme('dark') },
+      { label: 'themeLight', check: theme === 'light', run: () => setTheme('light') },
+      '-',
+      { text: 'Русский', check: getLang() === 'ru', run: () => setLang('ru') },
+      { text: 'English', check: getLang() === 'en', run: () => setLang('en') },
+    ] },
+    { id: 'menuGlyph', items: [
+      { label: 'addGlyph', run: addGlyphs },
+      { label: 'drawGlyph', key: 'Enter', run: () => openEditor([...app.selected][0]), enabled: !inEditor && app.selected.size === 1 },
+      { label: 'deleteGlyph', run: deleteSelectedGlyphs, enabled: !inEditor && app.selected.size > 0 },
+      '-',
+      { label: 'autoSpacing', run: () => glyphAction('spacing'), enabled: inEditor || app.selected.size > 0 },
+      { label: 'flipH', run: () => applyTransform('flipH'), enabled: inEditor || app.selected.size > 0 },
+      { label: 'flipV', run: () => applyTransform('flipV'), enabled: inEditor || app.selected.size > 0 },
+      { label: 'clear', run: () => glyphAction('clear'), enabled: inEditor },
+      '-',
+      { label: 'fontInfo', run: editFontInfo },
+    ] },
+    { id: 'menuHelp', items: [
+      { label: 'shortcuts', key: 'F1', run: helpDialog },
+      { label: 'about', run: () => window.open('https://github.com/GeekFreak01/spline', '_blank', 'noopener') },
+    ] },
+  ];
+}
+
+let openMenu = null; // index of the open menu
+
+function renderMenus() {
+  const defs = menuDefs();
+  $('menus').innerHTML = defs.map((m, i) => `<div class="menu-root">
+    <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="${openMenu === i}" data-menu="${i}">${esc(t(m.id))}</button>
+    <div class="menu" role="menu" ${openMenu === i ? '' : 'hidden'}>
+      ${m.items.map((it, j) => (it === '-' ? '<hr>' : `<button type="button" role="${it.check !== undefined ? 'menuitemcheckbox' : 'menuitem'}"
+        ${it.check !== undefined ? `aria-checked="${!!it.check}"` : ''} data-item="${i}:${j}" ${it.enabled === false ? 'disabled' : ''}>
+        <span>${it.check ? icon('check', 14) : ''}</span><span>${esc(it.text || t(it.label))}</span><kbd>${esc(it.key || '')}</kbd></button>`)).join('')}
+    </div></div>`).join('');
+}
+
+function setMenu(i, focusFirst = false) {
+  openMenu = i;
+  renderMenus();
+  if (i !== null) {
+    const btn = $('menus').querySelector(`[data-menu="${i}"]`);
+    if (focusFirst) btn.parentElement.querySelector('.menu [role^="menuitem"]:not(:disabled)')?.focus();
+    else btn.focus();
+  }
+}
+
+$('menus').addEventListener('click', (e) => {
+  const root = e.target.closest('[data-menu]');
+  if (root) { setMenu(openMenu === Number(root.dataset.menu) ? null : Number(root.dataset.menu)); return; }
+  const item = e.target.closest('[data-item]');
+  if (!item || item.disabled) return;
+  const [i, j] = item.dataset.item.split(':').map(Number);
+  const def = menuDefs()[i].items[j];
+  setMenu(null);
+  def.run();
+});
+$('menus').addEventListener('mouseover', (e) => {
+  const root = e.target.closest('[data-menu]');
+  if (root && openMenu !== null && Number(root.dataset.menu) !== openMenu) setMenu(Number(root.dataset.menu));
+});
+$('menus').addEventListener('keydown', (e) => {
+  const count = menuDefs().length;
+  const items = [...$('menus').querySelectorAll('.menu:not([hidden]) [role^="menuitem"]:not(:disabled)')];
+  const i = items.indexOf(document.activeElement);
+  if (e.key === 'ArrowDown') { e.preventDefault(); if (openMenu === null) setMenu(Number(e.target.dataset.menu ?? 0), true); else items[(i + 1) % items.length]?.focus(); }
+  if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); setMenu(((openMenu ?? 0) + 1) % count, true); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); setMenu(((openMenu ?? 0) - 1 + count) % count, true); }
+  if (e.key === 'Escape') { e.preventDefault(); const k = openMenu; setMenu(null); if (k !== null) $('menus').querySelector(`[data-menu="${k}"]`)?.focus(); }
+});
+document.addEventListener('pointerdown', (e) => { if (openMenu !== null && !e.target.closest('#menus')) setMenu(null); });
+
+function toggleView(prop) {
+  editor[prop] = !editor[prop];
+  store.set(`spline.${prop}`, editor[prop] ? '1' : '0');
+  editor.render();
+  if (app.mode === 'editor') renderEditorOptions();
+  renderMenus();
+}
+
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  store.set('spline.theme', theme);
+  editor.render();
+  renderMenus();
+}
+
+// ================================================================ tooltips
+
+let tipTimer;
+function showTip(el) {
+  const tip = $('tooltip');
+  const text = el.dataset.tip;
+  if (!text) return;
+  tip.innerHTML = esc(text) + (el.dataset.key ? `<kbd>${esc(el.dataset.key)}</kbd>` : '');
+  tip.hidden = false;
+  const r = el.getBoundingClientRect();
+  const tr = tip.getBoundingClientRect();
+  const left = el.closest('.toolstrip') ? r.right + 6 : Math.min(window.innerWidth - tr.width - 4, Math.max(4, r.left + r.width / 2 - tr.width / 2));
+  const top = el.closest('.toolstrip') ? r.top + r.height / 2 - tr.height / 2 : r.bottom + 6;
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+}
+function hideTip() { clearTimeout(tipTimer); $('tooltip').hidden = true; }
+document.addEventListener('pointerover', (e) => {
+  const el = e.target.closest('[data-tip]');
+  hideTip();
+  if (el) tipTimer = setTimeout(() => showTip(el), 450);
+});
+document.addEventListener('focusin', (e) => { hideTip(); if (e.target.matches?.('[data-tip]:focus-visible')) showTip(e.target); });
+document.addEventListener('pointerdown', hideTip);
+
 // ================================================================ sidebar
+
+function groupOf(ch) {
+  return CATEGORIES.slice(1).find((c) => c.test(ch))?.id ?? 'other';
+}
+
+function grouped() { return app.category === 'all' && !app.search.trim() && !app.colorFilter; }
 
 function visibleGlyphs() {
   const cat = CATEGORIES.find((c) => c.id === app.category);
   const q = app.search.trim().toLowerCase();
-  return app.project.glyphs.filter((g) => {
+  const list = app.project.glyphs.filter((g) => {
     const ch = charOf(g);
     if (app.category === 'empty') { if (isDrawn(g)) return false; } else if (app.category === 'done') {
       if (!isDrawn(g)) return false;
     } else if (cat && !cat.test(ch)) return false;
     if (app.colorFilter && g.color !== app.colorFilter) return false;
     if (q) {
-      const hex = g.unicode ? g.unicode.toString(16) : '';
-      if (!(ch.toLowerCase() === q || g.name.toLowerCase().includes(q) || hex === q.replace(/^u\+/, ''))) return false;
+      const h = g.unicode ? g.unicode.toString(16) : '';
+      if (!(ch.toLowerCase() === q || g.name.toLowerCase().includes(q) || h === q.replace(/^(u\+|0+)/, ''))) return false;
     }
     return true;
   });
+  if (!grouped()) return list;
+  const order = CATEGORIES.slice(1).map((c) => c.id);
+  return list
+    .map((g, i) => ({ g, i, k: order.indexOf(groupOf(charOf(g))) }))
+    .sort((a, b) => a.k - b.k || a.i - b.i)
+    .map((x) => x.g);
 }
 
 function renderSidebar() {
@@ -176,8 +358,9 @@ function renderSidebar() {
       <span>${esc(t(c.id))}</span><span class="count">${c.n}</span></button>`).join('');
 
   $('colorFilter').innerHTML = COLORS.map((c) => `<button type="button" class="swatch" data-color="${c}"
-      style="background:var(--dot-${c})" aria-pressed="${app.colorFilter === c}" title="${esc(t('colorNames')[c])}"
+      style="background:var(--dot-${c})" aria-pressed="${app.colorFilter === c}" data-tip="${esc(t('colorNames')[c])}"
       aria-label="${esc(t('colorNames')[c])}"></button>`).join('');
+  renderSideMetrics();
 }
 
 $('catList').addEventListener('click', (e) => {
@@ -186,6 +369,7 @@ $('catList').addEventListener('click', (e) => {
   app.category = b.dataset.cat;
   renderSidebar();
   renderGrid();
+  updateStatus();
 });
 $('colorFilter').addEventListener('click', (e) => {
   const b = e.target.closest('[data-color]');
@@ -193,8 +377,45 @@ $('colorFilter').addEventListener('click', (e) => {
   app.colorFilter = app.colorFilter === b.dataset.color ? null : b.dataset.color;
   renderSidebar();
   renderGrid();
+  updateStatus();
 });
-$('searchInput').addEventListener('input', (e) => { app.search = e.target.value; renderGrid(); });
+
+// Glyphs-style metrics widget: left sidebearing | width | right sidebearing.
+function metricInputs(g) {
+  const box = glyphBox(g);
+  return `<div class="metrics-widget">
+    <label><span>${esc(t('lsb'))}</span><input type="number" step="1" data-metric="lsb" value="${box ? Math.round(box.minX) : ''}" ${box ? '' : 'disabled'}></label>
+    <label><span>${esc(t('width'))}</span><input type="number" step="1" min="0" data-metric="advance" value="${Math.round(g.advance)}"></label>
+    <label><span>${esc(t('rsb'))}</span><input type="number" step="1" data-metric="rsb" value="${box ? Math.round(g.advance - box.maxX) : ''}" ${box ? '' : 'disabled'}></label>
+  </div>`;
+}
+
+function renderSideMetrics() {
+  const el = $('sideMetrics');
+  const sel = selectedGlyphs();
+  el.innerHTML = sel.length === 1
+    ? `<div class="sub-head">${esc(charOf(sel[0]).trim() || sel[0].name)} · ${esc(sel[0].name)}</div>${metricInputs(sel[0])}`
+    : '';
+}
+
+function applyMetric(g, role, v) {
+  if (!Number.isFinite(v)) return;
+  const box = glyphBox(g);
+  app.history.push(g);
+  if (role === 'advance') g.advance = Math.max(0, Math.round(v));
+  if (role === 'lsb' && box) { const d = Math.round(v - box.minX); translateGlyph(g, d, 0); g.advance = Math.max(0, g.advance + d); }
+  if (role === 'rsb' && box) g.advance = Math.max(0, Math.round(box.maxX + v));
+}
+
+function onMetricChange(e) {
+  const role = e.target.dataset.metric;
+  if (!role) return;
+  const g = app.mode === 'editor' ? app.current : selectedGlyphs()[0];
+  if (!g) return;
+  applyMetric(g, role, Number(e.target.value));
+  if (app.mode === 'editor') { editor.afterEdit(false); } else { markChanged(); updateTile(g); renderSideMetrics(); renderInspector(); }
+}
+$('sideMetrics').addEventListener('change', onMetricChange);
 
 // ================================================================ grid
 
@@ -202,18 +423,26 @@ function tileHTML(g) {
   const ch = charOf(g);
   const drawn = g.contours.length > 0;
   const body = drawn || g.unicode === 32 ? glyphSVG(g) : `<span class="ghost" aria-hidden="true">${esc(ch)}</span>`;
-  const label = ch && ch.trim() ? `${ch} · ${g.name}` : g.name;
-  return `<button type="button" class="tile" role="option" data-name="${esc(g.name)}"
+  const label = ch && ch.trim() ? `${ch} ${g.name} ${hex(g)}` : `${g.name} ${hex(g)}`;
+  return `<button type="button" class="tile${drawn ? ' drawn' : ''}" role="option" data-name="${esc(g.name)}"
       ${g.color ? `data-color="${g.color}"` : ''} aria-selected="${app.selected.has(g.name)}"
       tabindex="${g.name === app.focusName ? 0 : -1}" aria-label="${esc(label)}">
-      ${drawn ? `<span class="done-dot">${icon('check', 16)}</span>` : ''}
-      ${body}<span class="label">${esc(g.name)}</span></button>`;
+      ${body}<span class="label"><span>${esc(g.name)}</span><span class="code">${hex(g)}</span></span></button>`;
 }
 
 function renderGrid() {
   const list = visibleGlyphs();
   if (list.length && !list.some((g) => g.name === app.focusName)) app.focusName = list[0].name;
-  $('glyphGrid').innerHTML = list.length ? list.map(tileHTML).join('') : `<p class="grid-empty">—</p>`;
+  if (!list.length) { $('glyphGrid').innerHTML = '<p class="grid-empty">—</p>'; return; }
+  let html = '', group = null;
+  for (const g of list) {
+    if (grouped()) {
+      const k = groupOf(charOf(g));
+      if (k !== group) { group = k; html += `<h2 class="grid-section">${esc(t(k))}</h2>`; }
+    }
+    html += tileHTML(g);
+  }
+  $('glyphGrid').innerHTML = html;
 }
 
 function updateTile(g) {
@@ -239,6 +468,8 @@ function selectGlyph(name, e = {}) {
     el.tabIndex = el.dataset.name === name ? 0 : -1;
   });
   renderInspector();
+  renderSideMetrics();
+  updateStatus();
 }
 
 $('glyphGrid').addEventListener('click', (e) => {
@@ -253,7 +484,9 @@ $('glyphGrid').addEventListener('keydown', (e) => {
   const list = visibleGlyphs();
   if (!list.length) return;
   let i = list.findIndex((g) => g.name === app.focusName);
-  const cols = getComputedStyle($('glyphGrid')).gridTemplateColumns.split(' ').length;
+  const tiles = [...$('glyphGrid').querySelectorAll('.tile')];
+  const top = tiles[0]?.offsetTop;
+  const cols = Math.max(1, tiles.findIndex((el) => el.offsetTop !== top) === -1 ? tiles.length : tiles.findIndex((el) => el.offsetTop !== top));
   const moves = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols, Home: -1e9, End: 1e9 };
   if (e.key in moves) {
     e.preventDefault();
@@ -265,92 +498,242 @@ $('glyphGrid').addEventListener('keydown', (e) => {
   } else if (e.key === 'Enter' && app.focusName) {
     e.preventDefault();
     openEditor(app.focusName);
-  } else if ((e.key === 'Delete' || e.key === 'Backspace') && app.selected.size) {
-    e.preventDefault();
-    deleteSelectedGlyphs();
-  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
-    e.preventDefault();
-    app.selected = new Set(list.map((g) => g.name));
-    renderGrid();
-    renderInspector();
   }
 });
 
-// ================================================================ inspector (grid)
+function renderGridOptions() {
+  const size = store.get('spline.tile', '96');
+  $('optionsBar').innerHTML = `
+    <div class="group"><label><span class="sr-only">${esc(t('search'))}</span>${icon('search', 15)}
+      <input type="search" id="searchInput" placeholder="${esc(t('search'))}" value="${esc(app.search)}" autocomplete="off"></label></div>
+    <div class="sep"></div>
+    <div class="group">
+      <button class="btn" type="button" data-cmd="addGlyph">${icon('plus', 15)}<span>${esc(t('addGlyph'))}</span></button>
+      <button class="btn" type="button" data-cmd="importSvg">${icon('open', 15)}<span>${esc(t('importSvg'))}</span></button>
+    </div>
+    <div class="glyph-nav"><label>${esc(t('tileSize'))}<input type="range" id="tileSize" min="56" max="200" value="${esc(size)}"></label></div>`;
+  $('glyphGrid').style.setProperty('--tile', `${size}px`);
+}
+
+$('optionsBar').addEventListener('input', (e) => {
+  if (e.target.id === 'searchInput') { app.search = e.target.value; renderGrid(); updateStatus(); }
+  if (e.target.id === 'tileSize') {
+    $('glyphGrid').style.setProperty('--tile', `${e.target.value}px`);
+    store.set('spline.tile', e.target.value);
+  }
+  if (e.target.dataset.opt === 'brush') {
+    editor.brushRadius = Number(e.target.value) / 2;
+    store.set('spline.brush', String(editor.brushRadius));
+    $('optionsBar').querySelectorAll('[data-opt="brush"]').forEach((el) => { if (el !== e.target) el.value = e.target.value; });
+    editor.render();
+  }
+});
+$('optionsBar').addEventListener('change', (e) => {
+  if (e.target.dataset.opt === 'guide' || e.target.dataset.opt === 'grid') {
+    toggleView(e.target.dataset.opt === 'guide' ? 'showGuide' : 'showGrid');
+  }
+});
+$('optionsBar').addEventListener('click', (e) => {
+  const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
+  if (cmd) COMMANDS[cmd]?.();
+});
+
+// ================================================================ dock (inspector)
 
 function colorPicker(current) {
-  return `<div class="field"><span>${esc(t('color'))}</span><div class="color-filter" data-role="colorPick">
-    <button type="button" class="swatch none" data-color="" aria-pressed="${!current}" title="${esc(t('noColor'))}" aria-label="${esc(t('noColor'))}"></button>
+  return `<div class="color-filter" data-role="colorPick">
+    <button type="button" class="swatch none" data-color="" aria-pressed="${!current}" data-tip="${esc(t('noColor'))}" aria-label="${esc(t('noColor'))}"></button>
     ${COLORS.map((c) => `<button type="button" class="swatch" data-color="${c}" style="background:var(--dot-${c})"
-      aria-pressed="${current === c}" title="${esc(t('colorNames')[c])}" aria-label="${esc(t('colorNames')[c])}"></button>`).join('')}
-  </div></div>`;
+      aria-pressed="${current === c}" data-tip="${esc(t('colorNames')[c])}" aria-label="${esc(t('colorNames')[c])}"></button>`).join('')}
+  </div>`;
+}
+
+function section(id, title, body, open = true) {
+  const saved = store.get(`spline.sec.${id}`);
+  const isOpen = saved === null ? open : saved === '1';
+  return `<details data-sec="${id}" ${isOpen ? 'open' : ''}><summary>${esc(title)}</summary><div class="section">${body}</div></details>`;
+}
+
+function transformSection() {
+  const num = (k, v, unit) => `<label class="prop"><span>${esc(t(k))}</span><span class="with-unit">
+    <input type="number" data-tf="${k}" value="${v}" step="1"><em>${unit}</em>
+    <button class="btn btn-icon" type="button" data-apply="${k}" data-tip="${esc(t('apply'))}" aria-label="${esc(t('apply'))} ${esc(t(k))}">${icon('check', 14)}</button></span></label>`;
+  return section('transform', t('transform'), `
+    ${num('scale', store.get('spline.tf.scale', '110'), '%')}
+    ${num('rotate', store.get('spline.tf.rotate', '90'), '°')}
+    ${num('slant', store.get('spline.tf.slant', '10'), '°')}
+    <div class="btn-row">
+      <button class="btn" type="button" data-cmd="flipH" data-tip="${esc(t('flipH'))}">${icon('flipH', 15)}<span>↔</span></button>
+      <button class="btn" type="button" data-cmd="flipV" data-tip="${esc(t('flipV'))}">${icon('flipV', 15)}<span>↕</span></button>
+    </div>
+    <p class="hint">${esc(t('transformHint'))}</p>`);
+}
+
+function fontSection() {
+  const i = app.project.info;
+  return section('font', t('fontSection'), `
+    <dl class="kv">
+      <dt>${esc(t('family'))}</dt><dd>${esc(i.familyName)}</dd>
+      <dt>${esc(t('ascender'))}</dt><dd>${i.ascender}</dd>
+      <dt>${esc(t('capHeight'))}</dt><dd>${i.capHeight}</dd>
+      <dt>${esc(t('xHeight'))}</dt><dd>${i.xHeight}</dd>
+      <dt>${esc(t('descender'))}</dt><dd>${i.descender}</dd>
+    </dl>
+    <button class="btn btn-block" type="button" data-cmd="fontInfo">${icon('settings', 15)}<span>${esc(t('fontInfo'))}</span></button>`, false);
 }
 
 function renderInspector() {
   const el = $('inspector');
-  const sel = [...app.selected].map(findGlyph).filter(Boolean);
+  const sel = selectedGlyphs();
   if (!sel.length) {
-    const info = app.project.info;
-    el.innerHTML = `<h2>${esc(info.familyName)}</h2>
-      <p class="hint">${esc(t('noSelection'))}</p>
-      <p class="hint">${esc(t('helpIntro'))}</p>
-      <button class="btn btn-ghost btn-block" type="button" data-act="info">${icon('settings')}<span>${esc(t('fontInfo'))}</span></button>
-      <button class="btn btn-ghost btn-block" type="button" data-act="import">${icon('open')}<span>${esc(t('importGlyphs'))}</span></button>`;
+    el.innerHTML = section('glyph', t('dimensions'), `<p class="hint">${esc(t('noSelection'))}</p>`) + fontSection();
     return;
   }
-  if (sel.length === 1) {
-    const g = sel[0];
-    const ch = charOf(g);
-    const drawn = g.contours.length > 0;
-    el.innerHTML = `<div class="big-glyph">${drawn ? glyphSVG(g) : `<span class="ghost">${esc(ch)}</span>`}</div>
-      <h2>${esc(ch && ch.trim() ? ch : g.name)}</h2>
-      <div class="field-row">
-        <label class="field"><span>${esc(t('name'))}</span><input value="${esc(g.name)}" readonly></label>
-        <label class="field"><span>${esc(t('unicode'))}</span><input value="${g.unicode ? 'U+' + g.unicode.toString(16).toUpperCase().padStart(4, '0') : '—'}" readonly></label>
-      </div>
-      <label class="field"><span>${esc(t('width'))}</span><input type="number" min="0" max="5000" step="10" value="${Math.round(g.advance)}" data-role="width"></label>
-      ${colorPicker(g.color)}
-      <div class="panel-actions">
-        <button class="btn btn-primary btn-block" type="button" data-act="draw">${icon('brush')}<span>${esc(t('drawGlyph'))}</span></button>
-        <button class="btn btn-danger btn-block" type="button" data-act="delete">${icon('trash')}<span>${esc(t('deleteGlyph'))}</span></button>
-      </div>`;
-    return;
-  }
-  el.innerHTML = `<h2>${sel.length} × ${esc(t('glyph'))}</h2>
-    <p class="hint">${esc(sel.map((g) => charOf(g) || g.name).join(' '))}</p>
-    ${colorPicker(sel.every((g) => g.color === sel[0].color) ? sel[0].color : undefined)}
-    <button class="btn btn-danger btn-block" type="button" data-act="delete">${icon('trash')}<span>${esc(t('deleteGlyph'))}</span></button>`;
+  const g = sel[0];
+  const head = sel.length === 1
+    ? `<div class="big-glyph">${g.contours.length ? glyphSVG(g) : `<span class="ghost">${esc(charOf(g))}</span>`}</div>
+       <div class="title-row"><b>${esc(charOf(g).trim() || g.name)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>`
+    : `<div class="title-row"><b>${sel.length}</b><small>${esc(t('glyphs'))}: ${esc(sel.slice(0, 24).map((x) => charOf(x) || x.name).join(' '))}</small></div>`;
+  el.innerHTML = section('glyph', t('dimensions'), `${head}
+      <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(sel.every((x) => x.color === g.color) ? g.color : undefined)}</div>`)
+    + transformSection()
+    + section('actions', t('actions'), `
+      ${sel.length === 1 ? `<button class="btn btn-primary btn-block" type="button" data-cmd="draw">${icon('pen', 15)}<span>${esc(t('drawGlyph'))}</span></button>` : ''}
+      <button class="btn btn-block" type="button" data-cmd="importSvg">${icon('open', 15)}<span>${esc(t('importSvg'))}</span></button>
+      <button class="btn btn-block" type="button" data-cmd="spacing">${icon('spacing', 15)}<span>${esc(t('autoSpacing'))}</span></button>
+      <button class="btn btn-block btn-danger" type="button" data-cmd="deleteGlyph">${icon('trash', 15)}<span>${esc(t('deleteGlyph'))}</span></button>`)
+    + fontSection();
 }
 
-$('inspector').addEventListener('click', (e) => {
-  const sw = e.target.closest('[data-role="colorPick"] [data-color]');
-  if (sw) {
-    for (const name of app.selected) {
-      const g = findGlyph(name);
-      if (!g) continue;
-      if (sw.dataset.color) g.color = sw.dataset.color; else delete g.color;
-      updateTile(g);
+function renderGlyphPanel() {
+  const g = app.current;
+  if (!g) return;
+  $('glyphPanel').innerHTML = section('glyph', t('glyph'), `
+      <div class="title-row"><b>${esc(charOf(g).trim() || '␣')}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>
+      ${metricInputs(g)}
+      <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(g.color)}</div>`)
+    + transformSection()
+    + section('actions', t('actions'), `
+      <button class="btn btn-block" type="button" data-cmd="spacing">${icon('spacing', 15)}<span>${esc(t('autoSpacing'))}</span></button>
+      <button class="btn btn-block" type="button" data-cmd="importSvg">${icon('open', 15)}<span>${esc(t('importSvg'))}</span></button>
+      <button class="btn btn-block btn-danger" type="button" data-cmd="clear">${icon('eraseAll', 15)}<span>${esc(t('clear'))}</span></button>`)
+    + fontSection();
+}
+
+function updateMetricInputs() {
+  const g = app.mode === 'editor' ? app.current : selectedGlyphs()[0];
+  if (!g) return;
+  const box = glyphBox(g);
+  const vals = { advance: Math.round(g.advance), lsb: box ? Math.round(box.minX) : '', rsb: box ? Math.round(g.advance - box.maxX) : '' };
+  document.querySelectorAll('[data-metric]').forEach((el) => {
+    if (document.activeElement !== el) el.value = vals[el.dataset.metric];
+    el.disabled = el.dataset.metric !== 'advance' && !box;
+  });
+}
+
+for (const dock of [$('inspector'), $('glyphPanel')]) {
+  dock.addEventListener('toggle', (e) => {
+    const sec = e.target.dataset?.sec;
+    if (sec) store.set(`spline.sec.${sec}`, e.target.open ? '1' : '0');
+  }, true);
+  dock.addEventListener('change', (e) => {
+    if (e.target.dataset.tf) store.set(`spline.tf.${e.target.dataset.tf}`, e.target.value);
+    onMetricChange(e);
+  });
+  dock.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.dataset.tf) { e.preventDefault(); applyTransform(e.target.dataset.tf, Number(e.target.value)); }
+  });
+  dock.addEventListener('click', (e) => {
+    const sw = e.target.closest('[data-role="colorPick"] [data-color]');
+    if (sw) { setColor(sw.dataset.color); return; }
+    const ap = e.target.closest('[data-apply]');
+    if (ap) {
+      const input = dock.querySelector(`[data-tf="${ap.dataset.apply}"]`);
+      applyTransform(ap.dataset.apply, Number(input.value));
+      return;
     }
-    markChanged();
-    renderInspector();
+    const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
+    if (cmd) COMMANDS[cmd]?.();
+  });
+}
+
+function setColor(color) {
+  const targets = app.mode === 'editor' ? [app.current] : selectedGlyphs();
+  for (const g of targets) {
+    if (color) g.color = color; else delete g.color;
+    if (app.mode === 'grid') updateTile(g);
+  }
+  markChanged();
+  if (app.mode === 'editor') renderGlyphPanel(); else renderInspector();
+}
+
+// ================================================================ transformations
+
+// Target points: selected points in the editor, otherwise whole glyphs.
+function transformTargets() {
+  if (app.mode === 'editor') {
+    const g = app.current;
+    const nodes = editor.sel.size ? editor.selectedNodes() : g.contours.flatMap((c) => c.nodes);
+    return nodes.length ? [{ g, nodes }] : [];
+  }
+  return selectedGlyphs().map((g) => ({ g, nodes: g.contours.flatMap((c) => c.nodes) })).filter((x) => x.nodes.length);
+}
+
+function applyTransform(kind, value = 0) {
+  if (!Number.isFinite(value)) return;
+  const targets = transformTargets();
+  for (const { g, nodes } of targets) {
+    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const a = (value * Math.PI) / 180;
+    const fn = {
+      scale: (p) => ({ x: cx + (p.x - cx) * (value / 100), y: cy + (p.y - cy) * (value / 100) }),
+      rotate: (p) => ({
+        x: cx + (p.x - cx) * Math.cos(a) - (p.y - cy) * Math.sin(a),
+        y: cy + (p.x - cx) * Math.sin(a) + (p.y - cy) * Math.cos(a),
+      }),
+      slant: (p) => ({ x: p.x + (p.y - cy) * Math.tan(a), y: p.y }),
+      flipH: (p) => ({ x: 2 * cx - p.x, y: p.y }),
+      flipV: (p) => ({ x: p.x, y: 2 * cy - p.y }),
+    }[kind];
+    if (!fn || (kind === 'scale' && value <= 0)) continue;
+    app.history.push(g);
+    const r = (p) => { const q = fn(p); return { x: Math.round(q.x), y: Math.round(q.y) }; };
+    for (const n of nodes) {
+      if (n.in) n.in = r(n.in);
+      if (n.out) n.out = r(n.out);
+      Object.assign(n, r(n));
+    }
+    if (app.mode === 'grid') { normalizeDirections(g); updateTile(g); }
+  }
+  if (!targets.length) return;
+  if (app.mode === 'editor') editor.afterEdit(); else { markChanged(); renderInspector(); renderSideMetrics(); }
+}
+
+async function glyphAction(act) {
+  const targets = app.mode === 'editor' ? [app.current] : selectedGlyphs();
+  if (act === 'clear') {
+    const g = app.current;
+    if (!g?.contours.length || !(await confirmDialog(t('confirmClear'), t('clear')))) return;
+    app.history.push(g);
+    g.contours = [];
+    editor.sel.clear();
+    editor.afterEdit(false);
     return;
   }
-  const act = e.target.closest('[data-act]')?.dataset.act;
-  if (act === 'draw') openEditor([...app.selected][0]);
-  if (act === 'delete') deleteSelectedGlyphs();
-  if (act === 'info') editFontInfo();
-  if (act === 'import') importGlyphs();
-});
-$('inspector').addEventListener('change', (e) => {
-  if (e.target.dataset.role !== 'width') return;
-  const g = findGlyph([...app.selected][0]);
-  const v = Number(e.target.value);
-  if (!g || !Number.isFinite(v) || v < 0) return;
-  app.history.push(g);
-  g.advance = Math.round(v);
-  updateTile(g);
-  markChanged();
-});
+  if (act === 'spacing') {
+    for (const g of targets) {
+      const box = glyphBox(g);
+      if (!box) continue;
+      app.history.push(g);
+      const side = Math.round(Math.max(30, (box.maxX - box.minX) * 0.08));
+      translateGlyph(g, side - box.minX, 0);
+      g.advance = Math.round(box.maxX - box.minX + side * 2);
+      if (app.mode === 'grid') updateTile(g);
+    }
+    if (app.mode === 'editor') editor.afterEdit(false); else { markChanged(); renderInspector(); renderSideMetrics(); }
+  }
+}
 
 async function deleteSelectedGlyphs() {
   const n = app.selected.size;
@@ -361,12 +744,25 @@ async function deleteSelectedGlyphs() {
   renderAll();
 }
 
+function selectAll() {
+  if (app.mode === 'editor') { editor.selectAll(); renderToolbar(); updateStatus(); return; }
+  app.selected = new Set(visibleGlyphs().map((g) => g.name));
+  renderGrid();
+  renderInspector();
+  renderSideMetrics();
+  updateStatus();
+}
+
+function deleteSelection() {
+  if (app.mode === 'editor') editor.deleteSelection(); else deleteSelectedGlyphs();
+}
+
 // ================================================================ dialogs
 
 async function addGlyphs() {
   const data = await showDialog({
-    title: t('addGlyph'),
-    body: `<label class="field"><span>${esc(t('addGlyphHint'))}</span><input type="text" name="chars" required maxlength="200" autocomplete="off"></label>`,
+    title: t('addGlyph').replace('…', ''),
+    body: `<label class="field">${esc(t('addGlyphHint'))}<input type="text" name="chars" required maxlength="500" autocomplete="off"></label>`,
     okLabel: t('add'),
   });
   if (!data) return;
@@ -377,23 +773,24 @@ async function addGlyphs() {
   app.selected = new Set(added.map((g) => g.name));
   app.focusName = added[0].name;
   markChanged();
+  if (app.mode === 'editor') showGrid();
   renderAll();
   $('glyphGrid').querySelector(`[data-name="${CSS.escape(added[0].name)}"]`)?.scrollIntoView({ block: 'center' });
 }
 
 async function editFontInfo() {
   const i = app.project.info;
-  const num = (name, label, v) => `<label class="field"><span>${esc(t(label))}</span><input type="number" name="${name}" value="${v}" required step="10"></label>`;
+  const num = (name, v) => `<label class="field">${esc(t(name))}<input type="number" name="${name}" value="${v}" required step="1"></label>`;
   const data = await showDialog({
-    title: t('fontInfo'),
-    body: `<label class="field"><span>${esc(t('family'))}</span><input type="text" name="familyName" value="${esc(i.familyName)}" required maxlength="60"></label>
+    title: t('fontInfo').replace('…', ''),
+    body: `<label class="field">${esc(t('family'))}<input type="text" name="familyName" value="${esc(i.familyName)}" required maxlength="60"></label>
       <div class="field-row">
-        <label class="field"><span>${esc(t('designer'))}</span><input type="text" name="designer" value="${esc(i.designer || '')}" maxlength="80"></label>
-        <label class="field"><span>${esc(t('version'))}</span><input type="text" name="version" value="${esc(i.version || '1.000')}" pattern="\\d+\\.\\d+" maxlength="10"></label>
+        <label class="field">${esc(t('designer'))}<input type="text" name="designer" value="${esc(i.designer || '')}" maxlength="80"></label>
+        <label class="field">${esc(t('version'))}<input type="text" name="version" value="${esc(i.version || '1.000')}" pattern="\\d+\\.\\d+" maxlength="10"></label>
       </div>
       <h3>${esc(t('metrics'))}</h3>
-      <div class="field-row">${num('ascender', 'ascender', i.ascender)}${num('capHeight', 'capHeight', i.capHeight)}</div>
-      <div class="field-row">${num('xHeight', 'xHeight', i.xHeight)}${num('descender', 'descender', i.descender)}</div>`,
+      <div class="field-row">${num('ascender', i.ascender)}${num('capHeight', i.capHeight)}</div>
+      <div class="field-row">${num('xHeight', i.xHeight)}${num('descender', i.descender)}</div>`,
   });
   if (!data) return;
   i.familyName = String(data.get('familyName')).trim() || i.familyName;
@@ -406,18 +803,18 @@ async function editFontInfo() {
   if (i.descender > 0) i.descender = -i.descender;
   markChanged();
   renderAll();
-  if (app.mode === 'editor') editor.render();
+  if (app.mode === 'editor') { renderGlyphPanel(); editor.render(); }
 }
 
 async function newFontDialog() {
-  if (app.dirty && !(await confirmDialog(t('confirmNew'), t('new')))) return;
+  if (app.dirty && !(await confirmDialog(t('confirmNew'), t('ok'), false))) return;
   const sets = [['latin', 'setLatin'], ['cyrillic', 'setCyrillic'], ['digits', 'setDigits'], ['punct', 'setPunct']];
   const data = await showDialog({
     title: t('newTitle'),
-    body: `<label class="field"><span>${esc(t('family'))}</span><input type="text" name="family" value="${esc(getLang() === 'ru' ? 'Мой шрифт' : 'My Font')}" required maxlength="60"></label>
-      <fieldset class="field" style="border:0;padding:0;margin:0"><span>${esc(t('newSets'))}</span><div class="checks">
-      ${sets.map(([id, label]) => `<label class="toggle"><input type="checkbox" name="sets" value="${id}" checked>${esc(t(label))}</label>`).join('')}
-      </div></fieldset>`,
+    body: `<label class="field">${esc(t('family'))}<input type="text" name="family" value="${esc(getLang() === 'ru' ? 'Мой шрифт' : 'My Font')}" required maxlength="60"></label>
+      <h3>${esc(t('newSets'))}</h3><div class="checks">
+      ${sets.map(([id, label]) => `<label class="check"><input type="checkbox" name="sets" value="${id}" checked>${esc(t(label))}</label>`).join('')}
+      </div>`,
     okLabel: t('create'),
   });
   if (!data) return;
@@ -427,34 +824,73 @@ async function newFontDialog() {
 
 function helpDialog() {
   showDialog({
-    title: t('help'),
+    title: t('shortcuts'),
     cancel: false,
-    body: `<p>${esc(t('helpIntro'))}</p><h3>${esc(t('shortcuts'))}</h3>
-      <dl class="keys">${t('keysList').map(([k, v]) => `<dt><kbd>${esc(k)}</kbd></dt><dd>${esc(v)}</dd>`).join('')}</dl>`,
+    body: `<dl class="keys">${t('keysList').map(([k, v]) => `<dt><kbd>${esc(k)}</kbd></dt><dd>${esc(v)}</dd>`).join('')}</dl>`,
   });
 }
 
 // ================================================================ editor
 
 const editor = new Editor(app, $('canvas'));
+editor.showGuide = store.get('spline.showGuide', '1') === '1';
+editor.showGrid = store.get('spline.showGrid', '1') === '1';
+editor.brushRadius = Number(store.get('spline.brush', '40')) || 40;
+editor.tool = store.get('spline.tool', 'brush');
+if (!TOOLS.some((x) => x.id === editor.tool)) editor.tool = 'brush';
 
 function renderToolbar() {
   $('toolButtons').innerHTML = TOOLS.map((tl) => `<button type="button" class="tool" role="radio" data-tool="${tl.id}"
-      aria-checked="${editor.tool === tl.id}" title="${esc(toolName(tl.id))} (${tl.key})">
-      ${icon(tl.icon, 22)}<span>${esc(toolName(tl.id))}</span><kbd>${tl.key}</kbd></button>`).join('');
-  $('toolTip').textContent = toolTip(editor.tool);
+      aria-checked="${editor.tool === tl.id}" aria-label="${esc(toolName(tl.id))}" data-tip="${esc(toolName(tl.id))}" data-key="${tl.key}">
+      ${icon(tl.icon, 18)}</button>`).join('');
+  $('backBtn').dataset.tip = t('back');
+  $('backBtn').dataset.key = 'Esc';
+}
+
+function renderEditorOptions() {
+  const g = app.current;
+  if (!g) return;
+  const tl = TOOLS.find((x) => x.id === editor.tool);
+  const brush = editor.tool === 'brush' || editor.tool === 'eraser';
+  $('optionsBar').innerHTML = `
+    <div class="opt-tool">${icon(tl.icon, 16)}<span>${esc(toolName(tl.id))}</span></div>
+    <div class="sep"></div>
+    ${brush ? `<div class="group"><label>${esc(t('brushSize'))}
+      <input type="range" data-opt="brush" min="4" max="300" step="2" value="${editor.brushRadius * 2}">
+      <input type="number" data-opt="brush" min="4" max="300" step="2" value="${editor.brushRadius * 2}"></label></div><div class="sep"></div>` : ''}
+    <div class="group">
+      <label class="check"><input type="checkbox" data-opt="guide" ${editor.showGuide ? 'checked' : ''}>${esc(t('guide'))}</label>
+      <label class="check"><input type="checkbox" data-opt="grid" ${editor.showGrid ? 'checked' : ''}>${esc(t('grid'))}</label>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <button class="btn btn-icon" type="button" data-cmd="undo" data-tip="${esc(t('undo'))}" data-key="${MOD}Z" aria-label="${esc(t('undo'))}">${icon('undo', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="redo" data-tip="${esc(t('redo'))}" data-key="${MOD}Y" aria-label="${esc(t('redo'))}">${icon('redo', 15)}</button>
+    </div>
+    <div class="glyph-nav">
+      <button class="btn btn-icon" type="button" data-cmd="zoomOut" data-tip="${esc(t('zoomOut'))}" data-key="−" aria-label="${esc(t('zoomOut'))}">${icon('zoomOut', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="zoomFit" data-tip="${esc(t('zoomFit'))}" data-key="0" aria-label="${esc(t('zoomFit'))}">${icon('fit', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="zoomIn" data-tip="${esc(t('zoomIn'))}" data-key="+" aria-label="${esc(t('zoomIn'))}">${icon('zoomIn', 15)}</button>
+      <div class="sep"></div>
+      <button class="btn btn-icon" type="button" data-cmd="prev" data-tip="${esc(t('prev'))}" data-key="PgUp" aria-label="${esc(t('prev'))}">${icon('chevronLeft', 15)}</button>
+      <div class="cur"><b>${esc(charOf(g).trim() || '␣')}</b><small>${esc(g.name)}</small></div>
+      <button class="btn btn-icon" type="button" data-cmd="next" data-tip="${esc(t('next'))}" data-key="PgDn" aria-label="${esc(t('next'))}">${icon('chevronRight', 15)}</button>
+    </div>`;
 }
 
 function setTool(id) {
   editor.setTool(id);
+  store.set('spline.tool', id);
   renderToolbar();
-  renderGlyphPanel();
+  renderEditorOptions();
+  updateStatus();
 }
 
 $('toolButtons').addEventListener('click', (e) => {
   const b = e.target.closest('[data-tool]');
   if (b) setTool(b.dataset.tool);
 });
+$('backBtn').addEventListener('click', () => history.back());
 
 function openEditor(name, push = true) {
   const g = findGlyph(name);
@@ -465,15 +901,16 @@ function openEditor(name, push = true) {
   app.focusName = name;
   $('gridView').hidden = true;
   $('editorView').hidden = false;
-  const ch = charOf(g);
-  $('editorChar').textContent = ch && ch.trim() ? ch : '␣';
-  $('editorName').textContent = g.name;
   if (push) history.pushState({ glyph: name }, '', `#glyph=${encodeURIComponent(name)}`);
   else history.replaceState({ glyph: name }, '', `#glyph=${encodeURIComponent(name)}`);
   renderToolbar();
+  renderEditorOptions();
+  renderGlyphPanel();
+  editor.setTool(editor.tool);
   editor.resize();
   editor.open(g);
-  renderGlyphPanel();
+  renderMenus();
+  updateStatus();
   $('canvas').focus({ preventScroll: true });
 }
 
@@ -500,111 +937,11 @@ window.addEventListener('popstate', (e) => {
 
 function stepGlyph(dir) {
   const list = visibleGlyphs();
-  const all = list.some((g) => g === app.current) ? list : app.project.glyphs;
+  const all = list.includes(app.current) ? list : app.project.glyphs;
   const i = all.indexOf(app.current);
   const next = all[(i + dir + all.length) % all.length];
   if (next) openEditor(next.name, false);
 }
-
-$('backBtn').addEventListener('click', () => history.back());
-$('prevGlyph').addEventListener('click', () => stepGlyph(-1));
-$('nextGlyph').addEventListener('click', () => stepGlyph(1));
-$('zoomIn').addEventListener('click', () => editor.zoomBy(1.25));
-$('zoomOut').addEventListener('click', () => editor.zoomBy(0.8));
-$('zoomFit').addEventListener('click', () => editor.fit());
-$('undoBtn').addEventListener('click', undo);
-$('redoBtn').addEventListener('click', redo);
-
-function renderGlyphPanel() {
-  const g = app.current;
-  if (!g) return;
-  const brush = editor.tool === 'brush' || editor.tool === 'eraser';
-  $('glyphPanel').innerHTML = `
-    ${brush ? `<label class="range"><span>${esc(t('brushSize'))}: <output id="brushOut">${editor.brushRadius * 2}</output></span>
-      <input type="range" min="10" max="240" step="2" value="${editor.brushRadius * 2}" data-role="brush"></label>` : ''}
-    <label class="toggle"><input type="checkbox" data-role="guide" ${editor.showGuide ? 'checked' : ''}>${esc(t('guide'))}</label>
-    <label class="field"><span>${esc(t('width'))}</span><input type="number" min="0" max="5000" step="10" data-role="advance"></label>
-    <div class="field-row">
-      <label class="field"><span>${esc(t('lsb'))}</span><input type="number" step="10" data-role="lsb"></label>
-      <label class="field"><span>${esc(t('rsb'))}</span><input type="number" step="10" data-role="rsb"></label>
-    </div>
-    ${colorPicker(g.color)}
-    <div class="panel-actions">
-      <button class="btn btn-ghost btn-block" type="button" data-act="spacing">${icon('spacing')}<span>${esc(t('autoSpacing'))}</span></button>
-      <div class="row">
-        <button class="btn btn-ghost" type="button" data-act="flipH">${icon('flipH')}<span>${esc(t('flipH'))}</span></button>
-        <button class="btn btn-ghost" type="button" data-act="flipV">${icon('flipV')}<span>${esc(t('flipV'))}</span></button>
-      </div>
-      <button class="btn btn-danger btn-block" type="button" data-act="clear">${icon('eraseAll')}<span>${esc(t('clear'))}</span></button>
-    </div>`;
-  updatePanelMetrics();
-}
-
-function updatePanelMetrics() {
-  const g = app.current;
-  if (!g || app.mode !== 'editor') return;
-  const box = glyphBox(g);
-  const set = (role, v) => {
-    const el = $('glyphPanel').querySelector(`[data-role="${role}"]`);
-    if (el && document.activeElement !== el) el.value = v;
-  };
-  set('advance', Math.round(g.advance));
-  set('lsb', box ? Math.round(box.minX) : '');
-  set('rsb', box ? Math.round(g.advance - box.maxX) : '');
-}
-
-$('glyphPanel').addEventListener('input', (e) => {
-  const role = e.target.dataset.role;
-  if (role === 'brush') {
-    editor.brushRadius = Number(e.target.value) / 2;
-    $('brushOut').textContent = e.target.value;
-    editor.render();
-  }
-  if (role === 'guide') { editor.showGuide = e.target.checked; editor.render(); }
-});
-$('glyphPanel').addEventListener('change', (e) => {
-  const g = app.current;
-  const role = e.target.dataset.role;
-  const v = Math.round(Number(e.target.value));
-  if (!g || !['advance', 'lsb', 'rsb'].includes(role) || !Number.isFinite(v)) return;
-  const box = glyphBox(g);
-  app.history.push(g);
-  if (role === 'advance') g.advance = Math.max(0, v);
-  if (role === 'lsb' && box) { const d = v - box.minX; translateGlyph(g, d, 0); g.advance = Math.max(0, g.advance + d); }
-  if (role === 'rsb' && box) g.advance = Math.max(0, Math.round(box.maxX + v));
-  editor.afterEdit(false);
-});
-$('glyphPanel').addEventListener('click', async (e) => {
-  const g = app.current;
-  if (!g) return;
-  const sw = e.target.closest('[data-role="colorPick"] [data-color]');
-  if (sw) {
-    if (sw.dataset.color) g.color = sw.dataset.color; else delete g.color;
-    markChanged();
-    renderGlyphPanel();
-    return;
-  }
-  const act = e.target.closest('[data-act]')?.dataset.act;
-  const box = glyphBox(g);
-  if (!act || (!box && act !== 'clear')) return;
-  if (act === 'clear') {
-    if (!g.contours.length || !(await confirmDialog(t('confirmClear'), t('clear')))) return;
-    app.history.push(g);
-    g.contours = [];
-  } else {
-    app.history.push(g);
-    if (act === 'spacing') {
-      const side = Math.round(Math.max(30, (box.maxX - box.minX) * 0.08));
-      translateGlyph(g, side - box.minX, 0);
-      g.advance = Math.round(box.maxX - box.minX + side * 2);
-    }
-    if (act === 'flipH') transformGlyph(g, (p) => ({ ...p, x: box.minX + box.maxX - p.x }));
-    if (act === 'flipV') transformGlyph(g, (p) => ({ ...p, y: box.minY + box.maxY - p.y }));
-  }
-  normalizeDirections(g);
-  editor.sel.clear();
-  editor.afterEdit(false);
-});
 
 // ================================================================ undo
 
@@ -618,7 +955,7 @@ function applyHistory(name) {
     editor.sel.clear();
     editor.penContour = null;
     editor.render();
-    updatePanelMetrics();
+    updateMetricInputs();
   } else {
     const g = findGlyph(name);
     if (g) updateTile(g);
@@ -629,9 +966,7 @@ function applyHistory(name) {
 
 // ================================================================ files
 
-function projectBlob() {
-  return new Blob([serialize(app.project)], { type: 'application/json' });
-}
+function projectBlob() { return new Blob([serialize(app.project)], { type: 'application/json' }); }
 
 function safeFileName(ext) {
   return (app.project.info.familyName || 'font').replace(/[\\/:*?"<>|]+/g, '_').trim() + ext;
@@ -674,6 +1009,7 @@ async function save(saveAs = false) {
     }
     setDirty(false);
     autosave();
+    renderAll();
     toast(t('savedAs', { name: app.fileName }));
   } catch (err) {
     if (err.name !== 'AbortError') toast(err.message, 'error');
@@ -681,8 +1017,7 @@ async function save(saveAs = false) {
 }
 
 async function readProjectFile(file) {
-  const text = await file.text();
-  return validateProject(JSON.parse(text));
+  return validateProject(JSON.parse(await file.text()));
 }
 
 async function openFile(file, handle = null) {
@@ -697,7 +1032,7 @@ async function openFile(file, handle = null) {
 }
 
 async function openDialog() {
-  if (app.dirty && !(await confirmDialog(t('confirmNew'), t('open'), false))) return;
+  if (app.dirty && !(await confirmDialog(t('confirmNew'), t('ok'), false))) return;
   if (window.showOpenFilePicker) {
     try {
       const [handle] = await window.showOpenFilePicker({
@@ -709,24 +1044,26 @@ async function openDialog() {
     }
     return;
   }
-  $('fileInput').dataset.mode = 'open';
-  $('fileInput').click();
+  pickFiles('open');
 }
 
-function importGlyphs() {
-  $('fileInput').dataset.mode = 'import';
-  $('fileInput').click();
+function pickFiles(mode) {
+  const input = $('fileInput');
+  input.dataset.mode = mode;
+  input.accept = mode === 'svg' ? '.svg,image/svg+xml' : '.sp,.json,application/json';
+  input.multiple = mode === 'svg';
+  input.click();
 }
 
 $('fileInput').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
+  const files = [...e.target.files];
   e.target.value = '';
-  if (!file) return;
-  if (e.target.dataset.mode === 'import') {
-    try { mergeGlyphs((await readProjectFile(file)).glyphs); } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
-  } else {
-    openFile(file);
-  }
+  if (!files.length) return;
+  const mode = e.target.dataset.mode;
+  if (mode === 'svg') importSvgFiles(files);
+  else if (mode === 'import') {
+    try { mergeGlyphs((await readProjectFile(files[0])).glyphs); } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
+  } else openFile(files[0]);
 });
 
 // Adds or replaces glyphs coming from another project (file or clipboard).
@@ -752,6 +1089,59 @@ function mergeGlyphs(glyphs) {
   toast(t('pasted', { n }));
 }
 
+// ---------------------------------------------------------------- SVG import
+
+// Finds the glyph an SVG file belongs to: "A.svg", "uni0416.svg", "Ж.svg",
+// a glyph name, or the current/selected glyph.
+function svgTarget(fileName, count) {
+  const base = fileName.replace(/\.svg$/i, '');
+  if (app.mode === 'editor') return app.current;
+  const chars = Array.from(base);
+  if (chars.length === 1) {
+    const cp = base.codePointAt(0);
+    return app.project.glyphs.find((g) => g.unicode === cp) || addGlyphForChar(app.project, base);
+  }
+  const byName = findGlyph(base);
+  if (byName) return byName;
+  const m = base.match(/^(?:uni|u\+?)([0-9a-f]{4,6})$/i);
+  if (m) {
+    const ch = String.fromCodePoint(parseInt(m[1], 16));
+    return app.project.glyphs.find((g) => g.unicode === ch.codePointAt(0)) || addGlyphForChar(app.project, ch);
+  }
+  if (count === 1 && app.selected.size === 1) return selectedGlyphs()[0];
+  return null;
+}
+
+async function importSvgText(text, g) {
+  const res = await importSVG(text, app.project.info, charOf(g));
+  app.history.push(g);
+  const wasEmpty = !g.contours.length;
+  g.contours.push(...res.contours);
+  if (wasEmpty) g.advance = res.advance;
+  normalizeDirections(g);
+  return res;
+}
+
+async function importSvgFiles(files) {
+  let last = null;
+  for (const file of files) {
+    const g = svgTarget(file.name, files.length);
+    if (!g) { toast(t('svgNoTarget', { file: file.name }), 'error'); continue; }
+    try {
+      const res = await importSvgText(await file.text(), g);
+      toast(t(res.traced ? 'svgTraced' : 'svgImported', { name: charOf(g).trim() || g.name }));
+      last = g;
+    } catch (err) {
+      toast(t('svgError', { file: file.name, err: err.message }), 'error');
+    }
+  }
+  if (!last) return;
+  if (app.mode === 'editor') { editor.sel.clear(); editor.afterEdit(false); editor.fit(); renderGlyphPanel(); return; }
+  markChanged();
+  if (files.length === 1) { app.selected = new Set([last.name]); app.focusName = last.name; }
+  renderAll();
+}
+
 async function exportFont(format) {
   try {
     const r = await fetch(`/api/export?format=${format}`, {
@@ -766,7 +1156,7 @@ async function exportFont(format) {
   }
 }
 
-// Drag & drop of .sp files anywhere in the window.
+// Drag & drop of .sp and .svg files anywhere in the window.
 let dragDepth = 0;
 window.addEventListener('dragenter', (e) => {
   if (![...e.dataTransfer.types].includes('Files')) return;
@@ -779,10 +1169,19 @@ window.addEventListener('drop', async (e) => {
   e.preventDefault();
   dragDepth = 0;
   $('dropOverlay').hidden = true;
-  const file = e.dataTransfer.files[0];
-  if (!file) return;
-  if (app.dirty && !(await confirmDialog(t('confirmNew'), t('open'), false))) return;
-  openFile(file);
+  const files = [...e.dataTransfer.files];
+  const svgs = files.filter((f) => /\.svg$/i.test(f.name) || f.type === 'image/svg+xml');
+  if (svgs.length) {
+    // Dropping on a tile targets that glyph.
+    const tile = e.target.closest?.('.tile');
+    if (tile && svgs.length === 1 && app.mode === 'grid') app.selected = new Set([tile.dataset.name]);
+    importSvgFiles(svgs);
+    return;
+  }
+  const sp = files.find((f) => /\.(sp|json)$/i.test(f.name));
+  if (!sp) return;
+  if (app.dirty && !(await confirmDialog(t('confirmNew'), t('ok'), false))) return;
+  openFile(sp);
 });
 
 // ================================================================ clipboard
@@ -795,7 +1194,7 @@ document.addEventListener('copy', (e) => {
   if (app.mode === 'editor') {
     payload = { format: 'spline-contours', contours: editor.copyContours() };
   } else {
-    const glyphs = [...app.selected].map(findGlyph).filter(Boolean);
+    const glyphs = selectedGlyphs();
     if (!glyphs.length) return;
     payload = { format: 'spline-glyphs', glyphs };
   }
@@ -813,10 +1212,28 @@ document.addEventListener('cut', (e) => {
 
 document.addEventListener('paste', (e) => {
   if (typing(document.activeElement)) return;
+  const text = e.clipboardData.getData('text/plain') || e.clipboardData.getData('image/svg+xml');
+  if (text) { e.preventDefault(); handlePasteText(text); }
+});
+
+async function pasteFromMenu() {
+  try { handlePasteText(await navigator.clipboard.readText()); } catch (err) { toast(err.message, 'error'); }
+}
+
+async function handlePasteText(text) {
+  if (looksLikeSVG(text)) {
+    const g = app.mode === 'editor' ? app.current : (app.selected.size === 1 ? selectedGlyphs()[0] : null);
+    if (!g) { toast(t('svgNoTarget', { file: 'SVG' }), 'error'); return; }
+    try {
+      const res = await importSvgText(text, g);
+      toast(t(res.traced ? 'svgTraced' : 'svgImported', { name: charOf(g).trim() || g.name }));
+      if (app.mode === 'editor') { editor.sel.clear(); editor.afterEdit(false); } else { markChanged(); updateTile(g); renderInspector(); renderSideMetrics(); }
+    } catch (err) { toast(t('svgError', { file: 'SVG', err: err.message }), 'error'); }
+    return;
+  }
   let data;
-  try { data = JSON.parse(e.clipboardData.getData('text/plain')); } catch { return; }
-  e.preventDefault();
-  const glyphs = data.format === 'spline-glyphs' ? data.glyphs : data.format === 'spline' ? data.glyphs : null;
+  try { data = JSON.parse(text); } catch { return; }
+  const glyphs = data.format === 'spline-glyphs' || data.format === 'spline' ? data.glyphs : null;
   if (app.mode === 'editor') {
     if (data.format === 'spline-contours') editor.pasteContours(data.contours);
     else if (glyphs?.length === 1) editor.pasteContours(glyphs[0].contours);
@@ -827,24 +1244,40 @@ document.addEventListener('paste', (e) => {
     openEditor([...app.selected][0]);
     editor.pasteContours(data.contours);
   }
-});
+}
 
-// ================================================================ keyboard
+// ================================================================ commands & keyboard
+
+const COMMANDS = {
+  addGlyph: addGlyphs, importSvg: () => pickFiles('svg'), fontInfo: editFontInfo,
+  draw: () => openEditor([...app.selected][0]), deleteGlyph: deleteSelectedGlyphs,
+  spacing: () => glyphAction('spacing'), clear: () => glyphAction('clear'),
+  flipH: () => applyTransform('flipH'), flipV: () => applyTransform('flipV'),
+  undo, redo,
+  zoomIn: () => editor.zoomBy(1.25), zoomOut: () => editor.zoomBy(0.8), zoomFit: () => editor.fit(),
+  prev: () => stepGlyph(-1), next: () => stepGlyph(1),
+};
 
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
   if (mod && key === 's') { e.preventDefault(); save(e.shiftKey); return; }
-  if (typing(e.target)) return;
+  if (e.key === 'F1') { e.preventDefault(); helpDialog(); return; }
+  if (typing(e.target) || e.target.closest?.('#menus')) return;
   if (mod && key === 'o') { e.preventDefault(); openDialog(); return; }
   if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (mod && key === 'z') { e.preventDefault(); undo(); return; }
-  if (app.mode !== 'editor') return;
-
-  if (mod && key === 'a') { e.preventDefault(); editor.selectAll(); return; }
-  if (mod) return;
+  if (mod && key === 'a') { e.preventDefault(); selectAll(); return; }
+  if (app.mode !== 'editor') {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && app.selected.size && e.target.closest?.('#glyphGrid')) {
+      e.preventDefault();
+      deleteSelectedGlyphs();
+    }
+    return;
+  }
+  if (mod || e.altKey) return;
   const tool = TOOLS.find((tl) => tl.key.toLowerCase() === key);
-  if (tool && !e.altKey) { setTool(tool.id); return; }
+  if (tool) { setTool(tool.id); return; }
   const step = e.shiftKey ? 10 : 1;
   const arrows = { arrowleft: [-step, 0], arrowright: [step, 0], arrowup: [0, step], arrowdown: [0, -step] };
   if (arrows[key]) { if (editor.nudge(...arrows[key])) e.preventDefault(); return; }
@@ -873,7 +1306,7 @@ document.addEventListener('keyup', (e) => {
 // ================================================================ preview
 
 let previewTimer, previewFace, previewSeq = 0;
-function schedulePreview(delay = 600) {
+function schedulePreview(delay = 500) {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(updatePreview, delay);
 }
@@ -882,7 +1315,6 @@ async function updatePreview() {
   const msg = $('previewMsg');
   if (!app.project.glyphs.some((g) => g.contours.length)) {
     msg.textContent = t('previewEmpty');
-    $('previewOut').style.fontFamily = '';
     $('previewOut').hidden = true;
     return;
   }
@@ -909,8 +1341,7 @@ async function updatePreview() {
   }
 }
 
-// Letters that are drawn use the new font; the rest are shown faded so it
-// is obvious what is still missing.
+// Drawn glyphs use the new font; missing ones are dimmed in a fallback font.
 function renderPreviewText() {
   if (!app.project) return;
   const drawn = new Set(app.project.glyphs.filter((g) => g.contours.length || g.unicode === 32).map((g) => g.unicode));
@@ -934,66 +1365,41 @@ function renderPreviewText() {
 }
 
 function initPreview() {
-  let text = '';
-  try { text = localStorage.getItem('spline.previewText') || ''; } catch { /* ignore */ }
-  $('previewInput').value = text || t('previewText');
-  renderPreviewText();
+  $('previewInput').value = store.get('spline.previewText') || t('previewText');
   $('previewInput').addEventListener('input', (e) => {
     renderPreviewText();
-    try { localStorage.setItem('spline.previewText', e.target.value); } catch { /* ignore */ }
+    store.set('spline.previewText', e.target.value);
   });
   const size = $('previewSize');
-  const apply = () => { $('previewOut').style.fontSize = `${size.value}px`; };
+  const apply = () => { $('previewOut').style.fontSize = `${size.value}px`; $('previewSizeOut').textContent = size.value; };
   size.addEventListener('input', apply);
   apply();
+  const toggle = $('previewToggle');
+  const setOpen = (open) => {
+    toggle.setAttribute('aria-expanded', open);
+    $('previewBody').hidden = !open;
+    store.set('spline.previewOpen', open ? '1' : '0');
+    if (app.mode === 'editor') editor.resize();
+  };
+  toggle.addEventListener('click', () => setOpen(toggle.getAttribute('aria-expanded') !== 'true'));
+  setOpen(store.get('spline.previewOpen', '1') === '1');
 }
-
-// ================================================================ top bar
-
-$('newBtn').addEventListener('click', newFontDialog);
-$('openBtn').addEventListener('click', openDialog);
-$('saveBtn').addEventListener('click', () => save());
-$('helpBtn').addEventListener('click', helpDialog);
-$('fontNameBtn').addEventListener('click', editFontInfo);
-$('addGlyphBtn').addEventListener('click', addGlyphs);
-
-const exportBtn = $('exportBtn'), exportMenu = $('exportMenu');
-function toggleMenu(open) {
-  exportMenu.hidden = !open;
-  exportBtn.setAttribute('aria-expanded', open);
-  if (open) exportMenu.querySelector('button').focus();
-}
-exportBtn.addEventListener('click', () => toggleMenu(exportMenu.hidden));
-exportMenu.addEventListener('click', (e) => {
-  const b = e.target.closest('[data-format]');
-  if (!b) return;
-  toggleMenu(false);
-  exportFont(b.dataset.format);
-});
-exportMenu.addEventListener('keydown', (e) => {
-  const items = [...exportMenu.querySelectorAll('button')];
-  const i = items.indexOf(document.activeElement);
-  if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
-  if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
-  if (e.key === 'Escape') { toggleMenu(false); exportBtn.focus(); }
-});
-document.addEventListener('click', (e) => { if (!e.target.closest('.menu-wrap')) toggleMenu(false); });
-
-document.querySelector('.lang-switch').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-lang]');
-  if (b) setLang(b.dataset.lang);
-});
-
-function refreshLang() {
-  document.querySelectorAll('.lang-switch [data-lang]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.lang === getLang()));
-  renderAll();
-  if (app.mode === 'editor') { renderToolbar(); renderGlyphPanel(); editor.updateAria(); editor.render(); }
-}
-onLangChange(refreshLang);
 
 // ================================================================ start
 
+$('fontNameBtn').addEventListener('click', editFontInfo);
+$('exportBtn').addEventListener('click', () => exportFont('ttf'));
+
+function refreshLang() {
+  applyStatic();
+  $('exportBtn').dataset.tip = t('exportTTF');
+  renderAll();
+  if (app.mode === 'editor') { renderToolbar(); renderEditorOptions(); renderGlyphPanel(); editor.updateAria(); editor.render(); }
+}
+onLangChange(refreshLang);
+
 async function start() {
+  document.documentElement.dataset.theme = store.get('spline.theme', 'dark');
   fillIcons();
   document.documentElement.lang = getLang();
   applyStatic();
@@ -1006,9 +1412,7 @@ async function start() {
   if (session?.filePath) {
     if (session.project) {
       try {
-        setProject(validateProject(session.project), {
-          fileName: session.fileName, serverFile: session.filePath,
-        });
+        setProject(validateProject(session.project), { fileName: session.fileName, serverFile: session.filePath });
         loaded = true;
       } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
     } else if (session.error) {
@@ -1020,7 +1424,7 @@ async function start() {
   }
   if (!loaded) {
     try {
-      const saved = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || 'null');
+      const saved = JSON.parse(store.get(AUTOSAVE_KEY) || 'null');
       if (saved?.project) {
         setProject(validateProject(JSON.parse(saved.project)), { fileName: saved.fileName });
         loaded = true;

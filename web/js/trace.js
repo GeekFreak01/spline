@@ -46,13 +46,18 @@ export function applyStroke(contours, stroke, radius, erase) {
   ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
   ctx.stroke();
 
+  return traceCanvas(ctx, w, h, (p) => ({ x: b.minX + p.x * RES, y: b.maxY - p.y * RES }), RES);
+}
+
+// Traces everything painted on a canvas (alpha > 50%) into contours.
+// toFont maps pixel corners to font units; upp = font units per pixel.
+export function traceCanvas(ctx, w, h, toFont, upp) {
   const data = ctx.getImageData(0, 0, w, h).data;
   const mask = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) mask[i] = data[i * 4 + 3] > 127 ? 1 : 0;
-  const toFont = (p) => ({ x: b.minX + p.x * RES, y: b.maxY - p.y * RES });
   return traceMask(mask, w, h)
     .filter((loop) => loop.length >= 8)
-    .map((loop) => loopToContour(loop.map(toFont)))
+    .map((loop) => loopToContour(loop.map(toFont), upp))
     .filter(Boolean);
 }
 
@@ -107,7 +112,7 @@ function traceMask(mask, w, h) {
 }
 
 // Turns a jagged pixel loop into a smooth contour of Bézier nodes.
-function loopToContour(raw) {
+function loopToContour(raw, upp) {
   // Midpoints of pixel edges remove the staircase, then a light smoothing.
   let pts = raw.map((p, i) => {
     const q = raw[(i + 1) % raw.length];
@@ -123,7 +128,7 @@ function loopToContour(raw) {
   if (n < 6) return null;
 
   // Corners: sharp turns measured over a few pixels.
-  const K = Math.max(3, Math.round(6 / RES));
+  const K = 3;
   const turn = pts.map((p, i) => {
     const a = vec.norm(vec.sub(p, pts[(i - K + n) % n]));
     const c = vec.norm(vec.sub(pts[(i + K) % n], p));
@@ -151,7 +156,7 @@ function loopToContour(raw) {
     return dir > 0 ? fwd : vec.mul(fwd, -1);
   };
 
-  const tol = 3 * RES; // generous: fewer points are easier to edit
+  const tol = 3 * upp; // generous: fewer points are easier to edit
   const curves = [];
   const smoothStart = [];
   for (let s = 0; s < splits.length; s++) {

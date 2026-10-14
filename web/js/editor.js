@@ -9,6 +9,20 @@ import { t } from './i18n.js';
 const HIT = 9; // px
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
+// Ctrl (Cmd on Mac) or Alt: work on one side of a point only.
+const isCuspKey = (e) => e.ctrlKey || e.metaKey || e.altKey;
+
+// Shift: snap the direction from `o` to `p` to a multiple of 45°.
+function snap45(o, p) {
+  const dx = p.x - o.x, dy = p.y - o.y;
+  const len = Math.hypot(dx, dy);
+  if (!len) return { x: p.x, y: p.y };
+  const a = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+  // Project onto the snapped direction so the point stays under the cursor.
+  const proj = dx * Math.cos(a) + dy * Math.sin(a);
+  return { x: o.x + Math.cos(a) * proj, y: o.y + Math.sin(a) * proj };
+}
+
 export class Editor {
   constructor(app, canvas) {
     this.app = app;
@@ -18,6 +32,7 @@ export class Editor {
     this.tool = 'brush';
     this.brushRadius = 45;
     this.showGuide = true;
+    this.showGrid = true;
     this.view = { scale: 0.5, ox: 0, oy: 0 };
     this.sel = new Set(); // "contourIndex:nodeIndex"
     this.drag = null;
@@ -32,7 +47,7 @@ export class Editor {
     canvas.addEventListener('pointermove', (e) => this.onMove(e));
     canvas.addEventListener('pointerup', (e) => this.onUp(e));
     canvas.addEventListener('pointercancel', (e) => this.onUp(e));
-    canvas.addEventListener('pointerleave', () => { this.hover = null; this.render(); });
+    canvas.addEventListener('pointerleave', () => { this.hover = null; this.app.onCursor?.(null); this.render(); });
     canvas.addEventListener('dblclick', (e) => this.onDblClick(e));
     canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
   }
@@ -83,6 +98,7 @@ export class Editor {
     const pad = 48;
     const scale = Math.min((this.w - pad * 2) / width, (this.h - pad * 2) / (top - bottom));
     this.view.scale = Math.max(0.05, scale);
+    this.app.onZoom?.(this.view.scale);
     this.view.ox = (this.w - width * this.view.scale) / 2;
     this.view.oy = pad + top * this.view.scale + ((this.h - pad * 2) - (top - bottom) * this.view.scale) / 2;
     this.render();
@@ -95,6 +111,7 @@ export class Editor {
     v.ox = sx - (sx - v.ox) * k;
     v.oy = sy - (sy - v.oy) * k;
     v.scale = ns;
+    this.app.onZoom?.(ns);
     this.render();
   }
 
@@ -195,11 +212,11 @@ export class Editor {
     } else if (tool === 'select') {
       this.downSelect(e, sx, sy, p);
     } else if (tool === 'pen') {
-      this.downPen(sx, sy, p);
+      this.downPen(e, sx, sy, p);
     } else if (tool === 'rect' || tool === 'ellipse') {
       this.drag = { kind: 'shape', tool, start: p, end: p };
     } else if (tool === 'brush' || tool === 'eraser') {
-      this.drag = { kind: 'stroke', erase: tool === 'eraser', points: [p], lastS: { sx, sy } };
+      this.drag = { kind: 'stroke', erase: tool === 'eraser', points: [p], start: p, lastS: { sx, sy } };
     }
     this.render();
   }
@@ -207,7 +224,7 @@ export class Editor {
   downSelect(e, sx, sy, p) {
     const h = this.handleAt(sx, sy);
     if (h) {
-      this.drag = { kind: 'handle', ...h };
+      this.drag = { kind: 'handle', ...h, start: p, cusp: isCuspKey(e) };
       return;
     }
     const n = this.nodeAt(sx, sy);
@@ -218,7 +235,8 @@ export class Editor {
       } else if (!this.sel.has(key)) {
         this.sel = new Set([key]);
       }
-      this.drag = { kind: 'move', last: p };
+      // Ctrl/Alt-click on a point makes it sharp on both sides.
+      this.drag = { kind: 'move', start: p, applied: { x: 0, y: 0 }, cuspNode: isCuspKey(e) ? n : null };
       return;
     }
     if (this.nearAdvance(sx)) {
@@ -231,14 +249,14 @@ export class Editor {
       const all = keys.every((k) => this.sel.has(k));
       if (!e.shiftKey && !all) this.sel = new Set();
       keys.forEach((k) => this.sel.add(k));
-      this.drag = { kind: 'move', last: p };
+      this.drag = { kind: 'move', start: p, applied: { x: 0, y: 0 } };
       return;
     }
     if (!e.shiftKey) this.sel.clear();
     this.drag = { kind: 'marquee', start: { sx, sy }, end: { sx, sy }, base: new Set(this.sel) };
   }
 
-  downPen(sx, sy, p) {
+  downPen(e, sx, sy, p) {
     const cs = this.glyph.contours;
     const open = this.penContour !== null ? cs[this.penContour] : null;
     if (open && open.nodes.length >= 2) {
@@ -251,7 +269,21 @@ export class Editor {
         return;
       }
     }
+    // Clicking the point just placed removes its outgoing handle: the curve
+    // comes in round and leaves sharp. Dragging redraws only that handle.
+    const last = open?.nodes[open.nodes.length - 1];
+    if (last) {
+      const ls = this.toScreen(last);
+      if (Math.hypot(ls.x - sx, ls.y - sy) <= HIT) {
+        this.app.history.push(this.glyph);
+        delete last.out;
+        last.smooth = false;
+        this.drag = { kind: 'penHandle', node: last, start: { sx, sy }, saved: true, outOnly: true };
+        return;
+      }
+    }
     this.app.history.push(this.glyph);
+    if (e.shiftKey && last) p = snap45(last, p);
     const node = { x: Math.round(p.x), y: Math.round(p.y) };
     if (open) {
       open.nodes.push(node);
@@ -269,6 +301,7 @@ export class Editor {
     const { sx, sy } = this.eventPos(e);
     const p = this.toFont(sx, sy);
     this.hover = p;
+    this.app.onCursor?.(p);
     const d = this.drag;
     if (!d) {
       this.updateCursor(sx, sy);
@@ -281,25 +314,34 @@ export class Editor {
         this.view.oy = d.oy + sy - d.sy;
         break;
       case 'move': {
-        const dx = p.x - d.last.x, dy = p.y - d.last.y;
+        // Shift keeps the movement horizontal, vertical or diagonal.
+        let total = { x: p.x - d.start.x, y: p.y - d.start.y };
+        if (e.shiftKey) total = snap45({ x: 0, y: 0 }, total);
+        const dx = total.x - d.applied.x, dy = total.y - d.applied.y;
+        if (!d.moved && Math.hypot(total.x, total.y) * this.view.scale < 2) break;
         if (dx || dy) {
           this.checkpoint();
           for (const n of this.selectedNodes()) movePoint(n, dx, dy, true);
-          d.last = p;
+          d.applied = total;
           d.moved = true;
         }
         break;
       }
       case 'handle': {
+        if (!d.moved && Math.hypot(p.x - d.start.x, p.y - d.start.y) * this.view.scale < 2) break;
         this.checkpoint();
         const n = this.glyph.contours[d.ci].nodes[d.ni];
-        n[d.which] = { x: p.x, y: p.y };
+        const hp = e.shiftKey ? snap45(n, p) : p;
+        n[d.which] = { x: hp.x, y: hp.y };
         const other = d.which === 'in' ? 'out' : 'in';
+        // Ctrl/Alt breaks the link: only this side of the point changes.
+        if (d.cusp || isCuspKey(e)) n.smooth = false;
         if (n.smooth && n[other]) {
           const len = Math.hypot(n[other].x - n.x, n[other].y - n.y);
           const vx = n.x - p.x, vy = n.y - p.y;
           const l = Math.hypot(vx, vy) || 1;
           n[other] = { x: n.x + (vx / l) * len, y: n.y + (vy / l) * len };
+          n[d.which] = { x: hp.x, y: hp.y };
         }
         d.moved = true;
         break;
@@ -315,9 +357,16 @@ export class Editor {
         break;
       case 'penHandle':
         if (Math.hypot(sx - d.start.sx, sy - d.start.sy) > 3) {
-          d.node.out = { x: p.x, y: p.y };
-          d.node.in = { x: 2 * d.node.x - p.x, y: 2 * d.node.y - p.y };
-          d.node.smooth = true;
+          const hp = e.shiftKey ? snap45(d.node, p) : p;
+          d.node.out = { x: hp.x, y: hp.y };
+          // Ctrl/Alt: only the outgoing handle, the incoming side stays as it is.
+          if (d.outOnly || isCuspKey(e)) {
+            d.outOnly = true;
+            d.node.smooth = false;
+          } else {
+            d.node.in = { x: 2 * d.node.x - hp.x, y: 2 * d.node.y - hp.y };
+            d.node.smooth = true;
+          }
         }
         break;
       case 'shape':
@@ -326,6 +375,12 @@ export class Editor {
         break;
       case 'stroke': {
         // Coalesced events give smoother strokes with a pen or fast mouse.
+        if (e.shiftKey) { // straight stroke from the starting point
+          d.points = [d.start, snap45(d.start, p)];
+          d.straight = true;
+          break;
+        }
+        if (d.straight) { d.points = [d.start]; d.straight = false; }
         const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
         for (const ev of evs.length ? evs : [e]) {
           const q = this.eventPos(ev);
@@ -346,8 +401,24 @@ export class Editor {
     try { this.canvas.releasePointerCapture(e.pointerId); } catch { /* already released */ }
     switch (d.kind) {
       case 'move':
+        if (d.moved) { this.roundSelection(); this.afterEdit(); } else if (d.cuspNode) {
+          // Ctrl/Alt-click on a point: sharp corner on both sides.
+          const n = this.glyph.contours[d.cuspNode.ci].nodes[d.cuspNode.ni];
+          this.app.history.push(this.glyph);
+          delete n.in; delete n.out; n.smooth = false;
+          this.afterEdit();
+        }
+        break;
       case 'handle':
-        if (d.moved) { this.roundSelection(); this.afterEdit(); }
+        if (d.moved) { this.roundSelection(); this.afterEdit(); } else if (d.cusp) {
+          // Ctrl/Alt-click on a handle removes it: that side becomes sharp,
+          // the other side keeps its curve.
+          const n = this.glyph.contours[d.ci].nodes[d.ni];
+          this.app.history.push(this.glyph);
+          delete n[d.which];
+          n.smooth = false;
+          this.afterEdit();
+        }
         break;
       case 'advance':
         if (d.moved) this.afterEdit();
@@ -606,9 +677,10 @@ export class Editor {
     ctx.clearRect(0, 0, this.w, this.h);
     if (!g) return;
     const colors = {
-      line: css('--canvas-line'), metric: css('--canvas-metric'), text: css('--color-muted-foreground'),
-      ink: css('--canvas-ink'), primary: css('--color-primary'), accent: css('--color-accent'),
+      line: css('--canvas-line'), metric: css('--canvas-metric'), text: css('--canvas-text'),
+      ink: css('--canvas-ink'), primary: css('--accent'), accent: css('--dot-orange'),
       guide: css('--canvas-guide'), handle: css('--canvas-handle'), bg: css('--canvas-bg'),
+      grid: css('--canvas-grid'), nodeFill: css('--canvas-node-fill'),
     };
     const info = this.app.project.info;
     const S = (p) => this.toScreen(p);
@@ -619,8 +691,25 @@ export class Editor {
     const yAsc = S({ x: 0, y: info.ascender }).y, yDesc = S({ x: 0, y: info.descender }).y;
     ctx.fillRect(x0, yAsc, xa - x0, yDesc - yAsc);
 
+    // Measurement grid every 50 units (AutoCAD-style), when it is not too dense.
+    if (this.showGrid && this.view.scale * 50 >= 8) {
+      ctx.strokeStyle = colors.grid;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const a = this.toFont(0, this.h), b = this.toFont(this.w, 0);
+      for (let x = Math.ceil(a.x / 50) * 50; x <= b.x; x += 50) {
+        const sx = Math.round(S({ x, y: 0 }).x) + 0.5;
+        ctx.moveTo(sx, 0); ctx.lineTo(sx, this.h);
+      }
+      for (let y = Math.ceil(a.y / 50) * 50; y <= b.y; y += 50) {
+        const sy = Math.round(S({ x: 0, y }).y) + 0.5;
+        ctx.moveTo(0, sy); ctx.lineTo(this.w, sy);
+      }
+      ctx.stroke();
+    }
+
     // Metric lines with labels.
-    ctx.font = `600 12px ${css('--font-body')}`;
+    ctx.font = `11px ${css('--font-ui')}`;
     ctx.textBaseline = 'bottom';
     const L = t('guideLines');
     const lines = [
@@ -712,7 +801,7 @@ export class Editor {
           const h = this.toScreen(n[which]);
           ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(h.x, h.y); ctx.stroke();
           ctx.beginPath(); ctx.arc(h.x, h.y, 3.5, 0, Math.PI * 2);
-          ctx.fillStyle = '#fff'; ctx.fill(); ctx.stroke();
+          ctx.fillStyle = colors.nodeFill; ctx.fill(); ctx.stroke();
         }
         const selected = this.sel.has(`${ci}:${ni}`);
         const first = ni === 0 && !c.closed;
@@ -720,7 +809,7 @@ export class Editor {
         ctx.beginPath();
         if (n.smooth) ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
         else ctx.rect(s.x - r, s.y - r, r * 2, r * 2);
-        ctx.fillStyle = selected ? colors.primary : '#fff';
+        ctx.fillStyle = selected ? colors.primary : colors.nodeFill;
         ctx.fill();
         ctx.lineWidth = 2;
         ctx.strokeStyle = first ? colors.accent : colors.primary;
