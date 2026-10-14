@@ -14,6 +14,10 @@
 
 ## Как запустить
 
+**Windows (рекомендуется):** скачайте **`Spline-Setup-<версия>.exe`** со страницы [Releases](https://github.com/GeekFreak01/spline/releases/latest) и запустите. Установщик спросит, куда установить и для кого (только для вас, без прав администратора, или для всех пользователей), создаст ярлыки и свяжет файлы `.sp` со Spline. Удаляется программа через «Параметры → Приложения».
+
+**Без установки (portable)** или на macOS / Linux:
+
 1. Скачайте программу для своей системы на странице [Releases](https://github.com/GeekFreak01/spline/releases):
    - Windows: `spline-windows-amd64.exe`
    - macOS: `spline-macos-arm64` (Apple M1/M2/M3) или `spline-macos-amd64` (Intel)
@@ -170,6 +174,8 @@ go run . --dev        # интерфейс читается с диска, пр�
 go test ./...         # проверка сборки шрифтов
 ```
 
+Установщик: `installer/spline.iss` (Inno Setup 6), собирается автоматически при релизе; локально — `iscc /DAppVersion=1.0.0 installer\spline.iss` после сборки `dist/spline.exe`.
+
 Иконки (`assets/logo.svg`, `assets/file.svg`) вшиваются в `spline.exe` командой `go generate` (создаёт `rsrc_windows_*.syso`).
 
 Флаги: `--browser` (открыть в обычном браузере), `--port 7878`, `--no-browser` (только сервер), `--dev`.
@@ -188,7 +194,8 @@ go build -ldflags "-H=windowsgui" -o spline.exe .
 
 **Spline** makes font creation lightweight: a simple font editor with a professional dark workspace, inspired by Glyphs and FontForge.
 
-- Download a binary from [Releases](https://github.com/GeekFreak01/spline/releases) and run it: the editor opens in its own window (WebView2 on Windows, a Chrome/Edge app window on macOS/Linux, the browser as a fallback).
+- Windows: download `Spline-Setup-<version>.exe` from [Releases](https://github.com/GeekFreak01/spline/releases/latest): it asks for the install folder, creates shortcuts, associates `.sp` files and adds an uninstaller.
+- Or download a portable binary from [Releases](https://github.com/GeekFreak01/spline/releases) and run it: the editor opens in its own window (WebView2 on Windows, a Chrome/Edge app window on macOS/Linux, the browser as a fallback).
   Or run `go run github.com/GeekFreak01/spline@latest`.
 - Draw letters with the **brush** (strokes become smooth Bézier curves), **eraser**, **pen**, **rectangle** and **ellipse**.
 - **Import SVG** from Illustrator/Figma/Inkscape (menu, drag & drop, or paste SVG code); `A.svg` / `uni0416.svg` go to the matching glyph.

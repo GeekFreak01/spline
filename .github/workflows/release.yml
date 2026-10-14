@@ -32,3 +32,33 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+  # Windows installer (Inno Setup): asks for the install folder, adds Start
+  # menu / desktop shortcuts, .sp file association and an uninstaller.
+  installer:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build spline.exe
+        shell: bash
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -H=windowsgui -X main.version=${GITHUB_REF_NAME}" -o dist/spline.exe .
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q "/DAppVersion=$version" installer\spline.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Spline-Setup-*.exe
