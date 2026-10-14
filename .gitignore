@@ -5,3 +5,5 @@
 *.ttf
 *.otf
 !examples/**
+/spline.exe~
+*.exe~
