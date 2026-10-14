@@ -2,10 +2,10 @@
 
 <h1 align="center">Spline</h1>
 
+<p align="center"><b>Русский</b> · <a href="README.en.md">English</a></p>
+
 **Облегчённое создание шрифтов.**
 Рисуйте буквы кистью или пером, импортируйте SVG и экспортируйте готовый TTF/OTF без долгого изучения программы.
-
-*Lightweight font creation. [English below](#english).*
 
 > Код проекта почти полностью написан с помощью ИИ.
 
@@ -202,38 +202,6 @@ go build -ldflags "-H=windowsgui" -o spline.exe .
 
 Идеи и исправления приветствуются: открывайте issue или pull request.
 
----
-
-## English
-
-> The code was written almost entirely with the help of AI.
-
-Screenshots are at the top of this page; the demo project `examples/demo.sp` is built from the open Go Regular font outlines.
-
-**Spline** makes font creation lightweight: a simple font editor with a professional dark workspace, inspired by Glyphs and FontForge.
-
-- Spline checks for new versions once a day; installed copies update themselves (download, SHA-256 check, install in place, restart).
-- Custom dark title bar in the app window (minimize, maximize, close, drag, resize, snap).
-- Windows: download `Spline-Setup-<version>.exe` from [Releases](https://github.com/GeekFreak01/spline/releases/latest): it asks for the install folder, creates shortcuts, associates `.sp` files and adds an uninstaller.
-- Or download a portable binary from [Releases](https://github.com/GeekFreak01/spline/releases) and run it: the editor opens in its own window (WebView2 on Windows, a Chrome/Edge app window on macOS/Linux, the browser as a fallback).
-  Or run `go run github.com/GeekFreak01/spline@latest`.
-- Draw letters with the **brush** (strokes become smooth Bézier curves), **eraser**, **pen**, **rectangle** and **ellipse**.
-- **Import SVG** from Illustrator/Figma/Inkscape (menu, drag & drop, or paste SVG code); `A.svg` / `uni0416.svg` go to the matching glyph.
-- Standard modifiers: **Shift** constrains to 45°, **Ctrl/Alt** breaks or removes one handle (curved on one side, sharp on the other).
-- Transformations (scale, rotate, slant, flip), sidebearing metrics, dark and light themes.
-- Exact coordinates of points, handles and shapes; configurable grid with snapping to grid intersections (F9) and guide lines (F10).
-- Photoshop-style rulers (Ctrl+R) with draggable guides saved in the project.
-- Knife tool (K) and Photoshop-style free transform (Ctrl+T: scale, rotate, move with exact values; arrow keys nudge).
-- Kerning view (Ctrl+K): type a line, Alt+arrows adjust the pair at the cursor; exported as GPOS and kern tables.
-- Path operations: unite, subtract, intersect, exclude, divide, remove overlap. Brush strokes are merged by vector union, so the rest of the outline keeps its curves.
-- A faint **guide letter** helps you trace; the **preview** shows your real font as you draw.
-- **Download font** exports `.ttf` (TrueType) or `.otf` (OpenType/CFF).
-- Projects are plain-JSON **`.sp` files**: send them to friends, open them by double-click (`spline file.sp`),
-  drag & drop them into the window, import letters from another project, or copy/paste letters with `Ctrl+C`/`Ctrl+V`.
-- Interface in Russian and English.
-
-Development: `go run . --dev`, tests: `go test ./...`.
-
-## Лицензия / License
+## Лицензия
 
 [MIT](LICENSE). Иконки: [Lucide](https://lucide.dev) (ISC). Окно на Windows: [go-webview2](https://github.com/jchv/go-webview2) (MIT). Операции с контурами: [Paper.js](http://paperjs.org) (MIT).
