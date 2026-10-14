@@ -48,7 +48,7 @@ export function validateProject(p) {
   const kern = {};
   for (const [l, rights] of Object.entries(p.kerning && typeof p.kerning === 'object' ? p.kerning : {})) {
     for (const [r, v] of Object.entries(rights || {})) {
-      if (Number.isFinite(v) && v) (kern[l] ||= {})[r] = Math.round(v);
+      if (Number.isFinite(v)) (kern[l] ||= {})[r] = Math.round(v); // 0 = exception
     }
   }
   p.kerning = kern;

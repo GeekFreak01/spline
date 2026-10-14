@@ -145,14 +145,30 @@ func main() {
 			Color: colors[r], Contours: glyphContours(f, &buf, gi),
 		})
 	}
+	// Kerning groups: every glyph gets a group named after its letter, and
+	// Cyrillic letters that look like Latin ones share the Latin group, so
+	// one rule such as @A @V also kerns "АV", "ТА" and so on.
+	sameShape := map[rune]string{'А': "A", 'В': "B", 'С': "C", 'Е': "E", 'Ё': "E", 'Н': "H", 'К': "K", 'М': "M",
+		'О': "O", 'Р': "P", 'Т': "T", 'Х': "X", 'а': "a", 'е': "e", 'ё': "e", 'о': "o", 'р': "p", 'с': "c", 'х': "x", 'у': "y"}
+	for i, g := range p.Glyphs {
+		r := rune(g.Unicode)
+		name := g.Name
+		if n, ok := sameShape[r]; ok {
+			name = n
+		}
+		if r > ' ' {
+			p.Glyphs[i].KernLeft, p.Glyphs[i].KernRight = name, name
+		}
+	}
 	p.Kerning = map[string]map[string]float64{
-		"A": {"V": -70, "T": -60, "Y": -70, "W": -45},
-		"V": {"A": -70, "a": -40, "o": -40},
-		"T": {"A": -60, "a": -60, "o": -60, "e": -60},
-		"L": {"T": -70, "Y": -70, "V": -60},
-		"Y": {"A": -70, "o": -60},
-		"W": {"A": -45},
-		"P": {"A": -50},
+		"@A": {"@V": -70, "@T": -60, "@Y": -70, "@W": -45},
+		"@V": {"@A": -70, "@a": -40, "@o": -40},
+		"@T": {"@A": -60, "@a": -60, "@o": -60, "@e": -60},
+		"@L": {"@T": -70, "@Y": -70, "@V": -60},
+		"@Y": {"@A": -70, "@o": -60},
+		"@W": {"@A": -45},
+		"@P": {"@A": -50},
+		"T":  {"@o": -70}, // an exception: the Latin T comes closer to "o"
 	}
 	if err := p.Validate(); err != nil {
 		log.Fatal(err)

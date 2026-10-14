@@ -58,6 +58,12 @@ type Glyph struct {
 	Advance  float64   `json:"advance"`
 	Color    string    `json:"color,omitempty"`
 	Contours []Contour `json:"contours"`
+	// Kerning groups (classes). KernLeft is the group of the glyph's left
+	// side, used when it is the second glyph of a pair; KernRight is the
+	// group of its right side, used when it comes first. In Kerning, a key
+	// "@name" means such a group.
+	KernLeft  string `json:"kernLeft,omitempty"`
+	KernRight string `json:"kernRight,omitempty"`
 }
 
 // Info holds font-wide settings.
@@ -87,8 +93,11 @@ type Project struct {
 	Info    Info    `json:"info"`
 	Glyphs  []Glyph `json:"glyphs"`
 	Guides  []Guide `json:"guides,omitempty"`
-	// Kerning maps left glyph name -> right glyph name -> adjustment in
-	// font units (negative moves the pair closer).
+	// Kerning maps first -> second -> adjustment in font units (negative
+	// moves the pair closer). Keys are glyph names or "@group" (the first
+	// key refers to KernRight groups, the second to KernLeft groups). The
+	// most specific entry wins: glyph+glyph, glyph+group, group+glyph,
+	// group+group.
 	Kerning map[string]map[string]float64 `json:"kerning,omitempty"`
 }
 

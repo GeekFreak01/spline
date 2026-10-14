@@ -168,7 +168,7 @@ func prepare(p *project.Project, f Format) *fontData {
 		fd.bbox.maxX = math.Max(fd.bbox.maxX, g.bbox.maxX)
 		fd.bbox.maxY = math.Max(fd.bbox.maxY, g.bbox.maxY)
 	}
-	fd.kern = collectKerning(p.Kerning, fd.gid)
+	fd.kern = collectKerning(p, fd.gid)
 	return fd
 }
 

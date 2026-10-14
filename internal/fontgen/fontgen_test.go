@@ -155,3 +155,46 @@ func TestKerning(t *testing.T) {
 		}
 	}
 }
+
+func TestKerningGroups(t *testing.T) {
+	p := testProject()
+	h := p.Glyphs[1].Contours
+	add := func(name string, r rune, left, right string) {
+		p.Glyphs = append(p.Glyphs, project.Glyph{Name: name, Unicode: int(r), Advance: 600, Contours: h, KernLeft: left, KernRight: right})
+	}
+	add("A", 'A', "A", "A")
+	add("Acyr", 'А', "A", "A") // Cyrillic A shares the Latin A groups
+	add("V", 'V', "V", "V")
+	add("W", 'W', "V", "V")
+	p.Kerning = map[string]map[string]float64{
+		"@A": {"@V": -70},         // group + group
+		"A":  {"W": 0, "@V": -60}, // glyph exceptions: A+W cancelled, A+V group -60
+		"@V": {"A": -30},          // group + glyph
+	}
+	data, err := Build(p, TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fnt, err := sfnt.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf sfnt.Buffer
+	gi := func(r rune) sfnt.GlyphIndex { g, _ := fnt.GlyphIndex(&buf, r); return g }
+	for _, c := range []struct {
+		a, b rune
+		want int
+	}{
+		{'А', 'V', -70}, // Cyrillic A via groups
+		{'А', 'W', -70},
+		{'A', 'V', -60}, // glyph+group beats group+group
+		{'A', 'W', 0},   // zero exception cancels the group value
+		{'W', 'A', -30}, // group+glyph
+		{'V', 'А', 0},   // no rule for the Cyrillic A on the right
+	} {
+		k, _ := fnt.Kern(&buf, gi(c.a), gi(c.b), fixed.I(1000), font.HintingNone)
+		if k.Round() != c.want {
+			t.Errorf("kern %c%c = %d, want %d", c.a, c.b, k.Round(), c.want)
+		}
+	}
+}

@@ -4,23 +4,52 @@ import { tracePath, charOf } from './model.js';
 
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-export function getKern(project, left, right) {
-  return project.kerning?.[left]?.[right] ?? 0;
+// Kerning keys are glyph names or "@group". The first key of a pair uses
+// the right-side group of the first glyph (kernRight), the second key the
+// left-side group of the second glyph (kernLeft).
+export const isGroup = (key) => key.startsWith('@');
+export const groupKey = (name) => (name ? `@${name}` : null);
+
+export function getKern(project, k1, k2) {
+  return project.kerning?.[k1]?.[k2] ?? 0;
 }
 
-export function setKern(project, left, right, value) {
+// The rule that applies to a pair of glyphs: the most specific one wins
+// (glyph+glyph, glyph+group, group+glyph, group+group). `skip` ignores one
+// rule, to see what would apply without it.
+export function effectiveKern(project, left, right, skip = null) {
+  const L = [left.name, groupKey(left.kernRight)];
+  const R = [right.name, groupKey(right.kernLeft)];
+  for (const [a, b] of [[L[0], R[0]], [L[0], R[1]], [L[1], R[0]], [L[1], R[1]]]) {
+    if (!a || !b || (skip && skip[0] === a && skip[1] === b)) continue;
+    const v = project.kerning?.[a]?.[b];
+    if (v !== undefined) return { value: v, k1: a, k2: b };
+  }
+  return { value: 0, k1: null, k2: null };
+}
+
+// keepZero stores an explicit 0 (an exception that cancels group kerning).
+export function setKern(project, k1, k2, value, keepZero = false) {
   if (!project.kerning) project.kerning = {};
   const v = Math.round(value);
-  if (!v) {
-    if (project.kerning[left]) {
-      delete project.kerning[left][right];
-      if (!Object.keys(project.kerning[left]).length) delete project.kerning[left];
+  if (!v && !keepZero) {
+    if (project.kerning[k1]) {
+      delete project.kerning[k1][k2];
+      if (!Object.keys(project.kerning[k1]).length) delete project.kerning[k1];
     }
     return;
   }
-  (project.kerning[left] ||= {})[right] = v;
+  (project.kerning[k1] ||= {})[k2] = v;
 }
 
+export function deleteKern(project, k1, k2) { setKern(project, k1, k2, 0, false); }
+
+// Glyphs whose right (side = 'right') or left side belongs to a group.
+export function groupMembers(project, name, side) {
+  return project.glyphs.filter((g) => (side === 'right' ? g.kernRight : g.kernLeft) === name);
+}
+
+// All rules: { left, right, value } with glyph names or "@group" keys.
 export function kernPairs(project) {
   const out = [];
   for (const [l, rights] of Object.entries(project.kerning || {})) {
@@ -39,6 +68,8 @@ export class KernView {
     this.size = 140; // px per em
     this.drag = null;
     this.items = [];
+    // Edit the pair at group level (true) or as a glyph exception (false).
+    this.useGroups = { left: true, right: true };
     this.dpr = window.devicePixelRatio || 1;
     new ResizeObserver(() => this.resize()).observe(canvas.parentElement);
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
@@ -86,7 +117,8 @@ export class KernView {
     chars.forEach((ch, i) => {
       const g = this.glyphFor(ch);
       const adv = advOf(ch);
-      const kern = prev && g ? getKern(p, prev.name, g.name) * scale : 0;
+      const rule = prev && g ? effectiveKern(p, prev, g) : null;
+      const kern = rule ? rule.value * scale : 0;
       // Wrap whole words: at the start of a word, measure it to the next space.
       if (ch !== ' ' && (i === 0 || chars[i - 1] === ' ') && x > pad) {
         let w = 0;
@@ -96,7 +128,9 @@ export class KernView {
       // A single word longer than the line still breaks inside.
       if (x + kern + adv > this.w - pad && x > pad && ch !== ' ') { x = pad; line++; }
       x += kern;
-      items.push({ ch, g, x, adv, kern, line, baseline: pad + info.ascender * scale + line * lineH });
+      // An exception: a glyph-level rule while that glyph also has a group.
+      const exception = !!rule?.k1 && ((!isGroup(rule.k1) && prev.kernRight) || (!isGroup(rule.k2) && g.kernLeft));
+      items.push({ ch, g, x, adv, kern, exception, line, baseline: pad + info.ascender * scale + line * lineH });
       x += adv;
       prev = g;
     });
@@ -136,7 +170,7 @@ export class KernView {
     // Dragging sets the kerning of the pair at the cursor.
     if (pr) {
       this.canvas.setPointerCapture(e.pointerId);
-      this.drag = { sx, start: getKern(this.app.project, pr.left.name, pr.right.name), pr, pushed: false };
+      this.drag = { sx, start: effectiveKern(this.app.project, pr.left, pr.right).value, pr, pushed: false };
     }
     this.app.onKernCursor?.();
     this.render();
@@ -153,7 +187,7 @@ export class KernView {
     if (!d.pushed && Math.abs(sx - d.sx) < 2) return;
     if (!d.pushed) { this.app.history.pushKerning(this.app.project); d.pushed = true; }
     const step = e.shiftKey ? 1 : 5;
-    setKern(this.app.project, d.pr.left.name, d.pr.right.name, Math.round((d.start + delta) / step) * step);
+    this.writeKern(d.pr, Math.round((d.start + delta) / step) * step);
     this.canvas.style.cursor = 'ew-resize';
     this.app.onKernChanged?.();
   }
@@ -175,9 +209,24 @@ export class KernView {
     const pr = this.pair();
     if (!pr) return false;
     this.app.history.pushKerning(this.app.project);
-    setKern(this.app.project, pr.left.name, pr.right.name, getKern(this.app.project, pr.left.name, pr.right.name) + delta);
+    this.writeKern(pr, effectiveKern(this.app.project, pr.left, pr.right).value + delta);
     this.app.onKernChanged?.();
     return true;
+  }
+
+  // Keys the pair is edited at: groups where available and chosen.
+  targetKeys(pr) {
+    const k1 = this.useGroups.left && pr.left.kernRight ? groupKey(pr.left.kernRight) : pr.left.name;
+    const k2 = this.useGroups.right && pr.right.kernLeft ? groupKey(pr.right.kernLeft) : pr.right.name;
+    return [k1, k2];
+  }
+
+  writeKern(pr, value) {
+    const p = this.app.project;
+    const [k1, k2] = this.targetKeys(pr);
+    // A zero exception is kept when a broader rule would apply otherwise.
+    const broader = effectiveKern(p, pr.left, pr.right, [k1, k2]).value;
+    setKern(p, k1, k2, value, !(isGroup(k1) && isGroup(k2)) && broader !== 0);
   }
 
   insertText(str) {
@@ -252,7 +301,7 @@ export class KernView {
       if (it.kern) {
         const v = Math.round(it.kern / s);
         ctx.font = `11px ${css('--font-mono')}`;
-        ctx.fillStyle = v < 0 ? neg : pos;
+        ctx.fillStyle = it.exception ? css('--dot-orange') : v < 0 ? neg : pos;
         const txt = String(v);
         ctx.fillText(txt, it.x - ctx.measureText(txt).width / 2, it.baseline - info.descender * s + 14);
       }

@@ -206,6 +206,10 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .kern-list .val.neg { color: var(--danger); }
 .kern-list .val.pos { color: var(--ok); }
 .kern-list .btn-icon { width: 24px; height: 24px; }
+.kern-list .row button.pick { display: flex; align-items: baseline; gap: 6px; }
+.kgroup { color: var(--accent); font-family: var(--font-mono); font-size: var(--fs-s); }
+.kside { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
+.field-inline { display: grid; grid-template-columns: minmax(0, 1fr) 90px; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-s); }
 .optionsbar input.kern-text { width: min(520px, 40vw); }
 .preview-out { font-kerning: normal; }
 .menubar .btn { height: 24px; }

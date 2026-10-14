@@ -81,6 +81,7 @@ go run .
 | **Free transform** | `Ctrl+T`, like in Photoshop: a box with handles, arrow keys move by 1 (Shift by 10). Corners and sides scale (Shift keeps proportions, Alt scales from the centre), outside the box rotates (Shift in 15° steps), inside moves. Exact %, ° in the options bar; Enter applies, Esc cancels |
 | **Rulers and guides** | `Ctrl+R`, like in Photoshop: rulers in font units. Drag out of a ruler to create a guide, drag it back onto the ruler to delete it; double-click sets an exact value. Points and shapes snap to guides, and guides are saved in the `.sp` file |
 | **Kerning** | The Kerning view (`Ctrl+K`): type a line right in the window, the cursor between two letters picks the pair. `Alt+←/→` by ±10, `Alt+Shift+←/→` by ±1, or drag with the mouse or type a number. A list of all pairs with search. The font gets `GPOS` and `kern` tables |
+| **Kerning groups** | Kerning classes, like in Glyphs: every glyph has a left and a right side group (for example A, À, А in group `A`). One rule `@A — @V` works for all glyphs of the groups; a single glyph can get an exception (including "0"). Priority: glyph+glyph, glyph+group, group+glyph, group+group. "Groups from base letter" sets groups in one click |
 | **Path operations** | Unite, subtract front, intersect, exclude, divide, remove overlap, like in vector editors |
 | **Transformations** | Scale, rotate, slant, flip for the selected points or whole glyphs |
 | **Metrics** | Left/right sidebearings and width as numbers, "even sidebearings" in one click |
@@ -137,6 +138,8 @@ Example: [examples/hello.sp](examples/hello.sp).
 - `nodes` are anchor points; `in`/`out` are absolute positions of the Bézier handles.
   If neighbouring points have no `out`/`in`, the segment between them is a straight line.
 - Contour direction does not matter: Spline decides itself what is filled and what is a hole.
+- `kernLeft` / `kernRight` of a glyph are its left and right side kerning groups.
+  In `kerning`, a key `@name` means a group: `"kerning": { "@A": { "@V": -70 }, "T": { "@o": -80 } }`.
 </details>
 
 ## Keyboard shortcuts
