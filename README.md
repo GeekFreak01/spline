@@ -7,6 +7,8 @@
 
 *Lightweight font creation. [English below](#english).*
 
+> Код проекта почти полностью написан с помощью ИИ.
+
 Идеи взяты из [Glyphs](https://glyphsapp.com) и [FontForge](https://github.com/fontforge/fontforge),
 но всё сделано максимально просто: один файл программы, никакой установки, своё окно без браузера.
 
@@ -30,6 +32,10 @@
 
 > Windows может показать «Windows защитила ваш компьютер»: «Подробнее» → «Выполнить в любом случае».
 > На macOS при первом запуске: правый клик по файлу → «Открыть». На Linux/macOS: `chmod +x spline-*`.
+
+### Обновления
+
+Spline раз в день проверяет, вышла ли новая версия (и по команде «Справка → Проверить обновления»). Если вышла, в строке состояния появится «Доступна версия …». Версия, установленная установщиком, обновляется сама: скачивает новый установщик с GitHub, проверяет его контрольную сумму SHA-256, ставит поверх в ту же папку и перезапускается. Переносная копия открывает страницу релиза. Обновиться можно и вручную: запустите новый `Spline-Setup-<версия>.exe`, он установится поверх старой версии.
 
 ### Иконка для файлов `.sp` (Windows)
 
@@ -192,8 +198,12 @@ go build -ldflags "-H=windowsgui" -o spline.exe .
 
 ## English
 
+> The code was written almost entirely with the help of AI.
+
 **Spline** makes font creation lightweight: a simple font editor with a professional dark workspace, inspired by Glyphs and FontForge.
 
+- Spline checks for new versions once a day; installed copies update themselves (download, SHA-256 check, install in place, restart).
+- Custom dark title bar in the app window (minimize, maximize, close, drag, resize, snap).
 - Windows: download `Spline-Setup-<version>.exe` from [Releases](https://github.com/GeekFreak01/spline/releases/latest): it asks for the install folder, creates shortcuts, associates `.sp` files and adds an uninstaller.
 - Or download a portable binary from [Releases](https://github.com/GeekFreak01/spline/releases) and run it: the editor opens in its own window (WebView2 on Windows, a Chrome/Edge app window on macOS/Linux, the browser as a fallback).
   Or run `go run github.com/GeekFreak01/spline@latest`.

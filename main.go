@@ -149,6 +149,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/file", s.handleFile)
 	mux.HandleFunc("/api/ping", s.handlePing)
 	mux.HandleFunc("/api/associate", s.handleAssociate)
+	mux.HandleFunc("/api/update", s.handleUpdate)
+	mux.HandleFunc("/api/update/install", s.handleUpdateInstall)
+	mux.HandleFunc("/api/open-page", s.handleOpenPage)
 	return s.guard(mux)
 }
 

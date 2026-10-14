@@ -24,8 +24,25 @@
     <div class="menubar-right">
       <button class="btn btn-primary" id="exportBtn" type="button"><i data-icon="download" data-size="15"></i><span data-i18n="export"></span></button>
     </div>
+    <!-- Window buttons: shown only inside the Spline app window -->
+    <div class="win-controls" id="winControls" hidden>
+      <button type="button" class="win-btn" data-win="minimize" data-i18n-title="winMinimize">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" stroke="currentColor"/></svg>
+      </button>
+      <button type="button" class="win-btn" data-win="toggleMaximize" id="winMax" data-i18n-title="winMaximize">
+        <svg class="i-max" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"/></svg>
+        <svg class="i-restore" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 2.5V0.5h7v7h-2M0.5 2.5h7v7h-7z" fill="none" stroke="currentColor"/></svg>
+      </button>
+      <button type="button" class="win-btn win-close" data-win="close" data-i18n-title="winClose">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9" stroke="currentColor"/></svg>
+      </button>
+    </div>
     <input type="file" id="fileInput" hidden>
   </header>
+  <div class="resize-edges" id="resizeEdges" hidden>
+    <div data-edge="n"></div><div data-edge="s"></div><div data-edge="w"></div><div data-edge="e"></div>
+    <div data-edge="nw"></div><div data-edge="ne"></div><div data-edge="sw"></div><div data-edge="se"></div>
+  </div>
 
   <!-- ============ Options bar (context of the current tool/view) ============ -->
   <div class="optionsbar" id="optionsBar"></div>
@@ -101,6 +118,7 @@
       <span id="statusPos" class="mono"></span>
       <span id="statusZoom" class="mono"></span>
       <span id="statusInfo"></span>
+      <button type="button" class="update-badge" id="updateBadge" hidden></button>
     </span>
   </footer>
 

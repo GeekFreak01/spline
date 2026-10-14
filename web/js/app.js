@@ -242,7 +242,8 @@ function menuDefs() {
     ] },
     { id: 'menuHelp', items: [
       { label: 'shortcuts', key: 'F1', run: helpDialog },
-      { label: 'about', run: () => window.open('https://github.com/GeekFreak01/spline', '_blank', 'noopener') },
+      { label: 'checkUpdates', run: () => checkUpdates(true) },
+      { label: 'about', run: () => openPage('github') },
     ] },
   ];
 }
@@ -1860,7 +1861,112 @@ async function start() {
   if (location.hash === '#kern') showKern(false);
   else if (m && findGlyph(decodeURIComponent(m[1]))) openEditor(decodeURIComponent(m[1]), false);
   else history.replaceState({}, '', location.pathname);
+  checkUpdates();
 }
+
+// ================================================================ updates
+
+// Opens one of Spline's web pages in the default browser (also works in
+// the app window, where window.open would not).
+function openPage(page) {
+  fetch(`/api/open-page?page=${page}`, { method: 'POST', headers: { 'X-Spline': '1' } })
+    .catch(() => window.open(`https://github.com/GeekFreak01/spline${page === 'releases' ? '/releases/latest' : ''}`, '_blank', 'noopener'));
+}
+
+let updateInfo = null;
+
+// Checks GitHub for a newer release: automatically once a day, or from the
+// Help menu. A badge in the status bar offers the update.
+async function checkUpdates(manual = false) {
+  const last = Number(store.get('spline.updateChecked', '0'));
+  if (!manual && Date.now() - last < 24 * 3600 * 1000) {
+    try { updateInfo = JSON.parse(store.get('spline.updateInfo') || 'null'); } catch { updateInfo = null; }
+    showUpdateBadge();
+    return;
+  }
+  try {
+    const r = await fetch(`/api/update${manual ? '?force=1' : ''}`);
+    if (!r.ok) throw new Error(await r.text());
+    updateInfo = await r.json();
+    if (updateInfo.error) throw new Error(updateInfo.error);
+    store.set('spline.updateChecked', String(Date.now()));
+    store.set('spline.updateInfo', JSON.stringify(updateInfo));
+  } catch (err) {
+    if (manual) toast(t('updateCheckFailed', { err: err.message }), 'error');
+    return;
+  }
+  showUpdateBadge();
+  if (manual && !updateInfo.available) toast(t('upToDate', { v: updateInfo.current }));
+  if (manual && updateInfo.available) installUpdate();
+}
+
+function showUpdateBadge() {
+  const b = $('updateBadge');
+  const show = !!updateInfo?.available && updateInfo.latest !== updateInfo.current;
+  b.hidden = !show;
+  if (show) b.textContent = t('updateBadge', { v: updateInfo.latest.replace(/^v/, '') });
+}
+
+async function installUpdate() {
+  if (!updateInfo?.available) return;
+  const v = updateInfo.latest.replace(/^v/, '');
+  if (!updateInfo.installed) {
+    // Portable copy or macOS/Linux: show the release page.
+    if (await confirmDialog(t('updatePortable', { v }), t('updateOpenPage'), false)) openPage('releases');
+    return;
+  }
+  const ok = await showDialog({
+    title: t('updateTitle', { v }),
+    body: `<p>${esc(t('updateBody'))}</p>${app.dirty ? `<p class="hint">${esc(t('updateUnsaved'))}</p>` : ''}`,
+    okLabel: t('updateNow'),
+  });
+  if (!ok) return;
+  autosave();
+  toast(t('updateDownloading', { v }));
+  try {
+    const r = await fetch('/api/update/install', { method: 'POST', headers: { 'X-Spline': '1' } });
+    if (!r.ok) throw new Error(await r.text());
+    toast(t('updateInstalling'));
+  } catch (err) {
+    toast(t('updateFailed', { err: err.message }), 'error');
+  }
+}
+
+$('updateBadge').addEventListener('click', installUpdate);
+
+// ================================================================ app window frame
+
+// Inside the Spline window (WebView2) the system title bar is removed and
+// the menu bar acts as the title bar: drag to move, double-click to
+// maximize, custom minimize / maximize / close buttons, resize at the edges.
+function initWindowFrame() {
+  if (typeof window.splineWindow !== 'function') return; // regular browser
+  const call = async (action, arg = '') => {
+    const state = await window.splineWindow(action, arg);
+    document.documentElement.classList.toggle('maximized', state === 'maximized');
+  };
+  document.documentElement.classList.add('native');
+  $('winControls').hidden = false;
+  $('resizeEdges').hidden = false;
+  $('winControls').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-win]');
+    if (b) call(b.dataset.win);
+  });
+  const isDragArea = (el) => !el.closest('button, input, select, a, [role="menu"], [role="menuitem"], .view-switch');
+  document.querySelector('.menubar').addEventListener('pointerdown', (e) => {
+    if (e.button === 0 && e.detail === 1 && isDragArea(e.target)) call('drag');
+  });
+  document.querySelector('.menubar').addEventListener('dblclick', (e) => {
+    if (isDragArea(e.target)) call('toggleMaximize');
+  });
+  $('resizeEdges').addEventListener('pointerdown', (e) => {
+    const edge = e.target.dataset.edge;
+    if (edge && e.button === 0) { e.preventDefault(); call('resize', edge); }
+  });
+  window.addEventListener('resize', () => call('state'));
+  call('state');
+}
+initWindowFrame();
 
 // Lets the program know the editor is still open (it quits after the last
 // browser window is closed).
