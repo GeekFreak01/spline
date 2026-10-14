@@ -1,0 +1,7 @@
+/spline
+/spline.exe
+/dist/
+*.tmp
+*.ttf
+*.otf
+!examples/**
