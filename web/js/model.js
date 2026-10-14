@@ -44,6 +44,14 @@ export function validateProject(p) {
   const base = newProject({ sets: [] });
   p.info = { ...base.info, ...(p.info || {}) };
   if (!Array.isArray(p.glyphs)) p.glyphs = [];
+  // Kerning: { leftGlyph: { rightGlyph: value } }
+  const kern = {};
+  for (const [l, rights] of Object.entries(p.kerning && typeof p.kerning === 'object' ? p.kerning : {})) {
+    for (const [r, v] of Object.entries(rights || {})) {
+      if (Number.isFinite(v) && v) (kern[l] ||= {})[r] = Math.round(v);
+    }
+  }
+  p.kerning = kern;
   p.guides = (Array.isArray(p.guides) ? p.guides : [])
     .filter((g) => g && (g.axis === 'x' || g.axis === 'y') && Number.isFinite(g.pos));
   for (const g of p.glyphs) {

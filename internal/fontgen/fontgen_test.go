@@ -122,3 +122,36 @@ func TestExampleFile(t *testing.T) {
 		}
 	}
 }
+
+func TestKerning(t *testing.T) {
+	p := testProject()
+	p.Glyphs = append(p.Glyphs, project.Glyph{Name: "V", Unicode: 'V', Advance: 600, Contours: p.Glyphs[1].Contours})
+	p.Kerning = map[string]map[string]float64{
+		"H": {"V": -80, "O": 25, "missing": -10},
+		"V": {"H": -40},
+	}
+	for _, f := range []Format{TTF, OTF} {
+		data, err := Build(p, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fnt, err := sfnt.Parse(data)
+		if err != nil {
+			t.Fatalf("format %d: %v", f, err)
+		}
+		var buf sfnt.Buffer
+		gi := func(r rune) sfnt.GlyphIndex { g, _ := fnt.GlyphIndex(&buf, r); return g }
+		for _, c := range []struct {
+			a, b rune
+			want int
+		}{{'H', 'V', -80}, {'H', 'O', 25}, {'V', 'H', -40}, {'O', 'H', 0}} {
+			k, err := fnt.Kern(&buf, gi(c.a), gi(c.b), fixed.I(1000), font.HintingNone)
+			if err != nil && c.want != 0 {
+				t.Fatalf("format %d: kern %c%c: %v", f, c.a, c.b, err)
+			}
+			if k.Round() != c.want {
+				t.Errorf("format %d: kern %c%c = %d, want %d", f, c.a, c.b, k.Round(), c.want)
+			}
+		}
+	}
+}

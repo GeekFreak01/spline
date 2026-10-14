@@ -49,7 +49,9 @@ type glyphData struct {
 
 type fontData struct {
 	info   project.Info
-	glyphs []glyphData // glyph 0 is .notdef
+	glyphs []glyphData    // glyph 0 is .notdef
+	gid    map[string]int // project glyph name -> glyph id
+	kern   []kernPair
 	names  names
 	bbox   box
 	now    time.Time
@@ -87,13 +89,23 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 		tables["maxp"] = buildMaxpCFF(len(fd.glyphs))
 		sfntVersion = 0x4F54544F // 'OTTO'
 	}
+	if len(fd.kern) > 0 {
+		gpos, err := buildGPOS(fd.kern)
+		if err != nil {
+			return nil, err
+		}
+		tables["GPOS"] = gpos
+		if k := buildKern(fd.kern); k != nil {
+			tables["kern"] = k
+		}
+	}
 	tables["head"] = buildHead(fd)
 	tables["hhea"] = buildHhea(fd)
 	return assemble(sfntVersion, tables), nil
 }
 
 func prepare(p *project.Project, f Format) *fontData {
-	fd := &fontData{info: p.Info, now: time.Now().UTC()}
+	fd := &fontData{info: p.Info, now: time.Now().UTC(), gid: map[string]int{}}
 	fd.names = makeNames(p.Info)
 	upm := float64(p.Info.UnitsPerEm)
 
@@ -129,6 +141,9 @@ func prepare(p *project.Project, f Format) *fontData {
 			gd.name = psGlyphName(g, i, usedNames)
 		}
 		usedNames[gd.name] = true
+		if i > 0 {
+			fd.gid[g.Name] = len(fd.glyphs)
+		}
 		if f == TTF {
 			gd.contours = normalize(g.Contours, false)
 		} else {
@@ -153,6 +168,7 @@ func prepare(p *project.Project, f Format) *fontData {
 		fd.bbox.maxX = math.Max(fd.bbox.maxX, g.bbox.maxX)
 		fd.bbox.maxY = math.Max(fd.bbox.maxY, g.bbox.maxY)
 	}
+	fd.kern = collectKerning(p.Kerning, fd.gid)
 	return fd
 }
 

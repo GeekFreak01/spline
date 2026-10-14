@@ -54,8 +54,9 @@ go run .
 | **Точные координаты** | Панель «Выделение»: X/Y точки и её усов или X, Y, ширина, высота выделенных фигур (с сохранением пропорций). Размер фигуры виден при рисовании |
 | **Сетка и привязка** | Настраиваемый шаг сетки, основные линии через 5 шагов. Привязка к узлам сетки (`F9`) и к линиям: базовая, высоты строчных и прописных, выносные, края ширины (`F10`) |
 | **Нож** | Проведите линию через фигуру, и контур разрежется на отдельные части с общим краем, без зазора (`K`, Shift — 45°) |
-| **Свободная трансформация** | `Ctrl+T`, как в Photoshop: рамка с маркерами. Углы и стороны масштабируют (Shift — пропорции, Alt — от центра), за рамкой поворот (Shift — по 15°), внутри перемещение. Точные %, ° в панели параметров; Enter — применить, Esc — отмена |
+| **Свободная трансформация** | `Ctrl+T`, как в Photoshop: рамка с маркерами, стрелки двигают на 1 (Shift — на 10). Углы и стороны масштабируют (Shift — пропорции, Alt — от центра), за рамкой поворот (Shift — по 15°), внутри перемещение. Точные %, ° в панели параметров; Enter — применить, Esc — отмена |
 | **Линейки и направляющие** | `Ctrl+R`, как в Photoshop: линейки в единицах шрифта. Тяните из линейки, чтобы создать направляющую, обратно на линейку, чтобы удалить; двойной щелчок задаёт точное значение. К направляющим прилипают точки и фигуры, они сохраняются в `.sp` |
+| **Кернинг** | Режим «Кернинг» (`Ctrl+K`): печатайте строку прямо в окне, курсор между буквами выбирает пару. `Alt+←/→` — ±10, `Alt+Shift+←/→` — ±1, можно тянуть мышью или вписать число. Список всех пар с поиском. В шрифт записывается `GPOS` и `kern` |
 | **Операции с контурами** | Объединить, вычесть верхнюю, пересечение, исключить, разделить, убрать перекрытия, как в векторных редакторах |
 | **Трансформации** | Масштаб, поворот, наклон, отражение для выделенных точек или целых букв |
 | **Метрики** | Отступы слева/справа и ширина числами, «ровные отступы» одной кнопкой |
@@ -120,6 +121,7 @@ go run .
 |---|---|
 | `V` `P` `B` `E` `R` `O` `K` `H` | Выбор, перо, кисть, ластик, прямоугольник, эллипс, нож, рука |
 | `Ctrl+R` / `Ctrl+;` | Линейки / показать направляющие |
+| `Ctrl+K` | Кернинг (`Alt+←/→` ±10, `Alt+Shift+←/→` ±1) |
 | `Ctrl+T` | Свободная трансформация (в окне программы; в браузере — меню «Правка») |
 | `F1` | Список горячих клавиш |
 | `F9` / `F10` | Привязка к сетке / к линиям |
@@ -186,7 +188,8 @@ go build -ldflags "-H=windowsgui" -o spline.exe .
 - Transformations (scale, rotate, slant, flip), sidebearing metrics, dark and light themes.
 - Exact coordinates of points, handles and shapes; configurable grid with snapping to grid intersections (F9) and guide lines (F10).
 - Photoshop-style rulers (Ctrl+R) with draggable guides saved in the project.
-- Knife tool (K) and Photoshop-style free transform (Ctrl+T: scale, rotate, move with exact values).
+- Knife tool (K) and Photoshop-style free transform (Ctrl+T: scale, rotate, move with exact values; arrow keys nudge).
+- Kerning view (Ctrl+K): type a line, Alt+arrows adjust the pair at the cursor; exported as GPOS and kern tables.
 - Path operations: unite, subtract, intersect, exclude, divide, remove overlap. Brush strokes are merged by vector union, so the rest of the outline keeps its curves.
 - A faint **guide letter** helps you trace; the **preview** shows your real font as you draw.
 - **Download font** exports `.ttf` (TrueType) or `.otf` (OpenType/CFF).

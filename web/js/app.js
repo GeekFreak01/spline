@@ -5,7 +5,8 @@ import {
   newProject, validateProject, serialize, addGlyphForChar, charOf, isDrawn, svgPath, glyphBox,
   translateGlyph, normalizeDirections,
 } from './model.js';
-import { History } from './history.js';
+import { History, KERNING } from './history.js';
+import { KernView, getKern, setKern, kernPairs } from './kerning.js';
 import { Editor } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
 
@@ -162,7 +163,8 @@ function renderAll() {
 }
 
 function updateStatus() {
-  $('statusTip').textContent = app.mode === 'editor' ? (editor.xform ? t('tipTransform') : toolTip(editor.tool)) : t('tipGrid');
+  $('statusTip').textContent = app.mode === 'editor' ? (editor.xform ? t('tipTransform') : toolTip(editor.tool))
+    : app.mode === 'kern' ? t('tipKern') : t('tipGrid');
   $('statusInfo').textContent = t('selectedCount', {
     sel: app.selected.size, n: visibleGlyphs().length, total: app.project.glyphs.length,
   });
@@ -205,6 +207,8 @@ function menuDefs() {
       { label: 'zoomIn', key: '+', run: () => editor.zoomBy(1.25), enabled: inEditor },
       { label: 'zoomOut', key: '−', run: () => editor.zoomBy(0.8), enabled: inEditor },
       { label: 'zoomFit', key: '0', run: () => editor.fit(), enabled: inEditor },
+      '-',
+      { label: 'viewKerning', key: `${MOD}K`, check: app.mode === 'kern', run: () => (app.mode === 'kern' ? showGrid() : showKern()) },
       '-',
       { label: 'rulers', key: `${MOD}R`, check: editor.showRulers, run: () => toggleView('showRulers') },
       { label: 'userGuides', key: `${MOD};`, check: editor.showUserGuides, run: () => toggleView('showUserGuides') },
@@ -1065,10 +1069,17 @@ $('toolButtons').addEventListener('click', (e) => {
 });
 $('backBtn').addEventListener('click', () => history.back());
 
+function setViewTabs() {
+  $('tabGlyphs').setAttribute('aria-selected', app.mode !== 'kern');
+  $('tabKerning').setAttribute('aria-selected', app.mode === 'kern');
+}
+
 function openEditor(name, push = true) {
   const g = findGlyph(name);
   if (!g) return;
+  $('kernView').hidden = true;
   app.mode = 'editor';
+  setViewTabs();
   app.current = g;
   app.selected = new Set([name]);
   app.focusName = name;
@@ -1088,11 +1099,13 @@ function openEditor(name, push = true) {
 }
 
 function showGrid(push = true) {
-  if (app.mode === 'editor') editor.finishPen();
-  const wasEditor = app.mode === 'editor';
+  if (app.mode === 'editor') { if (editor.xform) editor.commitTransform(); editor.finishPen(); }
+  const wasEditor = app.mode !== 'grid';
   app.mode = 'grid';
   app.current = null;
+  setViewTabs();
   $('editorView').hidden = true;
+  $('kernView').hidden = true;
   $('gridView').hidden = false;
   if (push && wasEditor) history.pushState({}, '', location.pathname);
   if (wasEditor) {
@@ -1105,7 +1118,183 @@ function showGrid(push = true) {
 
 window.addEventListener('popstate', (e) => {
   if (e.state?.glyph && findGlyph(e.state.glyph)) openEditor(e.state.glyph, false);
+  else if (e.state?.kern) showKern(false);
   else showGrid(false);
+});
+
+// ================================================================ kerning view
+
+const kernView = new KernView(app, $('kernCanvas'));
+kernView.text = store.get('spline.kernText') || kernView.text;
+kernView.size = Number(store.get('spline.kernSize', '140')) || 140;
+
+const KERN_SAMPLES = {
+  latin: 'AVATAR LTYA ToTaTeVaVoWaYo FAWN PALLY',
+  lower: 'raven yoke wave aware favor kelvin',
+  cyrillic: 'ГАДЮКА ТАТЬЯНА ГОЛЬФ ТУЧА УЛЬЯ ЛАГУНА',
+  digits: '11 17 1970 2048 1/4 7,7',
+};
+
+function showKern(push = true) {
+  if (app.mode === 'editor') { if (editor.xform) editor.commitTransform(); editor.finishPen(); }
+  app.mode = 'kern';
+  app.current = null;
+  setViewTabs();
+  $('gridView').hidden = true;
+  $('editorView').hidden = true;
+  $('kernView').hidden = false;
+  if (push) history.pushState({ kern: true }, '', '#kern');
+  else history.replaceState({ kern: true }, '', '#kern');
+  renderKernOptions();
+  renderKernPanel();
+  renderMenus();
+  updateStatus();
+  kernView.resize();
+  $('kernCanvas').focus({ preventScroll: true });
+}
+
+function renderKernOptions() {
+  $('optionsBar').innerHTML = `
+    <div class="opt-tool">${icon('kerning', 16)}<span>${esc(t('viewKerning'))}</span></div>
+    <div class="sep"></div>
+    <div class="group"><label>${esc(t('kernText'))}<input class="kern-text" id="kernText" value="${esc(kernView.text)}" spellcheck="false"></label></div>
+    <div class="group"><label>${esc(t('kernSamples'))}<select id="kernSample">
+      <option value="">—</option>
+      ${Object.keys(KERN_SAMPLES).map((k) => `<option value="${k}">${esc(t('sample_' + k))}</option>`).join('')}
+    </select></label></div>
+    <div class="glyph-nav"><label>${esc(t('previewSize'))}<input type="range" id="kernSize" min="40" max="400" value="${kernView.size}"></label></div>`;
+}
+
+function renderKernPanel() {
+  const pr = kernView.pair();
+  const p = app.project;
+  const all = kernPairs(p);
+  const q = (store.get('spline.kernFilter') || '').toLowerCase();
+  const name = (n) => { const g = findGlyph(n); return g ? (charOf(g).trim() || g.name) : n; };
+  const list = all.filter((k) => !q || `${name(k.left)}${name(k.right)} ${k.left} ${k.right}`.toLowerCase().includes(q))
+    .sort((a, b) => a.left.localeCompare(b.left) || a.right.localeCompare(b.right));
+  const v = pr ? getKern(p, pr.left.name, pr.right.name) : 0;
+  $('kernPanel').innerHTML = section('kernPair', t('kernPair'), pr ? `
+      <div class="pair-big"><span>${esc(charOf(pr.left) || pr.left.name)}</span><span>${esc(charOf(pr.right) || pr.right.name)}</span></div>
+      <div class="title-row"><small>${esc(pr.left.name)} + ${esc(pr.right.name)}</small></div>
+      <label class="prop"><span>${esc(t('kernValue'))}</span><input type="number" id="kernValue" step="1" value="${v}"></label>
+      <div class="step-row">
+        <button class="btn" type="button" data-kstep="-10">−10</button><button class="btn" type="button" data-kstep="-1">−1</button>
+        <button class="btn" type="button" data-kstep="1">+1</button><button class="btn" type="button" data-kstep="10">+10</button>
+      </div>
+      <button class="btn btn-block" type="button" data-kstep="reset" ${v ? '' : 'disabled'}>${icon('close', 15)}<span>${esc(t('kernReset'))}</span></button>
+      <p class="hint">${esc(t('kernHint'))}</p>`
+    : `<p class="hint">${esc(t('kernNoPair'))}</p>`)
+    + section('kernList', `${t('kernAll')} (${all.length})`, `
+      <input type="search" id="kernFilter" placeholder="${esc(t('search'))}" value="${esc(q)}">
+      <div class="kern-list">${list.length ? list.map((k) => `<div class="row">
+          <button type="button" class="pick" data-kpick data-l="${esc(k.left)}" data-r="${esc(k.right)}">${esc(name(k.left))}${esc(name(k.right))} <small class="hint">${esc(k.left)} ${esc(k.right)}</small></button>
+          <span class="val ${k.value < 0 ? 'neg' : 'pos'}">${k.value}</span>
+          <button type="button" class="btn btn-icon" data-kdel data-l="${esc(k.left)}" data-r="${esc(k.right)}" aria-label="${esc(t('delete'))}" data-tip="${esc(t('delete'))}">${icon('close', 13)}</button>
+        </div>`).join('') : `<p class="hint" style="padding:8px">${esc(t('kernEmpty'))}</p>`}</div>`);
+}
+
+app.onKernChanged = () => {
+  markChanged();
+  kernView.render();
+  const input = $('kernValue');
+  const pr = kernView.pair();
+  if (input && pr && document.activeElement !== input) input.value = getKern(app.project, pr.left.name, pr.right.name);
+  clearTimeout(app.kernPanelTimer);
+  app.kernPanelTimer = setTimeout(renderKernPanel, 150);
+};
+app.onKernCursor = () => renderKernPanel();
+app.onKernText = () => {
+  store.set('spline.kernText', kernView.text);
+  const input = $('kernText');
+  if (input && document.activeElement !== input) input.value = kernView.text;
+  renderKernPanel();
+};
+
+$('tabGlyphs').addEventListener('click', () => { if (app.mode !== 'grid') showGrid(); });
+$('tabKerning').addEventListener('click', () => { if (app.mode !== 'kern') showKern(); });
+
+$('optionsBar').addEventListener('input', (e) => {
+  if (e.target.id === 'kernText') {
+    kernView.text = e.target.value;
+    kernView.cursor = Math.min(kernView.cursor, Array.from(kernView.text).length);
+    store.set('spline.kernText', kernView.text);
+    kernView.render();
+    renderKernPanel();
+  }
+  if (e.target.id === 'kernSize') {
+    kernView.size = Number(e.target.value);
+    store.set('spline.kernSize', e.target.value);
+    kernView.render();
+  }
+});
+$('optionsBar').addEventListener('change', (e) => {
+  if (e.target.id === 'kernSample' && e.target.value) {
+    kernView.text = KERN_SAMPLES[e.target.value];
+    kernView.cursor = 2;
+    app.onKernText();
+    renderKernOptions();
+    kernView.render();
+  }
+});
+$('optionsBar').addEventListener('keydown', (e) => {
+  if (e.target.id === 'kernText' && e.key === 'Enter') { e.preventDefault(); $('kernCanvas').focus(); }
+});
+
+$('kernPanel').addEventListener('change', (e) => {
+  const pr = kernView.pair();
+  if (e.target.id === 'kernValue' && pr) {
+    app.history.pushKerning(app.project);
+    setKern(app.project, pr.left.name, pr.right.name, Number(e.target.value) || 0);
+    app.onKernChanged();
+  }
+});
+$('kernPanel').addEventListener('input', (e) => {
+  if (e.target.id === 'kernFilter') {
+    store.set('spline.kernFilter', e.target.value);
+    const pos = e.target.selectionStart;
+    renderKernPanel();
+    const f = $('kernFilter');
+    f.focus();
+    f.setSelectionRange(pos, pos);
+  }
+});
+$('kernPanel').addEventListener('click', (e) => {
+  const step = e.target.closest('[data-kstep]')?.dataset.kstep;
+  if (step) {
+    const pr = kernView.pair();
+    if (!pr) return;
+    if (step === 'reset') {
+      app.history.pushKerning(app.project);
+      setKern(app.project, pr.left.name, pr.right.name, 0);
+      app.onKernChanged();
+    } else kernView.adjust(Number(step));
+    return;
+  }
+  const del = e.target.closest('[data-kdel]');
+  if (del) {
+    const { l, r } = del.dataset;
+    app.history.pushKerning(app.project);
+    setKern(app.project, l, r, 0);
+    app.onKernChanged();
+    renderKernPanel();
+    return;
+  }
+  const pick = e.target.closest('[data-kpick]');
+  if (pick) {
+    // Show the pair in the text line and put the cursor between its letters.
+    const [l, r] = [pick.dataset.l, pick.dataset.r].map(findGlyph);
+    if (!l || !r) return;
+    const pair = charOf(l) + charOf(r);
+    const chars = Array.from(kernView.text);
+    let idx = -1;
+    for (let i = 0; i + 1 < chars.length; i++) if (chars[i] + chars[i + 1] === pair) { idx = i; break; }
+    if (idx < 0) { kernView.text = `${kernView.text} ${pair}`.trim(); idx = Array.from(kernView.text).length - 2; }
+    kernView.cursor = idx + 1;
+    app.onKernText();
+    kernView.render();
+    $('kernCanvas').focus();
+  }
 });
 
 function stepGlyph(dir) {
@@ -1123,6 +1312,11 @@ function redo() { applyHistory(app.history.redo(app.project)); }
 function applyHistory(name) {
   if (!name) return;
   markChanged();
+  if (name === KERNING) {
+    kernView.render();
+    if (app.mode === 'kern') renderKernPanel();
+    return;
+  }
   if (app.mode === 'editor') {
     if (app.current?.name !== name) openEditor(name, false);
     editor.sel.clear();
@@ -1455,6 +1649,23 @@ document.addEventListener('keydown', (e) => {
   if (mod && key === 't' && app.mode === 'editor') { e.preventDefault(); startTransform(); return; }
   if (mod && key === 'r' && !e.shiftKey) { e.preventDefault(); toggleView('showRulers'); return; }
   if (mod && (e.code === 'Semicolon' || key === ';')) { e.preventDefault(); toggleView('showUserGuides'); return; }
+  if (mod && key === 'k') { e.preventDefault(); if (app.mode === 'kern') showGrid(); else showKern(); return; }
+  if (app.mode === 'kern') {
+    // The canvas works like a text line: type to add letters, arrows move
+    // the cursor, Alt+arrows change the kerning (Shift: by 1).
+    if (mod) return;
+    if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      kernView.adjust((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : 10));
+      return;
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); kernView.moveCursor(e.key === 'ArrowLeft' ? -1 : 1); renderKernPanel(); return; }
+    if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); kernView.moveCursor(e.key === 'Home' ? -1e9 : 1e9); renderKernPanel(); return; }
+    if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); kernView.deleteChar(e.key === 'Delete'); return; }
+    if (e.key === 'Escape') { showGrid(); return; }
+    if (e.key.length === 1 && !e.altKey && e.target === $('kernCanvas')) { e.preventDefault(); kernView.insertText(e.key); }
+    return;
+  }
   if (app.mode !== 'editor') {
     if ((e.key === 'Delete' || e.key === 'Backspace') && app.selected.size && e.target.closest?.('#glyphGrid')) {
       e.preventDefault();
@@ -1467,7 +1678,10 @@ document.addEventListener('keydown', (e) => {
   if (tool) { setTool(tool.id); return; }
   const step = e.shiftKey ? 10 : 1;
   const arrows = { arrowleft: [-step, 0], arrowright: [step, 0], arrowup: [0, step], arrowdown: [0, -step] };
-  if (arrows[key]) { if (editor.nudge(...arrows[key])) e.preventDefault(); return; }
+  if (arrows[key]) {
+    if (editor.xform ? editor.nudgeTransform(...arrows[key]) : editor.nudge(...arrows[key])) e.preventDefault();
+    return;
+  }
   switch (e.key) {
     case 'Delete': case 'Backspace': if (editor.deleteSelection()) e.preventDefault(); break;
     case 'Escape': if (!editor.escape()) history.back(); break;
@@ -1623,7 +1837,9 @@ async function start() {
   refreshLang();
 
   const m = location.hash.match(/^#glyph=(.+)$/);
-  if (m && findGlyph(decodeURIComponent(m[1]))) openEditor(decodeURIComponent(m[1]), false);
+  setViewTabs();
+  if (location.hash === '#kern') showKern(false);
+  else if (m && findGlyph(decodeURIComponent(m[1]))) openEditor(decodeURIComponent(m[1]), false);
   else history.replaceState({}, '', location.pathname);
 }
 

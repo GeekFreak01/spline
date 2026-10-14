@@ -873,6 +873,17 @@ export class Editor {
     this.app.onTransformChange?.();
   }
 
+  // Arrow keys during Ctrl+T move the transformed selection.
+  nudgeTransform(dx, dy) {
+    if (!this.xform) return false;
+    this.xform.tx += dx;
+    this.xform.ty += dy;
+    this.applyTransform();
+    this.render();
+    this.app.onTransformChange?.();
+    return true;
+  }
+
   // Exact values from the options bar (percent and degrees, around the centre).
   setTransformValues({ w, h, angle }) {
     const x = this.xform;

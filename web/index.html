@@ -17,6 +17,10 @@
     <button class="doc-title" id="fontNameBtn" type="button" data-i18n-title="fontInfo">
       <span id="fontName"></span><span class="dirty-dot" id="dirtyDot" hidden></span>
     </button>
+    <div class="view-switch" role="tablist" aria-label="View">
+      <button type="button" role="tab" id="tabGlyphs" data-i18n="viewGlyphs"></button>
+      <button type="button" role="tab" id="tabKerning" data-i18n="viewKerning"></button>
+    </div>
     <div class="menubar-right">
       <button class="btn btn-primary" id="exportBtn" type="button"><i data-icon="download" data-size="15"></i><span data-i18n="export"></span></button>
     </div>
@@ -49,6 +53,12 @@
       </div>
 
       <aside class="dock" id="inspector"></aside>
+    </section>
+
+    <!-- ============ Kerning ============ -->
+    <section class="view view-kern" id="kernView" hidden>
+      <div class="canvas-wrap"><canvas id="kernCanvas" tabindex="0" role="img" aria-label="Kerning"></canvas></div>
+      <aside class="dock" id="kernPanel"></aside>
     </section>
 
     <!-- ============ Glyph editor ============ -->

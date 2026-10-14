@@ -87,6 +87,9 @@ type Project struct {
 	Info    Info    `json:"info"`
 	Glyphs  []Glyph `json:"glyphs"`
 	Guides  []Guide `json:"guides,omitempty"`
+	// Kerning maps left glyph name -> right glyph name -> adjustment in
+	// font units (negative moves the pair closer).
+	Kerning map[string]map[string]float64 `json:"kerning,omitempty"`
 }
 
 // Parse decodes and validates a .sp document.
@@ -137,6 +140,13 @@ func (p *Project) Validate() error {
 		in.CapHeight = 700
 	}
 
+	for left, rights := range p.Kerning {
+		for right, v := range rights {
+			if !finite(v) || math.Abs(v) > 5000 {
+				return fmt.Errorf("invalid kerning value for %q %q", left, right)
+			}
+		}
+	}
 	for _, g := range p.Guides {
 		if (g.Axis != "x" && g.Axis != "y") || !okCoord(g.Pos) {
 			return errors.New("invalid guide")
