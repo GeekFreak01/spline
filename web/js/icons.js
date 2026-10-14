@@ -42,6 +42,8 @@ const P = {
   opExclude: '<path d="M4 4h10v6h-4v4H4zM14 10h6v10H10v-6h4z" fill="currentColor" fill-opacity=".35"/><path d="M4 4h10v10H4z"/><path d="M10 10h10v10H10z"/>',
   opDivide: '<path d="M4 4h10v10H4z"/><path d="M10 10h10v10H10z"/><path d="M10 10h4v4h-4z" fill="currentColor" fill-opacity=".5"/><path d="M3 21 21 3" stroke-dasharray="1 3"/>',
   opRemoveOverlap: '<path d="M4 4h10v6h6v10H10v-6H4z"/><path d="M10 10h4v4" stroke-dasharray="2 2"/>',
+  knife: '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
+  transform: '<path d="M4 4h4M4 4v4M20 4h-4M20 4v4M4 20h4M4 20v-4M20 20h-4M20 20v-4"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
   eye: '<path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/>',
 };
 

@@ -26,6 +26,7 @@ const TOOLS = [
   { id: 'eraser', icon: 'eraser', key: 'E' },
   { id: 'rect', icon: 'rect', key: 'R' },
   { id: 'ellipse', icon: 'ellipse', key: 'O' },
+  { id: 'knife', icon: 'knife', key: 'K' },
   { id: 'hand', icon: 'hand', key: 'H' },
 ];
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
@@ -161,7 +162,7 @@ function renderAll() {
 }
 
 function updateStatus() {
-  $('statusTip').textContent = app.mode === 'editor' ? toolTip(editor.tool) : t('tipGrid');
+  $('statusTip').textContent = app.mode === 'editor' ? (editor.xform ? t('tipTransform') : toolTip(editor.tool)) : t('tipGrid');
   $('statusInfo').textContent = t('selectedCount', {
     sel: app.selected.size, n: visibleGlyphs().length, total: app.project.glyphs.length,
   });
@@ -197,6 +198,7 @@ function menuDefs() {
       { label: 'paste', key: `${MOD}V`, run: pasteFromMenu },
       '-',
       { label: 'selectAll', key: `${MOD}A`, run: selectAll },
+      { label: 'freeTransform', key: `${MOD}T`, run: startTransform, enabled: inEditor },
       { label: 'delete', key: 'Del', run: deleteSelection, enabled: hasSel },
     ] },
     { id: 'menuView', items: [
@@ -547,6 +549,10 @@ $('optionsBar').addEventListener('input', (e) => {
   }
 });
 $('optionsBar').addEventListener('change', (e) => {
+  if (e.target.dataset.xf) {
+    editor.setTransformValues({ [e.target.dataset.xf]: Number(e.target.value) });
+    return;
+  }
   const opt = e.target.dataset.opt;
   if (opt === 'guide' || opt === 'grid') toggleView(opt === 'guide' ? 'showGuide' : 'showGrid');
   if (opt === 'snapGrid' || opt === 'snapGuides') toggleView(opt);
@@ -936,9 +942,47 @@ function renderToolbar() {
   $('backBtn').dataset.key = 'Esc';
 }
 
+// Options bar while Ctrl+T is active: exact scale and angle.
+function renderTransformOptions() {
+  const v = editor.transformValues();
+  $('optionsBar').innerHTML = `
+    <div class="opt-tool">${icon('transform', 16)}<span>${esc(t('freeTransform'))}</span></div>
+    <div class="sep"></div>
+    <div class="group">
+      <label>${esc(t('w'))}<input type="number" data-xf="w" step="1" value="${v.w.toFixed(1)}">%</label>
+      <label>${esc(t('h'))}<input type="number" data-xf="h" step="1" value="${v.h.toFixed(1)}">%</label>
+      <label>∠<input type="number" data-xf="angle" step="1" value="${v.angle.toFixed(1)}">°</label>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <button class="btn btn-primary" type="button" data-cmd="xfApply">${icon('check', 15)}<span>${esc(t('apply'))}</span></button>
+      <button class="btn" type="button" data-cmd="xfCancel">${icon('close', 15)}<span>${esc(t('cancel'))}</span></button>
+    </div>`;
+}
+
+app.onTransformChange = () => {
+  if (app.mode !== 'editor') return;
+  if (!editor.xform) { renderEditorOptions(); updateStatus(); return; }
+  if (!$('optionsBar').querySelector('[data-xf]')) { renderTransformOptions(); updateStatus(); return; }
+  const v = editor.transformValues();
+  $('optionsBar').querySelectorAll('[data-xf]').forEach((el) => {
+    if (document.activeElement !== el) el.value = v[el.dataset.xf].toFixed(1);
+  });
+};
+
+function startTransform() {
+  if (app.mode !== 'editor') return;
+  if (!editor.startTransform()) { toast(t('nothingToTransform'), 'error'); return; }
+  renderTransformOptions();
+  updateStatus();
+}
+
+app.onKnifeMiss = () => toast(t('knifeMiss'), 'error');
+
 function renderEditorOptions() {
   const g = app.current;
   if (!g) return;
+  if (editor.xform) { renderTransformOptions(); return; }
   const tl = TOOLS.find((x) => x.id === editor.tool);
   const brush = editor.tool === 'brush' || editor.tool === 'eraser';
   $('optionsBar').innerHTML = `
@@ -1355,6 +1399,7 @@ const COMMANDS = {
   undo, redo,
   zoomIn: () => editor.zoomBy(1.25), zoomOut: () => editor.zoomBy(0.8), zoomFit: () => editor.fit(),
   prev: () => stepGlyph(-1), next: () => stepGlyph(1),
+  xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
 };
 
 // Letters come from the physical key (e.code), so shortcuts work with any
@@ -1377,6 +1422,7 @@ document.addEventListener('keydown', (e) => {
   if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (mod && key === 'z') { e.preventDefault(); undo(); return; }
   if (mod && key === 'a') { e.preventDefault(); selectAll(); return; }
+  if (mod && key === 't' && app.mode === 'editor') { e.preventDefault(); startTransform(); return; }
   if (app.mode !== 'editor') {
     if ((e.key === 'Delete' || e.key === 'Backspace') && app.selected.size && e.target.closest?.('#glyphGrid')) {
       e.preventDefault();
@@ -1393,7 +1439,7 @@ document.addEventListener('keydown', (e) => {
   switch (e.key) {
     case 'Delete': case 'Backspace': if (editor.deleteSelection()) e.preventDefault(); break;
     case 'Escape': if (!editor.escape()) history.back(); break;
-    case 'Enter': editor.finishPen(); break;
+    case 'Enter': if (editor.xform) editor.commitTransform(); else editor.finishPen(); break;
     case 'PageUp': e.preventDefault(); stepGlyph(-1); break;
     case 'PageDown': e.preventDefault(); stepGlyph(1); break;
     case '+': case '=': editor.zoomBy(1.25); break;

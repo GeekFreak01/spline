@@ -4,7 +4,7 @@ import {
   rectContour, ellipseContour, movePoint, charOf,
 } from './model.js';
 import { applyStroke } from './trace.js';
-import { unite, subtract, removeOverlap, shapesOf, pathOperation } from './boolean.js';
+import { unite, subtract, removeOverlap, shapesOf, pathOperation, knifeCut } from './boolean.js';
 import { t } from './i18n.js';
 
 const HIT = 9; // px
@@ -24,6 +24,16 @@ function snap45(o, p) {
   return { x: o.x + Math.cos(a) * proj, y: o.y + Math.sin(a) * proj };
 }
 
+const ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-linecap="round"><g stroke="black" stroke-width="4"><path d="M20 12a8 8 0 1 1-2.6-5.9L20 8.5"/><path d="M20 3.5v5h-5"/></g><g stroke="white" stroke-width="2"><path d="M20 12a8 8 0 1 1-2.6-5.9L20 8.5"/><path d="M20 3.5v5h-5"/></g></svg>')}") 12 12, crosshair`;
+
+function pointInQuad(p, q) {
+  let inside = false;
+  for (let i = 0, j = q.length - 1; i < q.length; j = i++) {
+    if ((q[i].y > p.y) !== (q[j].y > p.y) && p.x < ((q[j].x - q[i].x) * (p.y - q[i].y)) / (q[j].y - q[i].y) + q[i].x) inside = !inside;
+  }
+  return inside;
+}
+
 export class Editor {
   constructor(app, canvas) {
     this.app = app;
@@ -39,6 +49,7 @@ export class Editor {
     this.snapGuides = true;  // snap to metric lines and sidebearings
     this.stabilizer = 4;     // 0..10, smooths brush input
     this.snapMark = null;    // last snapped point, drawn as a marker
+    this.xform = null;       // free transform (Ctrl+T) state
     this.view = { scale: 0.5, ox: 0, oy: 0 };
     this.sel = new Set(); // "contourIndex:nodeIndex"
     this.drag = null;
@@ -61,6 +72,7 @@ export class Editor {
   // ---------------------------------------------------------------- setup
 
   open(glyph) {
+    if (this.xform) this.commitTransform();
     this.finishPen();
     this.glyph = glyph;
     this.sel.clear();
@@ -75,6 +87,7 @@ export class Editor {
   }
 
   setTool(tool) {
+    if (this.xform && tool !== 'hand') this.commitTransform();
     if (tool !== 'pen') this.finishPen();
     this.tool = tool;
     this.canvas.dataset.tool = tool;
@@ -241,8 +254,13 @@ export class Editor {
     const p = this.toFont(sx, sy);
     const tool = e.button === 1 ? 'hand' : this.activeTool();
 
-    if (tool === 'hand') {
+    if (this.xform && tool !== 'hand') {
+      this.downTransform(e, sx, sy, p);
+    } else if (tool === 'hand') {
       this.drag = { kind: 'pan', sx, sy, ox: this.view.ox, oy: this.view.oy };
+    } else if (tool === 'knife') {
+      const sp = this.snap(p);
+      this.drag = { kind: 'knife', start: sp, end: sp };
     } else if (tool === 'select') {
       this.downSelect(e, sx, sy, p);
     } else if (tool === 'pen') {
@@ -358,6 +376,12 @@ export class Editor {
         this.view.ox = d.ox + sx - d.sx;
         this.view.oy = d.oy + sy - d.sy;
         break;
+      case 'knife':
+        d.end = e.shiftKey ? snap45(d.start, p) : this.snap(p);
+        break;
+      case 'xmove': case 'xscale': case 'xrotate':
+        this.moveTransform(d, e, p);
+        break;
       case 'move': {
         // Shift keeps the movement horizontal, vertical or diagonal.
         let total = { x: p.x - d.start.x, y: p.y - d.start.y };
@@ -456,6 +480,12 @@ export class Editor {
     if (!d || !this.glyph) return;
     try { this.canvas.releasePointerCapture(e.pointerId); } catch { /* already released */ }
     switch (d.kind) {
+      case 'knife':
+        this.knife(d.start, d.end);
+        break;
+      case 'xmove': case 'xscale': case 'xrotate':
+        this.app.onTransformChange?.();
+        break;
       case 'move':
         if (d.moved) { this.roundSelection(); this.afterEdit(); } else if (d.cuspNode) {
           // Ctrl/Alt-click on a point: sharp corner on both sides.
@@ -558,6 +588,233 @@ export class Editor {
     this.afterEdit();
   }
 
+  // Knife: cuts the contours crossed by the segment a→b into pieces.
+  knife(a, b) {
+    if (Math.hypot(b.x - a.x, b.y - a.y) * this.view.scale < 4) return;
+    const seg = { minX: Math.min(a.x, b.x), minY: Math.min(a.y, b.y), maxX: Math.max(a.x, b.x), maxY: Math.max(a.y, b.y) };
+    const cs = this.glyph.contours.filter((c) => c.closed && c.nodes.length >= 2);
+    const boxes = cs.map((c) => polyBox(flatten(c, 6)));
+    const hit = (u, v) => u.minX <= v.maxX && u.maxX >= v.minX && u.minY <= v.maxY && u.maxY >= v.minY;
+    let area = seg;
+    const affected = new Set();
+    for (let grew = true; grew;) {
+      grew = false;
+      cs.forEach((c, i) => {
+        if (!affected.has(i) && hit(boxes[i], area)) {
+          affected.add(i);
+          area = {
+            minX: Math.min(area.minX, boxes[i].minX), minY: Math.min(area.minY, boxes[i].minY),
+            maxX: Math.max(area.maxX, boxes[i].maxX), maxY: Math.max(area.maxY, boxes[i].maxY),
+          };
+          grew = true;
+        }
+      });
+    }
+    const base = [...affected].map((i) => cs[i]);
+    const pieces = base.length ? knifeCut(base, a, b) : null;
+    if (!pieces) { this.app.onKnifeMiss?.(); return; }
+    this.app.history.push(this.glyph);
+    const gone = new Set(base);
+    const keep = this.glyph.contours.filter((c) => !gone.has(c));
+    this.glyph.contours = [...keep, ...pieces];
+    this.sel = new Set();
+    this.afterEdit();
+  }
+
+  // ---------------------------------------------------------------- free transform
+
+  // Starts Ctrl+T on the selected points (or the whole glyph). The result is
+  // world = c + R(angle)·S(sx, sy)·(p − c) + t, applied to the original points.
+  startTransform() {
+    if (!this.glyph) return false;
+    if (this.xform) return true;
+    this.finishPen();
+    let nodes = this.selectedNodes();
+    if (!nodes.length) nodes = this.glyph.contours.flatMap((c) => c.nodes);
+    if (!nodes.length) return false;
+    const pts = nodes.flatMap((n) => [n, n.in, n.out].filter(Boolean));
+    const box = polyBox(pts);
+    if (box.maxX - box.minX < 1e-6 && box.maxY - box.minY < 1e-6) return false;
+    this.app.history.push(this.glyph);
+    this.xform = {
+      nodes,
+      orig: nodes.map((n) => ({ x: n.x, y: n.y, in: n.in && { ...n.in }, out: n.out && { ...n.out } })),
+      box,
+      c: { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 },
+      sx: 1, sy: 1, angle: 0, tx: 0, ty: 0,
+    };
+    this.render();
+    return true;
+  }
+
+  xWorld(p) {
+    const x = this.xform, cos = Math.cos(x.angle), sin = Math.sin(x.angle);
+    const vx = (p.x - x.c.x) * x.sx, vy = (p.y - x.c.y) * x.sy;
+    return { x: x.c.x + vx * cos - vy * sin + x.tx, y: x.c.y + vx * sin + vy * cos + x.ty };
+  }
+
+  applyTransform() {
+    const x = this.xform;
+    x.nodes.forEach((n, i) => {
+      const o = x.orig[i];
+      Object.assign(n, this.xWorld(o));
+      if (o.in) n.in = this.xWorld(o.in); else delete n.in;
+      if (o.out) n.out = this.xWorld(o.out); else delete n.out;
+    });
+  }
+
+  // Handles in original coordinates: corners and edge middles.
+  xHandles() {
+    const b = this.xform.box, mx = (b.minX + b.maxX) / 2, my = (b.minY + b.maxY) / 2;
+    return [
+      { id: 'nw', p: { x: b.minX, y: b.maxY }, fx: -1, fy: 1 }, { id: 'n', p: { x: mx, y: b.maxY }, fx: 0, fy: 1 },
+      { id: 'ne', p: { x: b.maxX, y: b.maxY }, fx: 1, fy: 1 }, { id: 'e', p: { x: b.maxX, y: my }, fx: 1, fy: 0 },
+      { id: 'se', p: { x: b.maxX, y: b.minY }, fx: 1, fy: -1 }, { id: 's', p: { x: mx, y: b.minY }, fx: 0, fy: -1 },
+      { id: 'sw', p: { x: b.minX, y: b.minY }, fx: -1, fy: -1 }, { id: 'w', p: { x: b.minX, y: my }, fx: -1, fy: 0 },
+    ];
+  }
+
+  xHit(sx, sy) {
+    for (const h of this.xHandles()) {
+      const w = this.toScreen(this.xWorld(h.p));
+      if (Math.abs(w.x - sx) <= 7 && Math.abs(w.y - sy) <= 7) return { kind: 'scale', h };
+    }
+    const corners = ['nw', 'ne', 'se', 'sw'].map((id) => this.toScreen(this.xWorld(this.xHandles().find((h) => h.id === id).p)));
+    const inside = pointInQuad({ x: sx, y: sy }, corners);
+    return { kind: inside ? 'move' : 'rotate' };
+  }
+
+  downTransform(e, sx, sy, p) {
+    const hit = this.xHit(sx, sy);
+    const x = this.xform;
+    const base = { sx: x.sx, sy: x.sy, angle: x.angle, tx: x.tx, ty: x.ty };
+    if (hit.kind === 'scale') {
+      const b = x.box;
+      // Anchor: the opposite handle (or the centre with Alt), fixed in the world.
+      const a = { x: hit.h.fx ? (hit.h.fx > 0 ? b.minX : b.maxX) : x.c.x, y: hit.h.fy ? (hit.h.fy > 0 ? b.minY : b.maxY) : x.c.y };
+      this.drag = { kind: 'xscale', h: hit.h, a, base };
+    } else if (hit.kind === 'move') {
+      this.drag = { kind: 'xmove', start: p, base };
+    } else {
+      const cw = this.xWorld(x.c);
+      this.drag = { kind: 'xrotate', start: Math.atan2(p.y - cw.y, p.x - cw.x), base };
+    }
+  }
+
+  moveTransform(d, e, p) {
+    const x = this.xform;
+    Object.assign(x, d.base);
+    if (d.kind === 'xmove') {
+      let dx = p.x - d.start.x, dy = p.y - d.start.y;
+      if (e.shiftKey) ({ x: dx, y: dy } = snap45({ x: 0, y: 0 }, { x: dx, y: dy }));
+      x.tx += dx; x.ty += dy;
+    } else if (d.kind === 'xrotate') {
+      const cw = this.xWorld(x.c);
+      let ang = d.base.angle + Math.atan2(p.y - cw.y, p.x - cw.x) - d.start;
+      if (e.shiftKey) ang = Math.round(ang / (Math.PI / 12)) * (Math.PI / 12); // 15° steps
+      x.angle = ang;
+    } else {
+      const fromCenter = e.altKey;
+      const a = fromCenter ? x.c : d.a;
+      const aw = this.xWorld(a); // stays where it is
+      // Pointer in the box's own (rotated, unscaled) frame, relative to the anchor.
+      const cos = Math.cos(x.angle), sin = Math.sin(x.angle);
+      const vx = p.x - aw.x, vy = p.y - aw.y;
+      const lx = vx * cos + vy * sin, ly = -vx * sin + vy * cos;
+      const hx = d.h.p.x - a.x, hy = d.h.p.y - a.y;
+      let sx = d.h.fx && Math.abs(hx) > 1e-9 ? lx / hx : d.base.sx;
+      let sy = d.h.fy && Math.abs(hy) > 1e-9 ? ly / hy : d.base.sy;
+      if (e.shiftKey) { // keep proportions
+        if (d.h.fx && d.h.fy) { const k = Math.abs(sx / d.base.sx) > Math.abs(sy / d.base.sy) ? sx / d.base.sx : sy / d.base.sy; sx = d.base.sx * k; sy = d.base.sy * k; }
+        else if (d.h.fx) sy = d.base.sy * (sx / d.base.sx);
+        else sx = d.base.sx * (sy / d.base.sy);
+      }
+      if (Math.abs(sx) < 1e-3) sx = 1e-3 * Math.sign(sx || 1);
+      if (Math.abs(sy) < 1e-3) sy = 1e-3 * Math.sign(sy || 1);
+      x.sx = sx; x.sy = sy;
+      // Shift so the anchor did not move.
+      const now = this.xWorld(a);
+      x.tx += aw.x - now.x; x.ty += aw.y - now.y;
+    }
+    this.applyTransform();
+    this.app.onTransformChange?.();
+  }
+
+  // Exact values from the options bar (percent and degrees, around the centre).
+  setTransformValues({ w, h, angle }) {
+    const x = this.xform;
+    if (!x) return;
+    const cw = this.xWorld(x.c);
+    if (Number.isFinite(w) && w !== 0) x.sx = w / 100;
+    if (Number.isFinite(h) && h !== 0) x.sy = h / 100;
+    if (Number.isFinite(angle)) x.angle = (angle * Math.PI) / 180;
+    const now = this.xWorld(x.c);
+    x.tx += cw.x - now.x; x.ty += cw.y - now.y;
+    this.applyTransform();
+    this.render();
+  }
+
+  transformValues() {
+    const x = this.xform;
+    return x && { w: x.sx * 100, h: x.sy * 100, angle: (x.angle * 180) / Math.PI };
+  }
+
+  commitTransform() {
+    if (!this.xform) return;
+    this.applyTransform();
+    for (const n of this.xform.nodes) {
+      n.x = Math.round(n.x); n.y = Math.round(n.y);
+      if (n.in) n.in = { x: Math.round(n.in.x), y: Math.round(n.in.y) };
+      if (n.out) n.out = { x: Math.round(n.out.x), y: Math.round(n.out.y) };
+    }
+    this.xform = null;
+    this.afterEdit();
+    this.app.onTransformChange?.();
+  }
+
+  cancelTransform() {
+    const x = this.xform;
+    if (!x) return;
+    x.nodes.forEach((n, i) => {
+      const o = x.orig[i];
+      n.x = o.x; n.y = o.y;
+      if (o.in) n.in = o.in; else delete n.in;
+      if (o.out) n.out = o.out; else delete n.out;
+    });
+    this.xform = null;
+    this.app.history.undoStack.pop(); // nothing changed
+    this.render();
+    this.app.onTransformChange?.();
+  }
+
+  drawTransform(colors) {
+    const ctx = this.ctx;
+    const hs = this.xHandles().map((h) => ({ ...h, s: this.toScreen(this.xWorld(h.p)) }));
+    const corner = (id) => hs.find((h) => h.id === id).s;
+    ctx.strokeStyle = colors.primary;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ['nw', 'ne', 'se', 'sw'].forEach((id, i) => { const c = corner(id); if (i) ctx.lineTo(c.x, c.y); else ctx.moveTo(c.x, c.y); });
+    ctx.closePath();
+    ctx.stroke();
+    for (const h of hs) {
+      ctx.fillStyle = colors.nodeFill;
+      ctx.fillRect(h.s.x - 4, h.s.y - 4, 8, 8);
+      ctx.strokeRect(h.s.x - 4 + 0.5, h.s.y - 4 + 0.5, 7, 7);
+    }
+    const c = this.toScreen(this.xWorld(this.xform.c));
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 4, 0, Math.PI * 2);
+    ctx.moveTo(c.x - 7, c.y); ctx.lineTo(c.x + 7, c.y);
+    ctx.moveTo(c.x, c.y - 7); ctx.lineTo(c.x, c.y + 7);
+    ctx.stroke();
+    const v = this.transformValues();
+    if (this.drag?.kind?.startsWith('x')) {
+      const txt = this.drag.kind === 'xrotate' ? `${v.angle.toFixed(1)}°` : `${v.w.toFixed(1)}% × ${v.h.toFixed(1)}%`;
+      this.label(txt, c.x + 10, c.y + 10, colors);
+    }
+  }
+
   // Vector-editor path operations on the selected contours (or all of them).
   pathOp(kind) {
     const cs = this.glyph.contours;
@@ -637,6 +894,7 @@ export class Editor {
   }
 
   onDblClick(e) {
+    if (this.xform) { this.commitTransform(); return; }
     if (!this.glyph || this.tool !== 'select') return;
     const { sx, sy } = this.eventPos(e);
     const n = this.nodeAt(sx, sy);
@@ -686,6 +944,12 @@ export class Editor {
   updateCursor(sx, sy) {
     const tool = this.activeTool();
     let cur = 'crosshair';
+    if (this.xform && tool !== 'hand') {
+      const hit = this.xHit(sx, sy);
+      const dirs = { n: 'ns', s: 'ns', e: 'ew', w: 'ew', nw: 'nwse', se: 'nwse', ne: 'nesw', sw: 'nesw' };
+      this.canvas.style.cursor = hit.kind === 'scale' ? `${dirs[hit.h.id]}-resize` : hit.kind === 'move' ? 'move' : ROTATE_CURSOR;
+      return;
+    }
     if (tool === 'hand') cur = this.drag ? 'grabbing' : 'grab';
     else if (tool === 'brush' || tool === 'eraser') cur = 'none';
     else if (tool === 'select') {
@@ -804,6 +1068,7 @@ export class Editor {
 
   // Returns true when Escape was used up by the editor.
   escape() {
+    if (this.xform) { this.cancelTransform(); return true; }
     if (this.penContour !== null) { this.finishPen(); return true; }
     if (this.sel.size) { this.sel.clear(); this.render(); return true; }
     return false;
@@ -1033,6 +1298,15 @@ export class Editor {
       const w = Math.round(Math.abs(b.x - d.start.x)), h = Math.round(Math.abs(b.y - d.start.y));
       this.label(`${w} × ${h}`, Math.max(p.x, q.x) + 8, Math.max(p.y, q.y) + 8, colors);
     }
+    if (d?.kind === 'knife') {
+      const p = this.toScreen(d.start), q = this.toScreen(d.end);
+      ctx.strokeStyle = '#F26B6B';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (this.xform) this.drawTransform(colors);
     if (d?.kind === 'stroke') {
       ctx.strokeStyle = d.erase ? 'rgba(220,38,38,0.35)' : colors.ink;
       ctx.globalAlpha = d.erase ? 1 : 0.92;

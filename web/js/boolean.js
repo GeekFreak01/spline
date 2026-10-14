@@ -42,23 +42,73 @@ function paths(item, out = []) {
 
 const r1 = (v) => Math.round(v * 10) / 10;
 
-function fromPaper(item) {
+// `shift(x, y)` may return {dx, dy} to nudge a point (used by the knife to
+// close the hairline gap of a cut).
+function fromPaper(item, shift = null) {
   const out = [];
   for (const p of paths(item)) {
     if (p.segments.length < 2 || Math.abs(p.area) < 1) continue;
     const nodes = p.segments.map((s) => {
-      const n = { x: r1(s.point.x), y: r1(s.point.y) };
-      if (!s.handleIn.isZero()) n.in = { x: r1(s.point.x + s.handleIn.x), y: r1(s.point.y + s.handleIn.y) };
-      if (!s.handleOut.isZero()) n.out = { x: r1(s.point.x + s.handleOut.x), y: r1(s.point.y + s.handleOut.y) };
+      const d = (shift && shift(s.point.x, s.point.y)) || { dx: 0, dy: 0 };
+      const px = s.point.x + d.dx, py = s.point.y + d.dy;
+      const n = { x: r1(px), y: r1(py) };
+      if (!s.handleIn.isZero()) n.in = { x: r1(px + s.handleIn.x), y: r1(py + s.handleIn.y) };
+      if (!s.handleOut.isZero()) n.out = { x: r1(px + s.handleOut.x), y: r1(py + s.handleOut.y) };
       if (n.in && n.out) {
         const a = Math.atan2(-s.handleIn.y, -s.handleIn.x), b = Math.atan2(s.handleOut.y, s.handleOut.x);
         n.smooth = Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < 0.02;
       }
       return n;
     });
-    out.push({ closed: true, nodes });
+    // Drop points that collapsed onto their neighbour after closing the gap.
+    const clean = nodes.filter((n, i) => {
+      const m = nodes[(i + 1) % nodes.length];
+      return nodes.length < 3 || n === m || n.x !== m.x || n.y !== m.y || n.out || m.in;
+    });
+    if (clean.length >= 2) out.push({ closed: true, nodes: clean });
   }
   return out;
+}
+
+/**
+ * Knife: cuts the outline along the segment a→b into separate closed
+ * contours. Only stretches of the segment that run through filled area
+ * from edge to edge cut; the pieces share exactly the same cut edge.
+ * Returns null when the segment does not cross the shape.
+ */
+export function knifeCut(contours, a, b) {
+  const P = paperScope();
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  if (len < 1) return null;
+  const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len, nx = -uy, ny = ux;
+  const shape = toPaper(contours);
+  const line = new P.Path.Line({ from: [a.x, a.y], to: [b.x, b.y], insert: false });
+  const along = (x, y) => (x - a.x) * ux + (y - a.y) * uy;
+  const ts = shape.getIntersections(line).map((loc) => along(loc.point.x, loc.point.y)).sort((p, q) => p - q)
+    .filter((v, i, arr) => i === 0 || v - arr[i - 1] > 1e-4);
+  const chords = [];
+  for (let i = 0; i + 1 < ts.length; i++) {
+    const m = (ts[i] + ts[i + 1]) / 2;
+    if (shape.contains(new P.Point(a.x + ux * m, a.y + uy * m))) chords.push([ts[i], ts[i + 1]]);
+  }
+  if (!chords.length) return null;
+  // Cut out a hair-thin strip along every chord, then move the points of
+  // both sides back onto the cut line so no gap remains.
+  const eps = 0.01, ext = 1;
+  const pt = (t, o) => [a.x + ux * t + nx * o, a.y + uy * t + ny * o];
+  const cutter = new P.CompoundPath({
+    insert: false,
+    children: chords.map(([t0, t1]) => new P.Path({
+      insert: false, closed: true,
+      segments: [pt(t0 - ext, -eps), pt(t1 + ext, -eps), pt(t1 + ext, eps), pt(t0 - ext, eps)],
+    })),
+  });
+  const res = shape.subtract(cutter, { insert: false });
+  return fromPaper(res, (x, y) => {
+    const t = along(x, y), off = (x - a.x) * nx + (y - a.y) * ny;
+    if (Math.abs(off) > 3 * eps || !chords.some(([t0, t1]) => t >= t0 - ext - 1e-6 && t <= t1 + ext + 1e-6)) return null;
+    return { dx: -nx * off, dy: -ny * off };
+  });
 }
 
 // ------------------------------------------------------------ operations
