@@ -1297,7 +1297,7 @@ export class Editor {
       ctx.lineTo(this.w, sy);
       ctx.stroke();
       ctx.fillStyle = colors.text;
-      ctx.fillText(label, 10, sy - 3);
+      ctx.fillText(label, this.showRulers ? RULER + 6 : 10, sy - 3);
     }
     ctx.strokeStyle = colors.metric;
     ctx.lineWidth = 1.5;

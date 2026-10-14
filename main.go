@@ -53,6 +53,7 @@ func main() {
 	noBrowser := flag.Bool("no-browser", false, "only start the server, do not open a window")
 	useBrowser := flag.Bool("browser", false, "open the editor in the default web browser instead of an app window")
 	dev := flag.Bool("dev", false, "serve ./web from disk (for developing the UI)")
+	view := flag.String("view", "", "start in a view, e.g. \"#kern\" or \"#glyph=A\" (docs and screenshots)")
 	flag.Parse()
 
 	s := &server{dev: *dev}
@@ -79,6 +80,9 @@ func main() {
 	}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/", s.port)
+	if strings.HasPrefix(*view, "#") || strings.HasPrefix(*view, "?") {
+		url += *view
+	}
 	fmt.Printf("Spline %s: %s\n", version, url)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- http.Serve(ln, s.routes()) }()

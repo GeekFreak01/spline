@@ -9,6 +9,14 @@
 
 > Код проекта почти полностью написан с помощью ИИ.
 
+![Список букв](docs/screenshots/glyphs.png)
+
+| Редактор контуров | Кернинг |
+|---|---|
+| ![Редактор](docs/screenshots/editor.png) | ![Кернинг](docs/screenshots/kerning.png) |
+
+<sub>На скриншотах демо-проект [examples/demo.sp](examples/demo.sp), собранный из контуров открытого шрифта Go Regular (© The Go Authors, BSD-подобная лицензия) командой `go run ./tools/mkdemo`.</sub>
+
 Идеи взяты из [Glyphs](https://glyphsapp.com) и [FontForge](https://github.com/fontforge/fontforge),
 но всё сделано максимально просто: один файл программы, никакой установки, своё окно без браузера.
 
@@ -184,7 +192,7 @@ go test ./...         # проверка сборки шрифтов
 
 Иконки (`assets/logo.svg`, `assets/file.svg`) вшиваются в `spline.exe` командой `go generate` (создаёт `rsrc_windows_*.syso`).
 
-Флаги: `--browser` (открыть в обычном браузере), `--port 7878`, `--no-browser` (только сервер), `--dev`.
+Флаги: `--view "#kern"` / `--view "#glyph=A"` (открыть сразу нужный режим), `--browser` (открыть в обычном браузере), `--port 7878`, `--no-browser` (только сервер), `--dev`.
 
 Собрать Windows-версию без консольного окна:
 
@@ -199,6 +207,8 @@ go build -ldflags "-H=windowsgui" -o spline.exe .
 ## English
 
 > The code was written almost entirely with the help of AI.
+
+Screenshots are at the top of this page; the demo project `examples/demo.sp` is built from the open Go Regular font outlines.
 
 **Spline** makes font creation lightweight: a simple font editor with a professional dark workspace, inspired by Glyphs and FontForge.
 

@@ -80,17 +80,26 @@ export class KernView {
     const pad = 32;
     const lineH = (info.ascender - info.descender) * scale * 1.35;
     const items = [];
+    const chars = Array.from(this.text);
+    const advOf = (ch) => { const g = this.glyphFor(ch); return (g ? g.advance : info.unitsPerEm * 0.5) * scale; };
     let x = pad, line = 0, prev = null;
-    for (const ch of Array.from(this.text)) {
+    chars.forEach((ch, i) => {
       const g = this.glyphFor(ch);
-      const adv = (g ? g.advance : info.unitsPerEm * 0.5) * scale;
+      const adv = advOf(ch);
       const kern = prev && g ? getKern(p, prev.name, g.name) * scale : 0;
+      // Wrap whole words: at the start of a word, measure it to the next space.
+      if (ch !== ' ' && (i === 0 || chars[i - 1] === ' ') && x > pad) {
+        let w = 0;
+        for (let j = i; j < chars.length && chars[j] !== ' '; j++) w += advOf(chars[j]);
+        if (x + w > this.w - pad) { x = pad; line++; }
+      }
+      // A single word longer than the line still breaks inside.
       if (x + kern + adv > this.w - pad && x > pad && ch !== ' ') { x = pad; line++; }
       x += kern;
       items.push({ ch, g, x, adv, kern, line, baseline: pad + info.ascender * scale + line * lineH });
       x += adv;
       prev = g;
-    }
+    });
     this.scale = scale;
     this.lineH = lineH;
     this.items = items;
