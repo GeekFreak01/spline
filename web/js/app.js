@@ -608,7 +608,7 @@ function transformSection() {
       <button class="btn" type="button" data-cmd="flipH" data-tip="${esc(t('flipH'))}">${icon('flipH', 15)}<span>↔</span></button>
       <button class="btn" type="button" data-cmd="flipV" data-tip="${esc(t('flipV'))}">${icon('flipV', 15)}<span>↕</span></button>
     </div>
-    <p class="hint">${esc(t('transformHint'))}</p>`);
+`);
 }
 
 function fontSection() {
@@ -659,7 +659,8 @@ function renderGlyphPanel() {
     + section('selection', t('selection'), '<div id="selBox"></div>')
     + section('pathops', t('pathOps'), `<div class="op-row">${PATH_OPS.map((op) => `<button class="btn btn-icon" type="button"
         data-pathop="${op.id}" data-tip="${esc(t(op.label))}" ${op.key ? `data-key="${op.key}"` : ''} aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
-        <p class="hint">${esc(t('pathOpsHint'))}</p>`)
+`)
+    + alignSection()
     + transformSection()
     + section('actions', t('actions'), `
       <button class="btn btn-block" type="button" data-cmd="spacing">${icon('spacing', 15)}<span>${esc(t('autoSpacing'))}</span></button>
@@ -667,6 +668,43 @@ function renderGlyphPanel() {
       <button class="btn btn-block btn-danger" type="button" data-cmd="clear">${icon('eraseAll', 15)}<span>${esc(t('clear'))}</span></button>`)
     + fontSection();
 }
+
+const ALIGN_OPS = [
+  { id: 'left', icon: 'alignLeft', label: 'alLeft' },
+  { id: 'hcenter', icon: 'alignHCenter', label: 'alHCenter' },
+  { id: 'right', icon: 'alignRight', label: 'alRight' },
+  { id: 'top', icon: 'alignTop', label: 'alTop' },
+  { id: 'vcenter', icon: 'alignVCenter', label: 'alVCenter' },
+  { id: 'bottom', icon: 'alignBottom', label: 'alBottom' },
+  { id: 'center', icon: 'alignCenter', label: 'alCenter' },
+  { id: 'dist-x', icon: 'distributeX', label: 'alDistX' },
+  { id: 'dist-y', icon: 'distributeY', label: 'alDistY' },
+];
+
+function alignSection() {
+  const btn = (op) => `<button class="btn btn-icon" type="button" data-align="${op.id}"
+    data-tip="${esc(t(op.label))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`;
+  return section('align', t('alignment'), `
+    <div class="op-row">${ALIGN_OPS.slice(0, 6).map(btn).join('')}</div>
+    <div class="op-row">${ALIGN_OPS.slice(6).map(btn).join('')}</div>
+    <label class="prop"><span>${esc(t('alignTo'))}</span><select data-align-to>
+      <option value="selection" ${editor.alignTo === 'selection' ? 'selected' : ''}>${esc(t(editor.keyContour ? 'alignToKey' : 'alignToSelection'))}</option>
+      <option value="frame" ${editor.alignTo === 'frame' ? 'selected' : ''}>${esc(t('alignToFrame'))}</option>
+    </select></label>`);
+}
+
+function runAlign(id) {
+  if (app.mode !== 'editor') return;
+  const ok = id.startsWith('dist-') ? editor.distribute(id.slice(5)) : editor.align(id);
+  if (!ok) toast(t(id.startsWith('dist-') ? 'alNeedThree' : 'alNothing'), 'error');
+}
+
+// The key object changed: update the "relative to" label.
+app.onKeyObject = () => {
+  const opt = $('glyphPanel').querySelector('[data-align-to] option[value="selection"]');
+  if (opt) opt.textContent = t(editor.keyContour ? 'alignToKey' : 'alignToSelection');
+  editor.render();
+};
 
 const PATH_OPS = [
   { id: 'unite', icon: 'opUnite', label: 'opUnite', key: `${MOD}Alt+U` },
@@ -776,6 +814,7 @@ for (const dock of [$('inspector'), $('glyphPanel')]) {
       markChanged();
       return;
     }
+    if (e.target.dataset.alignTo !== undefined) { editor.alignTo = e.target.value; editor.render(); return; }
     if (e.target.id === 'selLock') store.set('spline.lockRatio', e.target.checked ? '1' : '0');
     if (e.target.dataset.sel) {
       editor.setSelectionValue(e.target.dataset.sel, Number(e.target.value), $('selLock')?.checked);
@@ -792,6 +831,8 @@ for (const dock of [$('inspector'), $('glyphPanel')]) {
   dock.addEventListener('click', (e) => {
     const sw = e.target.closest('[data-role="colorPick"] [data-color]');
     if (sw) { setColor(sw.dataset.color); return; }
+    const al = e.target.closest('[data-align]');
+    if (al) { runAlign(al.dataset.align); return; }
     const po = e.target.closest('[data-pathop]');
     if (po) { runPathOp(po.dataset.pathop); return; }
     const ap = e.target.closest('[data-apply]');

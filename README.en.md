@@ -82,6 +82,7 @@ go run .
 | **Rulers and guides** | `Ctrl+R`, like in Photoshop: rulers in font units. Drag out of a ruler to create a guide, drag it back onto the ruler to delete it; double-click sets an exact value. Points and shapes snap to guides, and guides are saved in the `.sp` file |
 | **Kerning** | The Kerning view (`Ctrl+K`): type a line right in the window, the cursor between two letters picks the pair. `Alt+←/→` by ±10, `Alt+Shift+←/→` by ±1, or drag with the mouse or type a number. A list of all pairs with search. The font gets `GPOS` and `kern` tables |
 | **Kerning groups** | Kerning classes, like in Glyphs: every glyph has a left and a right side group (for example A, À, А in group `A`). One rule `@A — @V` works for all glyphs of the groups; a single glyph can get an exception (including "0"). Priority: glyph+glyph, glyph+group, group+glyph, group+group. "Groups from base letter" sets groups in one click |
+| **Align** | Left, right, top, bottom, centres and both centres at once; distribute three or more shapes with equal gaps. Relative to the selection, a key object (click a selected shape again, like in Illustrator) or the glyph frame |
 | **Path operations** | Unite, subtract front, intersect, exclude, divide, remove overlap, like in vector editors |
 | **Transformations** | Scale, rotate, slant, flip for the selected points or whole glyphs |
 | **Metrics** | Left/right sidebearings and width as numbers, "even sidebearings" in one click |

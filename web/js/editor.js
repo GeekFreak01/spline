@@ -51,6 +51,8 @@ export class Editor {
     this.stabilizer = 4;     // 0..10, smooths brush input
     this.snapMark = null;    // last snapped point, drawn as a marker
     this.xform = null;       // free transform (Ctrl+T) state
+    this.keyContour = null;  // key object for alignment (click a selected shape again)
+    this.alignTo = 'selection'; // 'selection' (or key object) | 'frame'
     this.showRulers = false; // Ctrl+R
     this.showUserGuides = true;
     this.view = { scale: 0.5, ox: 0, oy: 0 };
@@ -317,10 +319,16 @@ export class Editor {
     if (ci >= 0) {
       const keys = this.glyph.contours[ci].nodes.map((_, ni) => `${ci}:${ni}`);
       const all = keys.every((k) => this.sel.has(k));
-      if (!e.shiftKey && !all) this.sel = new Set();
+      const several = new Set([...this.sel].map((k) => k.split(':')[0])).size > 1;
+      if (!e.shiftKey && !all) { this.sel = new Set(); this.keyContour = null; }
       keys.forEach((k) => this.sel.add(k));
       const first = this.glyph.contours[ci].nodes[0];
-      this.drag = { kind: 'move', start: p, applied: { x: 0, y: 0 }, ref: { x: first.x, y: first.y } };
+      this.drag = {
+        kind: 'move', start: p, applied: { x: 0, y: 0 }, ref: { x: first.x, y: first.y },
+        // A click (no drag) on a shape that was already selected together
+        // with others makes it the key object, like in Illustrator.
+        keyCandidate: all && several && !e.shiftKey ? this.glyph.contours[ci] : null,
+      };
       return;
     }
     if (!e.shiftKey) this.sel.clear();
@@ -515,6 +523,10 @@ export class Editor {
         this.app.onTransformChange?.();
         break;
       case 'move':
+        if (!d.moved && d.keyCandidate) {
+          this.keyContour = this.keyContour === d.keyCandidate ? null : d.keyCandidate;
+          this.app.onKeyObject?.(!!this.keyContour);
+        }
         if (d.moved) { this.roundSelection(); this.afterEdit(); } else if (d.cuspNode) {
           // Ctrl/Alt-click on a point: sharp corner on both sides.
           const n = this.glyph.contours[d.cuspNode.ci].nodes[d.cuspNode.ni];
@@ -957,6 +969,104 @@ export class Editor {
       const txt = this.drag.kind === 'xrotate' ? `${v.angle.toFixed(1)}°` : `${v.w.toFixed(1)}% × ${v.h.toFixed(1)}%`;
       this.label(txt, c.x + 10, c.y + 10, colors);
     }
+  }
+
+  // ---------------------------------------------------------------- alignment
+
+  // Shapes to align: the selected contours grouped with their holes, or the
+  // whole glyph as one shape when nothing is selected.
+  alignShapes() {
+    const cs = this.glyph.contours;
+    const picked = new Set([...this.sel].map((k) => Number(k.split(':')[0])).filter((i) => cs[i]?.nodes.length));
+    const groups = picked.size ? shapesOf(cs, picked) : (cs.length ? [cs.map((_, i) => i)] : []);
+    return groups.map((idx) => {
+      const contours = idx.map((i) => cs[i]);
+      return { contours, box: polyBox(contours.flatMap((c) => flatten(c, 16))) };
+    });
+  }
+
+  // The blue frame of the glyph: its width and the ascender..descender band.
+  frameBox() {
+    const info = this.app.project.info;
+    return { minX: 0, maxX: this.glyph.advance, minY: info.descender, maxY: info.ascender };
+  }
+
+  keyShape(shapes) {
+    if (!this.keyContour) return null;
+    return shapes.find((s) => s.contours.includes(this.keyContour)) || null;
+  }
+
+  // kind: left | hcenter | right | top | vcenter | bottom | center
+  align(kind) {
+    const shapes = this.alignShapes();
+    if (!shapes.length) return false;
+    const key = this.alignTo === 'selection' ? this.keyShape(shapes) : null;
+    let ref;
+    if (this.alignTo === 'frame' || shapes.length === 1 && !key) ref = this.frameBox();
+    else if (key) ref = key.box;
+    else {
+      ref = shapes.reduce((b, s) => ({
+        minX: Math.min(b.minX, s.box.minX), minY: Math.min(b.minY, s.box.minY),
+        maxX: Math.max(b.maxX, s.box.maxX), maxY: Math.max(b.maxY, s.box.maxY),
+      }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+    }
+    const cx = (b) => (b.minX + b.maxX) / 2, cy = (b) => (b.minY + b.maxY) / 2;
+    this.app.history.push(this.glyph);
+    for (const s of shapes) {
+      if (s === key) continue;
+      const b = s.box;
+      let dx = 0, dy = 0;
+      if (kind === 'left') dx = ref.minX - b.minX;
+      if (kind === 'right') dx = ref.maxX - b.maxX;
+      if (kind === 'hcenter' || kind === 'center') dx = cx(ref) - cx(b);
+      if (kind === 'top') dy = ref.maxY - b.maxY;
+      if (kind === 'bottom') dy = ref.minY - b.minY;
+      if (kind === 'vcenter' || kind === 'center') dy = cy(ref) - cy(b);
+      this.moveShape(s, Math.round(dx), Math.round(dy));
+    }
+    this.afterEdit();
+    return true;
+  }
+
+  // Equal gaps between three or more shapes; the outermost ones stay put.
+  distribute(axis) {
+    const shapes = this.alignShapes();
+    if (shapes.length < 3) return false;
+    const lo = axis === 'x' ? 'minX' : 'minY', hi = axis === 'x' ? 'maxX' : 'maxY';
+    shapes.sort((a, b) => a.box[lo] - b.box[lo]);
+    const span = Math.max(...shapes.map((s) => s.box[hi])) - shapes[0].box[lo];
+    const sizes = shapes.reduce((sum, s) => sum + (s.box[hi] - s.box[lo]), 0);
+    const gap = (span - sizes) / (shapes.length - 1);
+    this.app.history.push(this.glyph);
+    let pos = shapes[0].box[hi] + gap;
+    for (const s of shapes.slice(1, -1)) {
+      const d = Math.round(pos - s.box[lo]);
+      this.moveShape(s, axis === 'x' ? d : 0, axis === 'y' ? d : 0);
+      pos += (s.box[hi] - s.box[lo]) + gap;
+    }
+    this.afterEdit();
+    return true;
+  }
+
+  moveShape(s, dx, dy) {
+    if (!dx && !dy) return;
+    for (const c of s.contours) for (const n of c.nodes) movePoint(n, dx, dy, true);
+  }
+
+  drawKeyObject(colors) {
+    if (!this.keyContour || this.alignTo !== 'selection') return;
+    const ci = this.glyph.contours.indexOf(this.keyContour);
+    if (ci < 0 || ![...this.sel].some((k) => k.startsWith(`${ci}:`))) return;
+    const shape = this.keyShape(this.alignShapes());
+    if (!shape) return;
+    const a = this.toScreen({ x: shape.box.minX, y: shape.box.maxY });
+    const b = this.toScreen({ x: shape.box.maxX, y: shape.box.minY });
+    const ctx = this.ctx;
+    ctx.strokeStyle = colors.accent;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 3]);
+    ctx.strokeRect(a.x - 4, a.y - 4, b.x - a.x + 8, b.y - a.y + 8);
+    ctx.setLineDash([]);
   }
 
   // Vector-editor path operations on the selected contours (or all of them).
@@ -1465,6 +1575,7 @@ export class Editor {
       ctx.setLineDash([]);
     }
     if (this.xform) this.drawTransform(colors);
+    this.drawKeyObject(colors);
     if (d?.kind === 'stroke') {
       ctx.strokeStyle = d.erase ? 'rgba(220,38,38,0.35)' : colors.ink;
       ctx.globalAlpha = d.erase ? 1 : 0.92;
