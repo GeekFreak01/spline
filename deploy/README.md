@@ -43,9 +43,9 @@ Not part of the repository (`.gitignore`), read on every page load:
 
 | File | Purpose |
 |---|---|
-| `head.html` | Inserted into `<head>`: meta tags, analytics, ad scripts |
+| `head.html` | Inserted into `<head>`: meta tags, scripts |
 | `sidebar.html` | Shown at the bottom of the left panel |
-| `ads.txt`, `privacy.html`, `robots.txt`, … | Served as plain files at the site root |
+| `privacy.html`, `robots.txt`, … | Served as plain files at the site root |
 
 If `privacy.html` exists, the Help menu links to it.
 

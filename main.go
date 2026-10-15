@@ -56,7 +56,7 @@ func main() {
 	view := flag.String("view", "", "start in a view, e.g. \"#kern\" or \"#glyph=A\" (docs and screenshots)")
 	webAddr := flag.String("web", "", "run as a public website on this address, e.g. \":8080\" (see deploy/)")
 	webHosts := flag.String("host", "", "web mode: allowed host names, comma separated (empty = any)")
-	siteDir := flag.String("site-dir", "", "web mode: folder with site-specific files (head.html, sidebar.html, ads.txt, ...)")
+	siteDir := flag.String("site-dir", "", "web mode: folder with site-specific files (head.html, sidebar.html, robots.txt, ...)")
 	trustProxy := flag.Bool("trust-proxy", false, "web mode: take the visitor address from X-Forwarded-For (behind Caddy/nginx)")
 	flag.Parse()
 

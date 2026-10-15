@@ -28,9 +28,9 @@ import (
 // A site directory (--site-dir) can add site-specific content that is not
 // part of the open-source code:
 //
-//	head.html     inserted into <head> (analytics, ad scripts, meta tags)
+//	head.html     inserted into <head> (meta tags, scripts)
 //	sidebar.html  shown at the bottom of the left panel
-//	ads.txt, privacy.html, robots.txt, ...  served as plain files
+//	privacy.html, robots.txt, ...  served as plain files
 
 const (
 	webMaxBody      = 8 << 20 // a big font project is well below this
@@ -151,7 +151,7 @@ func (ws *webServer) siteFileExists(name string) bool {
 	return err == nil
 }
 
-// serveSiteFile serves top-level files of the site directory (ads.txt,
+// serveSiteFile serves top-level files of the site directory (robots.txt,
 // privacy.html, ...). The two slot snippets are never served directly.
 func (ws *webServer) serveSiteFile(w http.ResponseWriter, r *http.Request) bool {
 	if ws.siteDir == "" {

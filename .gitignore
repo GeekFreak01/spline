@@ -8,6 +8,6 @@
 /spline.exe~
 *.exe~
 
-# Site-specific files of a hosted Spline (ads, private pages) are not published
+# Site-specific files of a hosted Spline are kept out of the repository
 /deploy/site/
 /deploy/.env
