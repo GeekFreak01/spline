@@ -1,0 +1,23 @@
+# Spline behind a reverse proxy that already runs on the server (nginx,
+# Caddy, Traefik): only the editor container, published on localhost.
+#
+#   cp .env.example .env               # set SPLINE_DOMAIN, SPLINE_PORT
+#   docker compose -f docker-compose.nginx.yml up -d --build
+#
+# Then proxy https://SPLINE_DOMAIN to 127.0.0.1:SPLINE_PORT (see nginx.conf.example).
+
+services:
+  spline:
+    build:
+      context: ..
+      args:
+        VERSION: ${SPLINE_VERSION:-dev}
+    restart: unless-stopped
+    command: ["--web", ":8080", "--host", "${SPLINE_DOMAIN}", "--site-dir", "/site", "--trust-proxy"]
+    ports:
+      - "127.0.0.1:${SPLINE_PORT:-8095}:8080"
+    volumes:
+      - ./site:/site:ro
+    read_only: true
+    security_opt:
+      - no-new-privileges:true

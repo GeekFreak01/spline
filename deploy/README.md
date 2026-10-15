@@ -24,6 +24,19 @@ Caddy gets a Let's Encrypt certificate on the first request. To update:
 git pull && docker compose up -d --build
 ```
 
+## Behind an existing nginx / Caddy
+
+If the server already runs a web server on ports 80/443, start only the
+editor container on localhost and proxy to it:
+
+```bash
+docker compose -f docker-compose.nginx.yml up -d --build   # 127.0.0.1:8095
+```
+
+An nginx site is in `nginx.conf.example` (`certbot --nginx -d your.domain`
+adds HTTPS). nginx sets `X-Forwarded-For` to the visitor address, which
+`--trust-proxy` uses for the per-visitor limit.
+
 ## Site-specific files (`deploy/site/`)
 
 Not part of the repository (`.gitignore`), read on every page load:

@@ -1,0 +1,18 @@
+# nginx site for Spline running with docker-compose.nginx.yml.
+# Replace spline.example.com; get the certificate with:
+#   certbot --nginx -d spline.example.com
+
+server {
+  listen 80;
+  server_name spline.example.com;
+
+  location / {
+    proxy_pass http://127.0.0.1:8095;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 8m;
+    gzip on;
+    gzip_types text/css application/javascript image/svg+xml application/json;
+  }
+}
