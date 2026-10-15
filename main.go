@@ -54,7 +54,16 @@ func main() {
 	useBrowser := flag.Bool("browser", false, "open the editor in the default web browser instead of an app window")
 	dev := flag.Bool("dev", false, "serve ./web from disk (for developing the UI)")
 	view := flag.String("view", "", "start in a view, e.g. \"#kern\" or \"#glyph=A\" (docs and screenshots)")
+	webAddr := flag.String("web", "", "run as a public website on this address, e.g. \":8080\" (see deploy/)")
+	webHosts := flag.String("host", "", "web mode: allowed host names, comma separated (empty = any)")
+	siteDir := flag.String("site-dir", "", "web mode: folder with site-specific files (head.html, sidebar.html, ads.txt, ...)")
+	trustProxy := flag.Bool("trust-proxy", false, "web mode: take the visitor address from X-Forwarded-For (behind Caddy/nginx)")
 	flag.Parse()
+
+	if *webAddr != "" {
+		runWeb(*webAddr, *webHosts, *siteDir, *trustProxy, *dev)
+		return
+	}
 
 	s := &server{dev: *dev}
 	if flag.NArg() > 0 {
@@ -227,16 +236,34 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	p, err := readProject(r)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	data, err := fontgen.Build(p, format)
+	data, status, err := buildFont(body, format)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		http.Error(w, err.Error(), status)
 		return
 	}
+	writeFont(w, format, data)
+}
+
+// buildFont parses a .sp document and compiles it; status is the HTTP code
+// to report when it fails.
+func buildFont(body []byte, format fontgen.Format) ([]byte, int, error) {
+	p, err := project.Parse(body)
+	if err != nil {
+		return nil, http.StatusBadRequest, err
+	}
+	data, err := fontgen.Build(p, format)
+	if err != nil {
+		return nil, http.StatusUnprocessableEntity, err
+	}
+	return data, http.StatusOK, nil
+}
+
+func writeFont(w http.ResponseWriter, format fontgen.Format, data []byte) {
 	if format == fontgen.OTF {
 		w.Header().Set("Content-Type", "font/otf")
 	} else {
@@ -277,14 +304,6 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"filePath": s.filePath})
-}
-
-func readProject(r *http.Request) (*project.Project, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
-	if err != nil {
-		return nil, err
-	}
-	return project.Parse(body)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

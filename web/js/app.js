@@ -242,7 +242,10 @@ function menuDefs() {
     ] },
     { id: 'menuHelp', items: [
       { label: 'shortcuts', key: 'F1', run: helpDialog },
-      { label: 'checkUpdates', run: () => checkUpdates(true) },
+      ...(app.platform?.web ? [
+        { label: 'downloadDesktop', run: () => openPage('releases') },
+        ...(app.platform.privacy ? [{ label: 'privacy', run: () => window.open('/privacy.html', '_blank', 'noopener') }] : []),
+      ] : [{ label: 'checkUpdates', run: () => checkUpdates(true) }]),
       { label: 'about', run: () => openPage('github') },
     ] },
   ];
@@ -1933,7 +1936,10 @@ async function start() {
 
   let session = null;
   try { session = await (await fetch('/api/session')).json(); } catch { /* opened without the Go server */ }
-  app.platform = { canAssociate: !!session?.canAssociate, associated: !!session?.associated };
+  app.platform = {
+    canAssociate: !!session?.canAssociate, associated: !!session?.associated,
+    web: !!session?.web, privacy: !!session?.privacy, // hosted website (spline --web)
+  };
 
   let loaded = false;
   if (session?.filePath) {
@@ -1967,7 +1973,7 @@ async function start() {
   if (location.hash === '#kern') showKern(false);
   else if (m && findGlyph(decodeURIComponent(m[1]))) openEditor(decodeURIComponent(m[1]), false);
   else history.replaceState({}, '', location.pathname);
-  checkUpdates();
+  if (!app.platform.web) checkUpdates();
 }
 
 // ================================================================ updates
@@ -1975,6 +1981,10 @@ async function start() {
 // Opens one of Spline's web pages in the default browser (also works in
 // the app window, where window.open would not).
 function openPage(page) {
+  if (app.platform?.web) {
+    window.open(`https://github.com/GeekFreak01/spline${page === 'releases' ? '/releases/latest' : ''}`, '_blank', 'noopener');
+    return;
+  }
   fetch(`/api/open-page?page=${page}`, { method: 'POST', headers: { 'X-Spline': '1' } })
     .catch(() => window.open(`https://github.com/GeekFreak01/spline${page === 'releases' ? '/releases/latest' : ''}`, '_blank', 'noopener'));
 }
@@ -2076,8 +2086,11 @@ initWindowFrame();
 
 // Lets the program know the editor is still open (it quits after the last
 // browser window is closed).
-const ping = () => fetch('/api/ping', { method: 'POST', headers: { 'X-Spline': '1' } }).catch(() => {});
+// Desktop only: the local server quits after the last editor page is gone.
+const ping = () => fetch('/api/ping', { method: 'POST', headers: { 'X-Spline': '1' } }).then((r) => {
+  if (r.status === 404) clearInterval(pingTimer); // hosted website: nothing to keep alive
+}).catch(() => {});
 ping();
-setInterval(ping, 20000);
+const pingTimer = setInterval(ping, 20000);
 
 start();

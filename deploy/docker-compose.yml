@@ -1,0 +1,41 @@
+# Spline as a public website with automatic HTTPS (Caddy + Let's Encrypt).
+#
+#   cp .env.example .env              # set SPLINE_DOMAIN
+#   cp -r site.example site           # site-specific files (optional)
+#   docker compose up -d --build
+#
+# Update to the latest code: git pull && docker compose up -d --build
+
+services:
+  spline:
+    build:
+      context: ..
+      args:
+        VERSION: ${SPLINE_VERSION:-dev}
+    restart: unless-stopped
+    command: ["--web", ":8080", "--host", "${SPLINE_DOMAIN}", "--site-dir", "/site", "--trust-proxy"]
+    volumes:
+      - ./site:/site:ro
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - spline
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SPLINE_DOMAIN: ${SPLINE_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

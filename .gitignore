@@ -7,3 +7,7 @@
 !examples/**
 /spline.exe~
 *.exe~
+
+# Site-specific files of a hosted Spline (ads, private pages) are not published
+/deploy/site/
+/deploy/.env

@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+dist
+deploy
+docs
+installer
+assets/*.png
+*.exe
+*.exe~
+*.syso
