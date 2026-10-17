@@ -959,11 +959,12 @@ function xfApply(v) {
   const s = v.scale / 100, k = Math.tan((v.slant * Math.PI) / 180);
   const a = (v.rotate * Math.PI) / 180, cos = Math.cos(a), sin = Math.sin(a);
   for (const { g, nodes, base, cx, cy } of xf.items) {
-    // Scale, then slant, then rotate, around the centre of the original box.
+    // Scale around the centre of the original box, slant from the baseline
+    // (like an italic: points on y = 0 stay), then rotate around the centre.
     const f = (p) => {
-      const x = (p.x - cx) * s, y = (p.y - cy) * s;
-      const xs = x + y * k;
-      return { x: Math.round(cx + xs * cos - y * sin), y: Math.round(cy + xs * sin + y * cos) };
+      const y = cy + (p.y - cy) * s;
+      const x = (p.x - cx) * s + y * k - cy * k, dy = y - cy;
+      return { x: Math.round(cx + cy * k + x * cos - dy * sin), y: Math.round(cy + x * sin + dy * cos) };
     };
     nodes.forEach((n, i) => {
       const b = base[i];
