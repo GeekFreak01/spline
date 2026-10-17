@@ -70,6 +70,7 @@ go run .
 | | |
 |---|---|
 | **Interface** | A dark workspace like Photoshop/Glyphs: menus, options bar, tools, docked panels on the right, a status bar with coordinates. A light theme is available too |
+| **Panels** | Like in Photoshop: drag a panel header out of the right column and it becomes a floating window you can move and close. Drag the window back onto the column to dock it again. The **Window** menu shows and hides panels |
 | **Glyph overview** | Sections by category, colour labels, Unicode codes, tile size, "drawn / not drawn" filters |
 | **Brush and eraser** | Draw with a mouse or a stylus: the stroke turns into curves and is merged into the outline by a vector union (the eraser subtracts), the rest of the outline does not change. The stabilizer removes hand jitter |
 | **Pen** | Bézier curves: a click places a corner, a drag makes a curve |
@@ -151,7 +152,7 @@ Example: [examples/hello.sp](examples/hello.sp).
 | `Ctrl+R` / `Ctrl+;` | Rulers / show guides |
 | `Ctrl+K` | Kerning (`Alt+←/→` ±10, `Alt+Shift+←/→` ±1) |
 | `Ctrl+T` | Free transform (in the app window; in a browser use the Edit menu) |
-| `F1` | List of keyboard shortcuts |
+| `F1` | Keyboard shortcuts: list and reassign |
 | `F9` / `F10` | Snap to grid / to guides |
 | `Ctrl+Alt+U` `M` `I` `E` `D` `O` | Unite, subtract, intersect, exclude, divide, remove overlap |
 | `Space` (hold) | Pan the canvas |
@@ -163,7 +164,7 @@ Example: [examples/hello.sp](examples/hello.sp).
 | `Ctrl+S` / `Ctrl+Shift+S` | Save / save as |
 | `Ctrl+O` | Open |
 
-Shortcuts work with any keyboard layout, including Russian.
+Shortcuts work with any keyboard layout, including Russian. Any shortcut can be changed: Help → Keyboard Shortcuts (`F1`), click a shortcut and press a new one. In a browser, Ctrl+T, Ctrl+W and Ctrl+N belong to the browser: pick another shortcut or switch to full screen (`F11`).
 
 ## How it works
 

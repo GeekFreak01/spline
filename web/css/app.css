@@ -311,6 +311,31 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 }
 .dock details:not([open]) summary::before { transform: rotate(-90deg); }
 
+.dock.drop-target { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* Floating panels: the layer covers the window but only the panels catch the mouse. */
+.float-layer { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+.float-panel {
+  position: absolute; width: 260px; min-width: 220px; max-width: 90vw; pointer-events: auto;
+  display: flex; flex-direction: column; max-height: calc(100vh - 40px);
+  background: var(--bg-panel); border: 1px solid var(--line); border-radius: 4px; box-shadow: var(--shadow-pop);
+  resize: horizontal; overflow: hidden;
+}
+.float-panel[hidden] { display: none; }
+.float-panel.dragging { opacity: 0.85; }
+.float-head {
+  display: flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 10px; flex: none; cursor: move;
+  background: var(--bg-panel-2); border-bottom: 1px solid var(--line); user-select: none; touch-action: none;
+  font-size: var(--fs-s); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-2);
+}
+.float-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.float-btn { width: 22px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 3px; background: none; color: var(--text-2); cursor: pointer; }
+.float-btn:hover { background: var(--bg-raised); color: var(--text); }
+.float-body { overflow: auto; min-height: 0; }
+.float-body > details > summary { display: none; }
+.float-body .section { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.dock summary { touch-action: none; }
+
 .cat-list { display: flex; flex-direction: column; }
 .cat-list button {
   display: flex; justify-content: space-between; align-items: center; height: 26px; padding: 0 8px;
@@ -443,6 +468,23 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .dialog .keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0; }
 .dialog kbd { font: var(--fs-s) var(--font-mono); padding: 1px 6px; border-radius: 3px; background: var(--bg-input); border: 1px solid var(--line-soft); white-space: nowrap; }
 .dialog dd { margin: 0; }
+.dialog:has(.keymap) { width: min(560px, calc(100vw - 32px)); }
+.dialog:has(.keymap) .body { max-height: min(70vh, 640px); overflow-y: auto; }
+.dialog .hint.warn { color: var(--warn, #E0A040); }
+.keymap { display: flex; flex-direction: column; }
+.key-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; border-bottom: 1px solid var(--line-soft); }
+.key-btn {
+  min-width: 132px; min-height: 26px; padding: 2px 8px; display: inline-flex; gap: 4px; justify-content: flex-end; align-items: center;
+  border: 1px solid transparent; border-radius: 3px; background: none; color: var(--text); cursor: pointer;
+}
+.key-btn:hover, .key-btn:focus-visible { border-color: var(--line); background: var(--bg-input); }
+.key-btn em { font-style: normal; color: var(--text-3); }
+.key-btn.custom kbd { border-color: var(--accent); }
+.key-btn.warn kbd { border-color: var(--warn, #E0A040); }
+.key-btn.capturing { border-color: var(--accent); background: var(--bg-input); }
+.key-btn.capturing em { color: var(--accent); }
+.key-search { width: 100%; }
+.key-msg:empty { display: none; }
 .dialog p { margin: 0; }
 
 .toasts { position: fixed; right: 12px; bottom: 34px; display: flex; flex-direction: column; gap: 6px; z-index: 50; pointer-events: none; }

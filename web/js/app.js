@@ -9,6 +9,8 @@ import { History, KERNING } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers } from './kerning.js';
 import { Editor } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
+import { setDefaults, keyLabel, comboOf, comboLabel, actionFor, assign, resetAll, bindings, isCustom, BROWSER_RESERVED, TAKEN } from './keys.js';
+import { initPanels, layoutPanels, setHidden, isHidden, resetPanels, recordOrder, watchResize } from './panels.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -19,6 +21,20 @@ const store = {
 const AUTOSAVE_KEY = 'spline.autosave';
 const isMac = /Mac/.test(navigator.platform);
 const MOD = isMac ? '⌘' : 'Ctrl+';
+
+// Default shortcuts; the user can change them in Help → Keyboard Shortcuts.
+setDefaults({
+  new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [],
+  undo: ['Ctrl+Z'], redo: ['Ctrl+Shift+Z', 'Ctrl+Y'], selectAll: ['Ctrl+A'], freeTransform: ['Ctrl+T'],
+  zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
+  viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
+  snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
+  'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
+  'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'],
+  'op.unite': ['Ctrl+Alt+U'], 'op.subtract': ['Ctrl+Alt+M'], 'op.intersect': ['Ctrl+Alt+I'],
+  'op.exclude': ['Ctrl+Alt+E'], 'op.divide': ['Ctrl+Alt+D'], 'op.removeOverlap': ['Ctrl+Alt+O'],
+  autoSpacing: [], flipH: [], flipV: [], fontInfo: [], shortcuts: ['F1'],
+});
 
 const TOOLS = [
   { id: 'select', icon: 'select', key: 'V' },
@@ -179,46 +195,46 @@ function menuDefs() {
   const theme = document.documentElement.dataset.theme;
   return [
     { id: 'menuFile', items: [
-      { label: 'new', run: newFontDialog },
-      { label: 'open', key: `${MOD}O`, run: openDialog },
+      { label: 'new', key: keyLabel('new'), run: newFontDialog },
+      { label: 'open', key: keyLabel('open'), run: openDialog },
       '-',
-      { label: 'importSvg', run: () => pickFiles('svg') },
+      { label: 'importSvg', key: keyLabel('importSvg'), run: () => pickFiles('svg') },
       { label: 'importSp', run: () => pickFiles('import') },
       '-',
-      { label: 'save', key: `${MOD}S`, run: () => save() },
-      { label: 'saveAs', key: `${MOD}Shift+S`, run: () => save(true) },
+      { label: 'save', key: keyLabel('save'), run: () => save() },
+      { label: 'saveAs', key: keyLabel('saveAs'), run: () => save(true) },
       '-',
-      { label: 'exportTTF', run: () => exportFont('ttf') },
-      { label: 'exportOTF', run: () => exportFont('otf') },
+      { label: 'exportTTF', key: keyLabel('exportTTF'), run: () => exportFont('ttf') },
+      { label: 'exportOTF', key: keyLabel('exportOTF'), run: () => exportFont('otf') },
       ...(app.platform?.canAssociate ? ['-', { label: 'associate', check: app.platform.associated, run: associateFiles }] : []),
     ] },
     { id: 'menuEdit', items: [
-      { label: 'undo', key: `${MOD}Z`, run: undo, enabled: app.history.undoStack.length > 0 },
-      { label: 'redo', key: `${MOD}Shift+Z`, run: redo, enabled: app.history.redoStack.length > 0 },
+      { label: 'undo', key: keyLabel('undo'), run: undo, enabled: app.history.undoStack.length > 0 },
+      { label: 'redo', key: keyLabel('redo'), run: redo, enabled: app.history.redoStack.length > 0 },
       '-',
       { label: 'cut', key: `${MOD}X`, run: () => document.execCommand('cut'), enabled: inEditor && hasSel },
       { label: 'copy', key: `${MOD}C`, run: () => document.execCommand('copy'), enabled: hasSel || inEditor },
       { label: 'paste', key: `${MOD}V`, run: pasteFromMenu },
       '-',
-      { label: 'selectAll', key: `${MOD}A`, run: selectAll },
-      { label: 'freeTransform', key: `${MOD}T`, run: startTransform, enabled: inEditor },
+      { label: 'selectAll', key: keyLabel('selectAll'), run: selectAll },
+      { label: 'freeTransform', key: keyLabel('freeTransform'), run: startTransform, enabled: inEditor },
       { label: 'delete', key: 'Del', run: deleteSelection, enabled: hasSel },
     ] },
     { id: 'menuView', items: [
-      { label: 'zoomIn', key: '+', run: () => editor.zoomBy(1.25), enabled: inEditor },
-      { label: 'zoomOut', key: '−', run: () => editor.zoomBy(0.8), enabled: inEditor },
-      { label: 'zoomFit', key: '0', run: () => editor.fit(), enabled: inEditor },
+      { label: 'zoomIn', key: keyLabel('zoomIn'), run: () => editor.zoomBy(1.25), enabled: inEditor },
+      { label: 'zoomOut', key: keyLabel('zoomOut'), run: () => editor.zoomBy(0.8), enabled: inEditor },
+      { label: 'zoomFit', key: keyLabel('zoomFit'), run: () => editor.fit(), enabled: inEditor },
       '-',
-      { label: 'viewKerning', key: `${MOD}K`, check: app.mode === 'kern', run: () => (app.mode === 'kern' ? showGrid() : showKern()) },
+      { label: 'viewKerning', key: keyLabel('viewKerning'), check: app.mode === 'kern', run: () => (app.mode === 'kern' ? showGrid() : showKern()) },
       '-',
-      { label: 'rulers', key: `${MOD}R`, check: editor.showRulers, run: () => toggleView('showRulers') },
-      { label: 'userGuides', key: `${MOD};`, check: editor.showUserGuides, run: () => toggleView('showUserGuides') },
+      { label: 'rulers', key: keyLabel('rulers'), check: editor.showRulers, run: () => toggleView('showRulers') },
+      { label: 'userGuides', key: keyLabel('userGuides'), check: editor.showUserGuides, run: () => toggleView('showUserGuides') },
       { label: 'clearGuides', run: clearGuides, enabled: (app.project?.guides?.length || 0) > 0 },
       '-',
-      { label: 'showGuide', check: editor.showGuide, run: () => toggleView('showGuide') },
-      { label: 'showGrid', check: editor.showGrid, run: () => toggleView('showGrid') },
-      { label: 'snapGrid', key: 'F9', check: editor.snapGrid, run: () => toggleView('snapGrid') },
-      { label: 'snapGuides', key: 'F10', check: editor.snapGuides, run: () => toggleView('snapGuides') },
+      { label: 'showGuide', key: keyLabel('showGuide'), check: editor.showGuide, run: () => toggleView('showGuide') },
+      { label: 'showGrid', key: keyLabel('showGrid'), check: editor.showGrid, run: () => toggleView('showGrid') },
+      { label: 'snapGrid', key: keyLabel('snapGrid'), check: editor.snapGrid, run: () => toggleView('snapGrid') },
+      { label: 'snapGuides', key: keyLabel('snapGuides'), check: editor.snapGuides, run: () => toggleView('snapGuides') },
       '-',
       { label: 'themeDark', check: theme === 'dark', run: () => setTheme('dark') },
       { label: 'themeLight', check: theme === 'light', run: () => setTheme('light') },
@@ -231,17 +247,23 @@ function menuDefs() {
       { label: 'drawGlyph', key: 'Enter', run: () => openEditor([...app.selected][0]), enabled: !inEditor && app.selected.size === 1 },
       { label: 'deleteGlyph', run: deleteSelectedGlyphs, enabled: !inEditor && app.selected.size > 0 },
       '-',
-      { label: 'autoSpacing', run: () => glyphAction('spacing'), enabled: inEditor || app.selected.size > 0 },
-      { label: 'flipH', run: () => applyTransform('flipH'), enabled: inEditor || app.selected.size > 0 },
-      { label: 'flipV', run: () => applyTransform('flipV'), enabled: inEditor || app.selected.size > 0 },
+      { label: 'autoSpacing', key: keyLabel('autoSpacing'), run: () => glyphAction('spacing'), enabled: inEditor || app.selected.size > 0 },
+      { label: 'flipH', key: keyLabel('flipH'), run: () => applyTransform('flipH'), enabled: inEditor || app.selected.size > 0 },
+      { label: 'flipV', key: keyLabel('flipV'), run: () => applyTransform('flipV'), enabled: inEditor || app.selected.size > 0 },
       { label: 'clear', run: () => glyphAction('clear'), enabled: inEditor },
       '-',
-      ...PATH_OPS.map((op) => ({ label: op.label, key: op.key, run: () => runPathOp(op.id), enabled: inEditor })),
+      ...PATH_OPS.map((op) => ({ label: op.label, key: keyLabel(`op.${op.id}`), run: () => runPathOp(op.id), enabled: inEditor })),
       '-',
-      { label: 'fontInfo', run: editFontInfo },
+      { label: 'fontInfo', key: keyLabel('fontInfo'), run: editFontInfo },
+    ] },
+    { id: 'menuWindow', items: [
+      ...PANELS.map(([id, label]) => ({ label, check: !isHidden(id), run: () => setHidden(id, !isHidden(id)) })),
+      { label: 'preview', check: !$('preview').hidden, run: () => setPreviewHidden(!$('preview').hidden) },
+      '-',
+      { label: 'resetPanels', run: () => { resetPanels(); setPreviewHidden(false); } },
     ] },
     { id: 'menuHelp', items: [
-      { label: 'shortcuts', key: 'F1', run: helpDialog },
+      { label: 'shortcuts', key: keyLabel('shortcuts'), run: helpDialog },
       ...(app.platform?.web ? [
         { label: 'downloadDesktop', run: () => openPage('releases') },
         ...(app.platform.privacy ? [{ label: 'privacy', run: () => window.open('/privacy.html', '_blank', 'noopener') }] : []),
@@ -626,6 +648,12 @@ function fontSection() {
 }
 
 function renderInspector() {
+  renderInspectorBody();
+  recordOrder($('inspector'));
+  if (app.mode === 'grid') layoutPanels();
+}
+
+function renderInspectorBody() {
   const el = $('inspector');
   const sel = selectedGlyphs();
   if (!sel.length) {
@@ -650,6 +678,12 @@ function renderInspector() {
 }
 
 function renderGlyphPanel() {
+  renderGlyphPanelBody();
+  recordOrder($('glyphPanel'));
+  if (app.mode === 'editor') layoutPanels();
+}
+
+function renderGlyphPanelBody() {
   const g = app.current;
   if (!g) return;
   $('glyphPanel').innerHTML = section('glyph', t('glyph'), `
@@ -659,7 +693,7 @@ function renderGlyphPanel() {
       ${groupFields([g])}`)
     + section('selection', t('selection'), '<div id="selBox"></div>')
     + section('pathops', t('pathOps'), `<div class="op-row">${PATH_OPS.map((op) => `<button class="btn btn-icon" type="button"
-        data-pathop="${op.id}" data-tip="${esc(t(op.label))}" ${op.key ? `data-key="${op.key}"` : ''} aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
+        data-pathop="${op.id}" data-tip="${esc(t(op.label))}" data-key="${esc(keyLabel(`op.${op.id}`))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
 `)
     + alignSection()
     + transformSection()
@@ -702,18 +736,18 @@ function runAlign(id) {
 
 // The key object changed: update the "relative to" label.
 app.onKeyObject = () => {
-  const opt = $('glyphPanel').querySelector('[data-align-to] option[value="selection"]');
+  const opt = panelQuery('[data-align-to] option[value="selection"]');
   if (opt) opt.textContent = t(editor.keyContour ? 'alignToKey' : 'alignToSelection');
   editor.render();
 };
 
 const PATH_OPS = [
-  { id: 'unite', icon: 'opUnite', label: 'opUnite', key: `${MOD}Alt+U` },
-  { id: 'subtract', icon: 'opSubtract', label: 'opSubtract', key: `${MOD}Alt+M` },
-  { id: 'intersect', icon: 'opIntersect', label: 'opIntersect', key: `${MOD}Alt+I` },
-  { id: 'exclude', icon: 'opExclude', label: 'opExclude', key: `${MOD}Alt+E` },
-  { id: 'divide', icon: 'opDivide', label: 'opDivide', key: `${MOD}Alt+D` },
-  { id: 'removeOverlap', icon: 'opRemoveOverlap', label: 'opRemoveOverlap', key: `${MOD}Alt+O` },
+  { id: 'unite', icon: 'opUnite', label: 'opUnite' },
+  { id: 'subtract', icon: 'opSubtract', label: 'opSubtract' },
+  { id: 'intersect', icon: 'opIntersect', label: 'opIntersect' },
+  { id: 'exclude', icon: 'opExclude', label: 'opExclude' },
+  { id: 'divide', icon: 'opDivide', label: 'opDivide' },
+  { id: 'removeOverlap', icon: 'opRemoveOverlap', label: 'opRemoveOverlap' },
 ];
 
 function runPathOp(kind) {
@@ -801,7 +835,29 @@ function updateMetricInputs() {
   });
 }
 
-for (const dock of [$('inspector'), $('glyphPanel')]) {
+// Panels of the right dock; floating ones live in #floatLayer.
+const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel' };
+const panelQuery = (sel) => $('floatLayer').querySelector(sel) || (DOCK_OF[app.mode] ? $(DOCK_OF[app.mode]).querySelector(sel) : null);
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['actions', 'actions'], ['font', 'fontSection']];
+
+initPanels({
+  layer: $('floatLayer'),
+  docks: [$('inspector'), $('glyphPanel')],
+  activeDock: () => (DOCK_OF[app.mode] ? $(DOCK_OF[app.mode]) : null),
+  labels: { get dock() { return esc(t('panelDock')); }, get close() { return esc(t('panelClose')); } },
+  icons: { dock: icon('panelDock', 14), close: icon('close', 14) },
+  onChange: () => renderMenus(),
+});
+watchResize();
+
+function setPreviewHidden(hidden) {
+  $('preview').hidden = hidden;
+  store.set('spline.previewHidden', hidden ? '1' : '0');
+  renderMenus();
+}
+$('preview').hidden = store.get('spline.previewHidden') === '1';
+
+for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer')]) {
   dock.addEventListener('toggle', (e) => {
     const sec = e.target.dataset?.sec;
     if (sec) store.set(`spline.sec.${sec}`, e.target.open ? '1' : '0');
@@ -906,7 +962,7 @@ let xf = null;
 
 const xfSig = (items) => JSON.stringify(items.map(({ nodes }) => nodes.map((n) => [n.x, n.y, n.in?.x, n.in?.y, n.out?.x, n.out?.y])));
 
-const tfField = (k) => $(app.mode === 'editor' ? 'glyphPanel' : 'inspector').querySelector(`[data-tf="${k}"]`);
+const tfField = (k) => panelQuery(`[data-tf="${k}"]`);
 
 function xfValid() {
   if (!xf) return false;
@@ -978,7 +1034,7 @@ function xfApply(v) {
   if (app.mode === 'editor') { editor.afterEdit(false); return; }
   markChanged();
   renderSideMetrics();
-  const big = document.querySelector('#inspector .big-glyph');
+  const big = panelQuery('.big-glyph');
   if (big && xf.items.length === 1) big.innerHTML = glyphSVG(xf.items[0].g);
 }
 
@@ -1114,12 +1170,91 @@ async function newFontDialog() {
   autosave();
 }
 
+// Keyboard shortcuts: click a shortcut and press a new one.
+const KEY_GROUPS = [
+  ['menuFile', ['new', 'open', 'save', 'saveAs', 'importSvg', 'exportTTF', 'exportOTF']],
+  ['menuEdit', ['undo', 'redo', 'selectAll', 'freeTransform']],
+  ['keysTools', TOOLS.map((tl) => `tool.${tl.id}`)],
+  ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'viewKerning', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
+  ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'flipH', 'flipV', 'fontInfo']],
+  ['menuHelp', ['shortcuts']],
+];
+const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
+
+function keyRowsHTML(filter = '') {
+  const f = filter.trim().toLowerCase();
+  return KEY_GROUPS.map(([group, ids]) => {
+    const rows = ids.filter((id) => !f || actionLabel(id).toLowerCase().includes(f) || bindings(id).some((c) => comboLabel(c).toLowerCase().includes(f)));
+    if (!rows.length) return '';
+    return `<h3>${esc(t(group))}</h3>${rows.map((id) => {
+      const combos = bindings(id);
+      const reserved = app.platform?.web && combos.some((c) => BROWSER_RESERVED.has(c));
+      return `<div class="key-row"><span>${esc(actionLabel(id))}</span>
+        <button type="button" class="key-btn${isCustom(id) ? ' custom' : ''}${reserved ? ' warn' : ''}" data-bind="${id}"
+          ${reserved ? `data-tip="${esc(t('keysBrowserTaken'))}"` : ''}>${combos.length ? combos.map((c) => `<kbd>${esc(comboLabel(c))}</kbd>`).join(' ') : `<em>${esc(t('keysNone'))}</em>`}</button></div>`;
+    }).join('')}`;
+  }).join('');
+}
+
 function helpDialog() {
+  if ($('dialog').open) return;
   showDialog({
     title: t('shortcuts'),
     cancel: false,
-    body: `<dl class="keys">${t('keysList').map(([k, v]) => `<dt><kbd>${esc(k)}</kbd></dt><dd>${esc(v)}</dd>`).join('')}</dl>`,
+    body: `<p class="hint">${esc(t('keysHint'))}</p>
+      ${app.platform?.web ? `<p class="hint warn">${esc(t('keysBrowserNote'))}</p>` : ''}
+      <input type="search" class="key-search" placeholder="${esc(t('keysSearch'))}" aria-label="${esc(t('keysSearch'))}">
+      <div class="keymap">${keyRowsHTML()}</div>
+      <p class="key-msg" aria-live="polite"></p>
+      <h3>${esc(t('keysFixedTitle'))}</h3>
+      <dl class="keys">${t('keysFixed').map(([k, v]) => `<dt><kbd>${esc(k)}</kbd></dt><dd>${esc(v)}</dd>`).join('')}</dl>
+      <button type="button" class="btn" data-keys-reset>${esc(t('keysReset'))}</button>`,
+  }).then(() => { keyCapture = null; });
+  const dlg = $('dialog');
+  const map = dlg.querySelector('.keymap'), msg = dlg.querySelector('.key-msg'), search = dlg.querySelector('.key-search');
+  const refresh = () => {
+    map.innerHTML = keyRowsHTML(search.value);
+    renderMenus();
+    if (app.mode === 'editor') { renderToolbar(); renderEditorOptions(); renderGlyphPanel(); }
+  };
+  search.addEventListener('input', () => { map.innerHTML = keyRowsHTML(search.value); });
+  dlg.querySelector('[data-keys-reset]').addEventListener('click', () => { resetAll(); keyCapture = null; msg.textContent = t('keysResetDone'); refresh(); });
+  map.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-bind]');
+    if (!btn) return;
+    keyCapture = btn.dataset.bind;
+    map.querySelectorAll('.key-btn.capturing').forEach((b) => b.classList.remove('capturing'));
+    btn.classList.add('capturing');
+    btn.innerHTML = `<em>${esc(t('keysPress'))}</em>`;
+    msg.textContent = '';
   });
+  // Capture phase: the new shortcut must not also run its old action.
+  const onKey = (e) => {
+    if (!keyCapture) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const id = keyCapture;
+    if (e.key === 'Escape') { keyCapture = null; map.innerHTML = keyRowsHTML(search.value); return; }
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      assign(id, null);
+      keyCapture = null;
+      msg.textContent = t('keysCleared', { a: actionLabel(id) });
+      refresh();
+      return;
+    }
+    const combo = comboOf(e);
+    if (!combo) return; // a modifier on its own: wait for the key
+    keyCapture = null;
+    if (TAKEN[combo]) { msg.textContent = t('keysTaken', { k: comboLabel(combo), a: t(TAKEN[combo]) }); map.innerHTML = keyRowsHTML(search.value); return; }
+    const other = assign(id, combo);
+    msg.textContent = [
+      other ? t('keysMoved', { k: comboLabel(combo), a: actionLabel(other) }) : t('keysSet', { k: comboLabel(combo), a: actionLabel(id) }),
+      app.platform?.web && BROWSER_RESERVED.has(combo) ? t('keysBrowserTaken') : '',
+    ].filter(Boolean).join(' ');
+    refresh();
+  };
+  window.addEventListener('keydown', onKey, true);
+  dlg.addEventListener('close', () => window.removeEventListener('keydown', onKey, true), { once: true });
 }
 
 // ================================================================ editor
@@ -1140,7 +1275,7 @@ if (!TOOLS.some((x) => x.id === editor.tool)) editor.tool = 'brush';
 
 function renderToolbar() {
   $('toolButtons').innerHTML = TOOLS.map((tl) => `<button type="button" class="tool" role="radio" data-tool="${tl.id}"
-      aria-checked="${editor.tool === tl.id}" aria-label="${esc(toolName(tl.id))}" data-tip="${esc(toolName(tl.id))}" data-key="${tl.key}">
+      aria-checked="${editor.tool === tl.id}" aria-label="${esc(toolName(tl.id))}" data-tip="${esc(toolName(tl.id))}" data-key="${esc(keyLabel(`tool.${tl.id}`))}">
       ${icon(tl.icon, 18)}</button>`).join('');
   $('backBtn').dataset.tip = t('back');
   $('backBtn').dataset.key = 'Esc';
@@ -1230,22 +1365,22 @@ function renderEditorOptions() {
     <div class="sep"></div>
     <div class="group">
       <span class="opt-label">${esc(t('snap'))}</span>
-      <label class="check" data-tip="${esc(t('snapGridTip'))}" data-key="F9"><input type="checkbox" data-opt="snapGrid" ${editor.snapGrid ? 'checked' : ''}>${esc(t('snapGrid'))}</label>
-      <label class="check" data-tip="${esc(t('snapGuidesTip'))}" data-key="F10"><input type="checkbox" data-opt="snapGuides" ${editor.snapGuides ? 'checked' : ''}>${esc(t('snapGuides'))}</label>
+      <label class="check" data-tip="${esc(t('snapGridTip'))}" data-key="${esc(keyLabel('snapGrid'))}"><input type="checkbox" data-opt="snapGrid" ${editor.snapGrid ? 'checked' : ''}>${esc(t('snapGrid'))}</label>
+      <label class="check" data-tip="${esc(t('snapGuidesTip'))}" data-key="${esc(keyLabel('snapGuides'))}"><input type="checkbox" data-opt="snapGuides" ${editor.snapGuides ? 'checked' : ''}>${esc(t('snapGuides'))}</label>
     </div>
     <div class="sep"></div>
     <div class="group">
-      <button class="btn btn-icon" type="button" data-cmd="undo" data-tip="${esc(t('undo'))}" data-key="${MOD}Z" aria-label="${esc(t('undo'))}">${icon('undo', 15)}</button>
-      <button class="btn btn-icon" type="button" data-cmd="redo" data-tip="${esc(t('redo'))}" data-key="${MOD}Shift+Z" aria-label="${esc(t('redo'))}">${icon('redo', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="undo" data-tip="${esc(t('undo'))}" data-key="${esc(keyLabel('undo'))}" aria-label="${esc(t('undo'))}">${icon('undo', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="redo" data-tip="${esc(t('redo'))}" data-key="${esc(keyLabel('redo'))}" aria-label="${esc(t('redo'))}">${icon('redo', 15)}</button>
     </div>
     <div class="glyph-nav">
-      <button class="btn btn-icon" type="button" data-cmd="zoomOut" data-tip="${esc(t('zoomOut'))}" data-key="−" aria-label="${esc(t('zoomOut'))}">${icon('zoomOut', 15)}</button>
-      <button class="btn btn-icon" type="button" data-cmd="zoomFit" data-tip="${esc(t('zoomFit'))}" data-key="0" aria-label="${esc(t('zoomFit'))}">${icon('fit', 15)}</button>
-      <button class="btn btn-icon" type="button" data-cmd="zoomIn" data-tip="${esc(t('zoomIn'))}" data-key="+" aria-label="${esc(t('zoomIn'))}">${icon('zoomIn', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="zoomOut" data-tip="${esc(t('zoomOut'))}" data-key="${esc(keyLabel('zoomOut'))}" aria-label="${esc(t('zoomOut'))}">${icon('zoomOut', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="zoomFit" data-tip="${esc(t('zoomFit'))}" data-key="${esc(keyLabel('zoomFit'))}" aria-label="${esc(t('zoomFit'))}">${icon('fit', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="zoomIn" data-tip="${esc(t('zoomIn'))}" data-key="${esc(keyLabel('zoomIn'))}" aria-label="${esc(t('zoomIn'))}">${icon('zoomIn', 15)}</button>
       <div class="sep"></div>
-      <button class="btn btn-icon" type="button" data-cmd="prev" data-tip="${esc(t('prev'))}" data-key="PgUp" aria-label="${esc(t('prev'))}">${icon('chevronLeft', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="prev" data-tip="${esc(t('prev'))}" data-key="${esc(keyLabel('prev'))}" aria-label="${esc(t('prev'))}">${icon('chevronLeft', 15)}</button>
       <div class="cur"><b>${esc(charOf(g).trim() || '␣')}</b><small>${esc(g.name)}</small></div>
-      <button class="btn btn-icon" type="button" data-cmd="next" data-tip="${esc(t('next'))}" data-key="PgDn" aria-label="${esc(t('next'))}">${icon('chevronRight', 15)}</button>
+      <button class="btn btn-icon" type="button" data-cmd="next" data-tip="${esc(t('next'))}" data-key="${esc(keyLabel('next'))}" aria-label="${esc(t('next'))}">${icon('chevronRight', 15)}</button>
     </div>`;
 }
 
@@ -1341,6 +1476,7 @@ function showKern(push = true) {
   else history.replaceState({ kern: true }, '', '#kern');
   renderKernOptions();
   renderKernPanel();
+  layoutPanels();
   renderMenus();
   updateStatus();
   kernView.resize();
@@ -1825,7 +1961,7 @@ window.addEventListener('drop', async (e) => {
 
 // ================================================================ clipboard
 
-const typing = (el) => el && (el.matches('input, textarea, select, [contenteditable]') || el.closest('dialog[open]'));
+const typing = (el) => !!el?.matches && (el.matches('input, textarea, select, [contenteditable]') || el.closest('dialog[open]'));
 
 document.addEventListener('copy', (e) => {
   if (typing(document.activeElement)) return;
@@ -1901,28 +2037,50 @@ const COMMANDS = {
 
 // Letters come from the physical key (e.code), so shortcuts work with any
 // keyboard layout: Ctrl+Z is Ctrl+Z even when the Russian layout is active.
-const keyOf = (e) => (/^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase());
+const keyOf = (e) => (/^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : (e.key || '').toLowerCase());
+
+// What each reassignable shortcut does. `when` limits it to a mode;
+// `always` also works while typing in a field or a dialog.
+const inEditorMode = () => app.mode === 'editor';
+const ACTIONS = {
+  new: { run: newFontDialog }, open: { run: openDialog },
+  save: { run: () => save(), always: true }, saveAs: { run: () => save(true), always: true },
+  importSvg: { run: () => pickFiles('svg') },
+  exportTTF: { run: () => exportFont('ttf') }, exportOTF: { run: () => exportFont('otf') },
+  undo: { run: undo }, redo: { run: redo }, selectAll: { run: selectAll },
+  freeTransform: { run: startTransform, when: inEditorMode },
+  zoomIn: { run: () => editor.zoomBy(1.25), when: inEditorMode },
+  zoomOut: { run: () => editor.zoomBy(0.8), when: inEditorMode },
+  zoomFit: { run: () => editor.fit(), when: inEditorMode },
+  viewKerning: { run: () => (app.mode === 'kern' ? showGrid() : showKern()) },
+  rulers: { run: () => toggleView('showRulers') }, userGuides: { run: () => toggleView('showUserGuides') },
+  showGuide: { run: () => toggleView('showGuide') }, showGrid: { run: () => toggleView('showGrid') },
+  snapGrid: { run: () => toggleView('snapGrid'), always: true },
+  snapGuides: { run: () => toggleView('snapGuides'), always: true },
+  prev: { run: () => stepGlyph(-1), when: inEditorMode }, next: { run: () => stepGlyph(1), when: inEditorMode },
+  ...Object.fromEntries(TOOLS.map((tl) => [`tool.${tl.id}`, { run: () => setTool(tl.id), when: inEditorMode, label: () => toolName(tl.id) }])),
+  ...Object.fromEntries(PATH_OPS.map((op) => [`op.${op.id}`, { run: () => runPathOp(op.id), when: inEditorMode, always: true, label: () => t(op.label) }])),
+  autoSpacing: { run: () => glyphAction('spacing'), when: () => app.mode === 'editor' || app.selected.size > 0 },
+  flipH: { run: () => applyTransform('flipH'), when: () => app.mode === 'editor' || app.selected.size > 0 },
+  flipV: { run: () => applyTransform('flipV'), when: () => app.mode === 'editor' || app.selected.size > 0 },
+  fontInfo: { run: editFontInfo }, shortcuts: { run: helpDialog, always: true },
+};
+
+let keyCapture = null; // the shortcut being reassigned in the shortcuts dialog
 
 document.addEventListener('keydown', (e) => {
+  if (keyCapture) return;
   const mod = e.ctrlKey || e.metaKey;
   const key = keyOf(e);
-  if (mod && key === 's') { e.preventDefault(); save(e.shiftKey); return; }
-  if (e.key === 'F1') { e.preventDefault(); helpDialog(); return; }
-  if (e.key === 'F9') { e.preventDefault(); toggleView('snapGrid'); return; }
-  if (e.key === 'F10') { e.preventDefault(); toggleView('snapGuides'); return; }
-  if (mod && e.altKey && app.mode === 'editor') {
-    const op = { u: 'unite', m: 'subtract', i: 'intersect', e: 'exclude', d: 'divide', o: 'removeOverlap' }[key];
-    if (op) { e.preventDefault(); runPathOp(op); return; }
+  const combo = comboOf(e);
+  const act = combo && ACTIONS[actionFor(combo)];
+  if (act) {
+    const busy = !act.always && (typing(e.target) || e.target.closest?.('#menus'));
+    // In the kerning view plain keys type text.
+    const kernText = app.mode === 'kern' && !mod && !e.altKey && combo.replace(/^Shift\+/, '').length === 1;
+    if (!busy && !kernText && (!act.when || act.when())) { e.preventDefault(); act.run(); return; }
   }
   if (typing(e.target) || e.target.closest?.('#menus')) return;
-  if (mod && key === 'o') { e.preventDefault(); openDialog(); return; }
-  if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
-  if (mod && key === 'z') { e.preventDefault(); undo(); return; }
-  if (mod && key === 'a') { e.preventDefault(); selectAll(); return; }
-  if (mod && key === 't' && app.mode === 'editor') { e.preventDefault(); startTransform(); return; }
-  if (mod && key === 'r' && !e.shiftKey) { e.preventDefault(); toggleView('showRulers'); return; }
-  if (mod && (e.code === 'Semicolon' || key === ';')) { e.preventDefault(); toggleView('showUserGuides'); return; }
-  if (mod && key === 'k') { e.preventDefault(); if (app.mode === 'kern') showGrid(); else showKern(); return; }
   if (app.mode === 'kern') {
     // The canvas works like a text line: type to add letters, arrows move
     // the cursor, Alt+arrows change the kerning (Shift: by 1).
@@ -1947,8 +2105,6 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (mod || e.altKey) return;
-  const tool = TOOLS.find((tl) => tl.key.toLowerCase() === key);
-  if (tool) { setTool(tool.id); return; }
   const step = e.shiftKey ? 10 : 1;
   const arrows = { arrowleft: [-step, 0], arrowright: [step, 0], arrowup: [0, step], arrowdown: [0, -step] };
   if (arrows[key]) {
@@ -1959,11 +2115,6 @@ document.addEventListener('keydown', (e) => {
     case 'Delete': case 'Backspace': if (editor.deleteSelection()) e.preventDefault(); break;
     case 'Escape': if (!editor.escape()) history.back(); break;
     case 'Enter': if (editor.xform) editor.commitTransform(); else editor.finishPen(); break;
-    case 'PageUp': e.preventDefault(); stepGlyph(-1); break;
-    case 'PageDown': e.preventDefault(); stepGlyph(1); break;
-    case '+': case '=': editor.zoomBy(1.25); break;
-    case '-': editor.zoomBy(0.8); break;
-    case '0': editor.fit(); break;
     case ' ':
       if (e.target === $('canvas') || e.target === document.body) {
         e.preventDefault();
