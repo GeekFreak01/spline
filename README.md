@@ -14,7 +14,7 @@
 | Редактор контуров | Кернинг |
 |---|---|
 | ![Редактор](docs/screenshots/editor.png) | ![Кернинг](docs/screenshots/kerning.png) |
-| **Плавающие панели и меню «Окно»** | **Горячие клавиши (F1): можно переназначить** |
+| **Панели: сверху, слева, иконкой и окном** | **Горячие клавиши (F1): можно переназначить** |
 | ![Панели](docs/screenshots/panels.png) | ![Горячие клавиши](docs/screenshots/keys.png) |
 
 <sub>На скриншотах демо-проект [examples/demo.sp](examples/demo.sp), собранный из контуров открытого шрифта Go Regular (© The Go Authors, BSD-подобная лицензия) командой `go run ./tools/mkdemo`.</sub>

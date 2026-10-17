@@ -14,7 +14,7 @@ Draw letters with a brush or a pen, import SVG and export a ready TTF/OTF font w
 | Outline editor | Kerning |
 |---|---|
 | ![Editor](docs/screenshots/en/editor.png) | ![Kerning](docs/screenshots/en/kerning.png) |
-| **Floating panels and the Window menu** | **Keyboard shortcuts (F1), reassignable** |
+| **Panels: on top, on the left, as an icon and floating** | **Keyboard shortcuts (F1), reassignable** |
 | ![Panels](docs/screenshots/en/panels.png) | ![Keyboard shortcuts](docs/screenshots/en/keys.png) |
 
 <sub>The screenshots show the demo project [examples/demo.sp](examples/demo.sp), built from the outlines of the open Go Regular font (© The Go Authors, BSD-style license) with `go run ./tools/mkdemo`.</sub>
