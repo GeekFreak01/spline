@@ -68,8 +68,15 @@
         <div class="side-slot" id="sideSlot"><!--site:sidebar--></div>
       </aside>
 
-      <div class="grid-wrap" id="gridWrap">
-        <div class="glyph-grid" id="glyphGrid" role="listbox" aria-multiselectable="true" tabindex="0"></div>
+      <div class="center">
+        <div class="dock-top" data-zone="top"></div>
+        <div class="center-row">
+          <aside class="dock dock-left" data-zone="left"></aside>
+          <div class="grid-wrap" id="gridWrap">
+            <div class="glyph-grid" id="glyphGrid" role="listbox" aria-multiselectable="true" tabindex="0"></div>
+          </div>
+          <div class="dock-icons" data-zone="icons"></div>
+        </div>
       </div>
 
       <aside class="dock" id="inspector"></aside>
@@ -89,8 +96,15 @@
         <div id="toolButtons" role="radiogroup" aria-label="Tools"></div>
       </nav>
 
-      <div class="canvas-wrap">
-        <canvas id="canvas" tabindex="0" role="img"></canvas>
+      <div class="center">
+        <div class="dock-top" data-zone="top"></div>
+        <div class="center-row">
+          <aside class="dock dock-left" data-zone="left"></aside>
+          <div class="canvas-wrap">
+            <canvas id="canvas" tabindex="0" role="img"></canvas>
+          </div>
+          <div class="dock-icons" data-zone="icons"></div>
+        </div>
       </div>
 
       <aside class="dock" id="glyphPanel"></aside>

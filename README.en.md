@@ -72,7 +72,7 @@ go run .
 | | |
 |---|---|
 | **Interface** | A dark workspace like Photoshop/Glyphs: menus, options bar, tools, docked panels on the right, a status bar with coordinates. A light theme is available too |
-| **Panels** | Like in Photoshop: drag a panel header out of the right column and it becomes a floating window you can move and close. Drag the window back onto the column to dock it again. The **Window** menu shows and hides panels |
+| **Panels** | Like in Photoshop: drag a panel header and it becomes a floating window. Dock it to the right column, to the left of the work area, into the icon strip next to the right column (a click on the icon opens the panel), or on top, where Align and Path operations sit in one row. The place it will dock to is outlined while you drag. The **Window** menu shows and hides panels |
 | **Glyph overview** | Sections by category, colour labels, Unicode codes, tile size, "drawn / not drawn" filters |
 | **Brush and eraser** | Draw with a mouse or a stylus: the stroke turns into curves and is merged into the outline by a vector union (the eraser subtracts), the rest of the outline does not change. The stabilizer removes hand jitter |
 | **Pen** | Bézier curves: a click places a corner, a drag makes a curve |

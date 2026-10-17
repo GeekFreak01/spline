@@ -837,15 +837,22 @@ function updateMetricInputs() {
 
 // Panels of the right dock; floating ones live in #floatLayer.
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel' };
-const panelQuery = (sel) => $('floatLayer').querySelector(sel) || (DOCK_OF[app.mode] ? $(DOCK_OF[app.mode]).querySelector(sel) : null);
+const VIEW_OF = { grid: 'gridView', editor: 'editorView' };
+const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
 const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['actions', 'actions'], ['font', 'fontSection']];
 
 initPanels({
   layer: $('floatLayer'),
-  docks: [$('inspector'), $('glyphPanel')],
-  activeDock: () => (DOCK_OF[app.mode] ? $(DOCK_OF[app.mode]) : null),
-  labels: { get dock() { return esc(t('panelDock')); }, get close() { return esc(t('panelClose')); } },
-  icons: { dock: icon('panelDock', 14), close: icon('close', 14) },
+  views: [$('gridView'), $('editorView')],
+  active: () => (DOCK_OF[app.mode] ? { view: $(VIEW_OF[app.mode]), dock: $(DOCK_OF[app.mode]) } : null),
+  labels: {
+    get dock() { return esc(t('panelDock')); }, get close() { return esc(t('panelClose')); }, get collapse() { return esc(t('panelCollapse')); },
+  },
+  icons: { dock: icon('panelDock', 14), close: icon('close', 14), collapse: icon('chevronRight', 14) },
+  panelIcons: {
+    glyph: icon('pen', 18), selection: icon('select', 18), pathops: icon('opUnite', 18), align: icon('alignHCenter', 18),
+    transform: icon('transform', 18), actions: icon('spacing', 18), font: icon('type', 18),
+  },
   onChange: () => renderMenus(),
 });
 watchResize();
@@ -857,7 +864,7 @@ function setPreviewHidden(hidden) {
 }
 $('preview').hidden = store.get('spline.previewHidden') === '1';
 
-for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer')]) {
+for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...document.querySelectorAll('[data-zone="left"], [data-zone="top"]')]) {
   dock.addEventListener('toggle', (e) => {
     const sec = e.target.dataset?.sec;
     if (sec) store.set(`spline.sec.${sec}`, e.target.open ? '1' : '0');
