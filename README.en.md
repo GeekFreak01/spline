@@ -84,7 +84,7 @@ go run .
 | **Kerning groups** | Kerning classes, like in Glyphs: every glyph has a left and a right side group (for example A, À, А in group `A`). One rule `@A — @V` works for all glyphs of the groups; a single glyph can get an exception (including "0"). Priority: glyph+glyph, glyph+group, group+glyph, group+group. "Groups from base letter" sets groups in one click |
 | **Align** | Left, right, top, bottom, centres and both centres at once; distribute three or more shapes with equal gaps. Relative to the selection, a key object (click a selected shape again, like in Illustrator) or the glyph frame |
 | **Path operations** | Unite, subtract front, intersect, exclude, divide, remove overlap, like in vector editors |
-| **Transformations** | Scale, rotate, slant, flip for the selected points or whole glyphs |
+| **Transformations** | Scale, rotate, slant, flip for the selected points or whole glyphs. Values are live: a field shows the result relative to the original outline (150 % then 120 % gives 120 %, not 180 %), Reset puts it back |
 | **Metrics** | Left/right sidebearings and width as numbers, "even sidebearings" in one click |
 | **Preview** | Any text in your font in real time; glyphs that are not drawn yet are dimmed |
 | **Export** | `.ttf` and `.otf`, installable on Windows, macOS and Linux |

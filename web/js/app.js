@@ -597,16 +597,17 @@ function section(id, title, body, open = true) {
 }
 
 function transformSection() {
-  const num = (k, v, unit) => `<label class="prop"><span>${esc(t(k))}</span><span class="with-unit">
-    <input type="number" data-tf="${k}" value="${v}" step="1"><em>${unit}</em>
-    <button class="btn btn-icon" type="button" data-apply="${k}" data-tip="${esc(t('apply'))}" aria-label="${esc(t('apply'))} ${esc(t(k))}">${icon('check', 14)}</button></span></label>`;
+  const v = xfValues();
+  const num = (k, unit, min, max) => `<label class="prop"><span>${esc(t(k))}</span><span class="with-unit">
+    <input type="number" data-tf="${k}" value="${v[k]}" step="1" min="${min}" max="${max}"><em>${unit}</em></span></label>`;
   return section('transform', t('transform'), `
-    ${num('scale', store.get('spline.tf.scale', '110'), '%')}
-    ${num('rotate', store.get('spline.tf.rotate', '90'), '°')}
-    ${num('slant', store.get('spline.tf.slant', '10'), '°')}
+    ${num('scale', '%', XF_LIMITS.scale[0], XF_LIMITS.scale[1])}
+    ${num('rotate', '°', XF_LIMITS.rotate[0], XF_LIMITS.rotate[1])}
+    ${num('slant', '°', XF_LIMITS.slant[0], XF_LIMITS.slant[1])}
     <div class="btn-row">
       <button class="btn" type="button" data-cmd="flipH" data-tip="${esc(t('flipH'))}">${icon('flipH', 15)}<span>↔</span></button>
       <button class="btn" type="button" data-cmd="flipV" data-tip="${esc(t('flipV'))}">${icon('flipV', 15)}<span>↕</span></button>
+      <button class="btn" type="button" data-cmd="xfReset" data-tip="${esc(t('xfResetTip'))}">${icon('undo', 15)}<span>${esc(t('xfReset'))}</span></button>
     </div>
 `);
 }
@@ -743,6 +744,7 @@ function selectionHTML(info) {
 
 app.onDraw = () => {
   if (app.mode !== 'editor') return;
+  syncTransformFields();
   const box = $('selBox');
   if (!box) return;
   const info = editor.selectionInfo();
@@ -822,11 +824,12 @@ for (const dock of [$('inspector'), $('glyphPanel')]) {
       editor.render();
       return;
     }
-    if (e.target.dataset.tf) store.set(`spline.tf.${e.target.dataset.tf}`, e.target.value);
+    if (e.target.dataset.tf) { liveTransform(true); return; }
     onMetricChange(e);
   });
+  dock.addEventListener('input', (e) => { if (e.target.dataset.tf) liveTransform(false); });
   dock.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.dataset.tf) { e.preventDefault(); applyTransform(e.target.dataset.tf, Number(e.target.value)); }
+    if (e.key === 'Enter' && e.target.dataset.tf) { e.preventDefault(); liveTransform(true); }
   });
   dock.addEventListener('click', (e) => {
     const sw = e.target.closest('[data-role="colorPick"] [data-color]');
@@ -835,12 +838,6 @@ for (const dock of [$('inspector'), $('glyphPanel')]) {
     if (al) { runAlign(al.dataset.align); return; }
     const po = e.target.closest('[data-pathop]');
     if (po) { runPathOp(po.dataset.pathop); return; }
-    const ap = e.target.closest('[data-apply]');
-    if (ap) {
-      const input = dock.querySelector(`[data-tf="${ap.dataset.apply}"]`);
-      applyTransform(ap.dataset.apply, Number(input.value));
-      return;
-    }
     const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
     if (cmd) COMMANDS[cmd]?.();
   });
@@ -897,6 +894,111 @@ function applyTransform(kind, value = 0) {
   }
   if (!targets.length) return;
   if (app.mode === 'editor') editor.afterEdit(); else { markChanged(); renderInspector(); renderSideMetrics(); }
+}
+
+// Transform panel with live values: scale, rotation and slant are absolute
+// and always computed from the outline as it was when the session began, so
+// typing 150 then 120 gives 120 %, not 180 %. A session ends when the targets
+// change or are edited in another way; the fields then return to 100 / 0 / 0.
+const XF_LIMITS = { scale: [1, 10000], rotate: [-360, 360], slant: [-80, 80] };
+const XF_DEFAULT = { scale: 100, rotate: 0, slant: 0 };
+let xf = null;
+
+const xfSig = (items) => JSON.stringify(items.map(({ nodes }) => nodes.map((n) => [n.x, n.y, n.in?.x, n.in?.y, n.out?.x, n.out?.y])));
+
+const tfField = (k) => $(app.mode === 'editor' ? 'glyphPanel' : 'inspector').querySelector(`[data-tf="${k}"]`);
+
+function xfValid() {
+  if (!xf) return false;
+  const now = transformTargets();
+  if (now.length !== xf.items.length) return false;
+  for (let i = 0; i < now.length; i++) {
+    const a = now[i].nodes, b = xf.items[i].nodes;
+    if (now[i].g !== xf.items[i].g || a.length !== b.length || a.some((n, j) => n !== b[j])) return false;
+  }
+  return xfSig(xf.items) === xf.written;
+}
+
+function xfValues() {
+  if (!xfValid()) xf = null;
+  return xf ? xf.v : XF_DEFAULT;
+}
+
+function xfStart() {
+  const items = transformTargets().map(({ g, nodes }) => {
+    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+    return {
+      g, nodes,
+      base: nodes.map((n) => ({ x: n.x, y: n.y, in: n.in && { ...n.in }, out: n.out && { ...n.out } })),
+      cx: (Math.min(...xs) + Math.max(...xs)) / 2, cy: (Math.min(...ys) + Math.max(...ys)) / 2,
+    };
+  });
+  if (!items.length) return null;
+  return { items, v: { ...XF_DEFAULT }, pushed: false, written: xfSig(items) };
+}
+
+// Reads the fields and redraws the targets. `final` (Enter, leaving the
+// field) also puts clamped values back into the fields.
+function liveTransform(final) {
+  const v = {};
+  for (const k of Object.keys(XF_DEFAULT)) {
+    const el = tfField(k);
+    const n = Number(el?.value);
+    if (el?.value === '' || !Number.isFinite(n)) { if (!final) return; v[k] = xf ? xf.v[k] : XF_DEFAULT[k]; }
+    else v[k] = Math.min(XF_LIMITS[k][1], Math.max(XF_LIMITS[k][0], n));
+    if (final && el) el.value = v[k];
+  }
+  if (!xfValid()) xf = xfStart();
+  if (!xf) { if (final) toast(t('nothingToTransform'), 'error'); return; }
+  xfApply(v);
+}
+
+function xfApply(v) {
+  if (!xf.pushed) { for (const it of xf.items) app.history.push(it.g); xf.pushed = true; }
+  xf.v = v;
+  const s = v.scale / 100, k = Math.tan((v.slant * Math.PI) / 180);
+  const a = (v.rotate * Math.PI) / 180, cos = Math.cos(a), sin = Math.sin(a);
+  for (const { g, nodes, base, cx, cy } of xf.items) {
+    // Scale, then slant, then rotate, around the centre of the original box.
+    const f = (p) => {
+      const x = (p.x - cx) * s, y = (p.y - cy) * s;
+      const xs = x + y * k;
+      return { x: Math.round(cx + xs * cos - y * sin), y: Math.round(cy + xs * sin + y * cos) };
+    };
+    nodes.forEach((n, i) => {
+      const b = base[i];
+      Object.assign(n, f(b));
+      if (b.in) n.in = f(b.in); else delete n.in;
+      if (b.out) n.out = f(b.out); else delete n.out;
+    });
+    if (app.mode === 'grid') updateTile(g);
+  }
+  xf.written = xfSig(xf.items);
+  if (app.mode === 'editor') { editor.afterEdit(false); return; }
+  markChanged();
+  renderSideMetrics();
+  const big = document.querySelector('#inspector .big-glyph');
+  if (big && xf.items.length === 1) big.innerHTML = glyphSVG(xf.items[0].g);
+}
+
+// Puts the targets back as they were before the session.
+function xfReset() {
+  if (xfValid()) xfApply({ ...XF_DEFAULT });
+  xf = null;
+  for (const [k, val] of Object.entries(XF_DEFAULT)) {
+    const el = tfField(k);
+    if (el) el.value = val;
+  }
+}
+
+// Called after every redraw: once the targets change, the fields start over.
+function syncTransformFields() {
+  if (!xf || xfValid()) return;
+  xf = null;
+  for (const [k, val] of Object.entries(XF_DEFAULT)) {
+    const el = tfField(k);
+    if (el && document.activeElement !== el) el.value = val;
+  }
 }
 
 async function glyphAction(act) {
@@ -1474,6 +1576,7 @@ function applyHistory(name) {
     editor.penContour = null;
     editor.render();
     updateMetricInputs();
+    syncTransformFields();
   } else {
     const g = findGlyph(name);
     if (g) updateTile(g);
@@ -1792,7 +1895,7 @@ const COMMANDS = {
   zoomIn: () => editor.zoomBy(1.25), zoomOut: () => editor.zoomBy(0.8), zoomFit: () => editor.fit(),
   prev: () => stepGlyph(-1), next: () => stepGlyph(1),
   autoGroups,
-  xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
+  xfReset, xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
 };
 
 // Letters come from the physical key (e.code), so shortcuts work with any
