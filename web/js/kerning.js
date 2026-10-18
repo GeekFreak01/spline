@@ -49,6 +49,11 @@ export function groupMembers(project, name, side) {
   return project.glyphs.filter((g) => (side === 'right' ? g.kernRight : g.kernLeft) === name);
 }
 
+// A pair kerned tighter than this share of the narrower glyph's width
+// makes "T.T" tighter than "TT".
+export const OVERKERN = 0.4;
+export const isOverkern = (value, left, right) => value < 0 && -value > OVERKERN * Math.min(left.advance, right.advance);
+
 // All rules: { left, right, value } with glyph names or "@group" keys.
 export function kernPairs(project) {
   const out = [];
@@ -76,6 +81,8 @@ export class KernView {
     canvas.addEventListener('pointermove', (e) => this.onMove(e));
     canvas.addEventListener('pointerup', (e) => this.onUp(e));
     canvas.addEventListener('pointercancel', (e) => this.onUp(e));
+    canvas.addEventListener('pointerleave', () => { if (this.hover !== null) { this.hover = null; this.render(); } });
+    this.hover = null; // index of the letter whose kerning value is shown
   }
 
   resize() {
@@ -130,7 +137,8 @@ export class KernView {
       x += kern;
       // An exception: a glyph-level rule while that glyph also has a group.
       const exception = !!rule?.k1 && ((!isGroup(rule.k1) && prev.kernRight) || (!isGroup(rule.k2) && g.kernLeft));
-      items.push({ ch, g, x, adv, kern, exception, line, baseline: pad + info.ascender * scale + line * lineH });
+      const over = !!rule && isOverkern(rule.value, prev, g);
+      items.push({ ch, g, x, adv, kern, exception, over, line, baseline: pad + info.ascender * scale + line * lineH });
       x += adv;
       prev = g;
     });
@@ -181,6 +189,12 @@ export class KernView {
     const d = this.drag;
     if (!d) {
       this.canvas.style.cursor = this.items.length ? 'text' : 'default';
+      // Hovering a kerned gap shows its value.
+      const { sy } = this.eventPos(e);
+      const b = this.boundaryAt(sx, sy);
+      const it = this.items[b];
+      const hit = it?.kern && Math.abs(sx - it.x) < Math.max(8, Math.abs(it.kern) / 2 + 4) ? b : null;
+      if (hit !== this.hover) { this.hover = hit; this.render(); }
       return;
     }
     const delta = (sx - d.sx) / this.scale;
@@ -263,7 +277,8 @@ export class KernView {
     const info = this.app.project.info;
     const s = this.scale;
     const ink = css('--canvas-ink'), line = css('--canvas-line'), accent = css('--accent');
-    const neg = css('--danger'), pos = css('--ok'), muted = css('--canvas-text');
+    const tight = css('--dot-blue'), loose = css('--dot-yellow'), danger = css('--danger'), exc = css('--dot-orange');
+    const muted = css('--canvas-text');
 
     // Baselines.
     ctx.strokeStyle = line;
@@ -297,13 +312,40 @@ export class KernView {
         ctx.fillText(charOf(it.g) || it.ch, it.x, it.baseline);
         ctx.globalAlpha = 1;
       }
-      // Kerning value under the pair.
-      if (it.kern) {
-        const v = Math.round(it.kern / s);
-        ctx.font = `11px ${css('--font-mono')}`;
-        ctx.fillStyle = it.exception ? css('--dot-orange') : v < 0 ? neg : pos;
+    });
+
+    // Kerning between letters: a bar from where the gap would be to where it
+    // is (blue: tighter, yellow: looser), the value on hover and for the pair
+    // at the cursor, a red frame around pairs kerned too tight.
+    items.forEach((it, i) => {
+      if (!it.kern) return;
+      const prev = items[i - 1];
+      const v = Math.round(it.kern / s);
+      const top = it.baseline - info.ascender * s, bottom = it.baseline - info.descender * s;
+      const x0 = Math.min(it.x, it.x - it.kern), w = Math.max(2, Math.abs(it.kern));
+      const color = it.over ? danger : v < 0 ? tight : loose;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.18;
+      ctx.fillRect(x0, top, w, bottom - top);
+      ctx.globalAlpha = 1;
+      ctx.fillRect(x0, bottom + 4, w, 3);
+      if (it.exception) {
+        ctx.strokeStyle = exc;
+        ctx.setLineDash([3, 2]);
+        ctx.strokeRect(x0 + 0.5, bottom + 3.5, w - 1, 4);
+        ctx.setLineDash([]);
+      }
+      if (it.over && prev) {
+        ctx.strokeStyle = danger;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(prev.x + 0.5, top + 0.5, it.x + it.adv - prev.x - 1, bottom - top - 1);
+      }
+      if (i === this.hover || (pr && i === this.cursor)) {
         const txt = String(v);
-        ctx.fillText(txt, it.x - ctx.measureText(txt).width / 2, it.baseline - info.descender * s + 14);
+        ctx.font = `11px ${css('--font-mono')}`;
+        const tw = ctx.measureText(txt).width;
+        ctx.fillStyle = it.exception ? exc : color;
+        ctx.fillText(txt, it.x - tw / 2, bottom + 20);
       }
     });
 

@@ -6,7 +6,7 @@ import {
   translateGlyph, normalizeDirections,
 } from './model.js';
 import { History, KERNING } from './history.js';
-import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers } from './kerning.js';
+import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
 import { Editor } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
 import { setDefaults, keyLabel, comboOf, comboLabel, actionFor, assign, resetAll, bindings, isCustom, BROWSER_RESERVED, TAKEN } from './keys.js';
@@ -795,8 +795,14 @@ function groupFields(glyphs) {
   const val = (prop) => (glyphs.every((x) => (x[prop] || '') === (glyphs[0][prop] || '')) ? glyphs[0][prop] || '' : null);
   const field = (prop, label) => {
     const v = val(prop);
+    // Who else shares the group: makes clear what kerning it will get.
+    let note = '';
+    if (v) {
+      const others = groupMembers(app.project, v, prop === 'kernLeft' ? 'left' : 'right').filter((g) => !glyphs.includes(g));
+      note = others.length ? t('kgMembers', { m: membersText(others, 10) }) : t('kgAlone');
+    }
     return `<label><span>${esc(label)}</span><input type="text" data-kgroup="${prop}" list="${prop}List" spellcheck="false"
-      value="${esc(v ?? '')}" placeholder="${v === null ? '—' : esc(t('kernNoGroup'))}"></label>`;
+      value="${esc(v ?? '')}" placeholder="${v === null ? '—' : esc(t('kernNoGroup'))}">${note ? `<small class="kg-note">${esc(note)}</small>` : ''}</label>`;
   };
   return `<div class="sub-head">${esc(t('kernGroups'))}</div>
     <div class="prop-pair">${field('kernLeft', t('kgLeft'))}${field('kernRight', t('kgRight'))}</div>
@@ -877,6 +883,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
         if (v) g[prop] = v; else delete g[prop];
       }
       markChanged();
+      if (app.mode === 'editor') renderGlyphPanel(); else renderInspector();
       return;
     }
     if (e.target.dataset.alignTo !== undefined) { editor.alignTo = e.target.value; editor.render(); return; }
@@ -1509,57 +1516,153 @@ function kernKeyLabel(key) {
   return g ? (charOf(g).trim() || g.name) : key;
 }
 
-function renderKernPanel() {
-  const pr = kernView.pair();
+const glyphLabel = (g) => charOf(g).trim() || g.name;
+
+// Glyphs a kerning key stands for: the glyph itself, or the members of the
+// group (the left key of a pair uses right-side groups and vice versa).
+function keyGlyphs(key, side) {
+  if (!isGroup(key)) { const g = findGlyph(key); return g ? [g] : []; }
+  return groupMembers(app.project, key.slice(1), side);
+}
+
+// "А À Á Â +5"
+function membersText(glyphs, max = 12) {
+  const shown = glyphs.slice(0, max).map(glyphLabel).join(' ');
+  return glyphs.length > max ? `${shown} +${glyphs.length - max}` : shown;
+}
+
+const isException = (k) => !(isGroup(k.left) && isGroup(k.right));
+
+function pairIsOverkern(k) {
+  const L = keyGlyphs(k.left, 'right'), R = keyGlyphs(k.right, 'left');
+  if (!L.length || !R.length) return false;
+  const minAdv = (gs) => gs.reduce((m, g) => Math.min(m, g.advance), Infinity);
+  return isOverkern(k.value, { advance: minAdv(L) }, { advance: minAdv(R) });
+}
+
+function kernPairHTML(pr) {
+  const p = app.project;
+  if (!pr) return `<p class="hint">${esc(t('kernNoPair'))}</p>`;
+  const rule = effectiveKern(p, pr.left, pr.right);
+  const [k1, k2] = kernView.targetKeys(pr);
+  const own = p.kerning?.[k1]?.[k2] !== undefined;
+  const lc = glyphLabel(pr.left), rc = glyphLabel(pr.right);
+  // One letter of the pair: its group on the facing side and the choice
+  // between kerning the whole group and only this letter.
+  const side = (which, glyph, ch) => {
+    const prop = which === 'left' ? 'kernRight' : 'kernLeft';
+    const members = glyph[prop] ? groupMembers(p, glyph[prop], which === 'left' ? 'right' : 'left') : [];
+    const useGroup = kernView.useGroups[which] && !!glyph[prop];
+    return `<div class="kside">
+      <div class="kside-head">${esc(t(which === 'left' ? 'kernLeftLetter' : 'kernRightLetter', { c: ch }))}</div>
+      <label class="field-inline"><span>${esc(t(which === 'left' ? 'kernGroupOfRight' : 'kernGroupOfLeft', { c: ch }))}</span>
+        <input type="text" data-pair-group="${which}" list="${prop}List" value="${esc(glyph[prop] || '')}" placeholder="${esc(t('kernNoGroup'))}" spellcheck="false"></label>
+      <div class="kscope" role="radiogroup" aria-label="${esc(t('kernScopeLabel'))}">
+        <button type="button" role="radio" data-scope="${which}" data-v="group" aria-checked="${useGroup}" ${glyph[prop] ? '' : 'disabled'}>
+          <b>${esc(t('kernWholeGroup'))}</b><span>${glyph[prop] ? esc(membersText(members)) : esc(t('kernNoGroupHint'))}</span></button>
+        <button type="button" role="radio" data-scope="${which}" data-v="glyph" aria-checked="${!useGroup}">
+          <b>${esc(t('kernOnly', { c: ch }))}</b><span>${esc(t('kernOnlyHint'))}</span></button>
+      </div>
+    </div>`;
+  };
+  const n = keyGlyphs(k1, 'right').length * keyGlyphs(k2, 'left').length;
+  return `
+    <div class="pair-big"><span>${esc(lc)}</span><span>${esc(rc)}</span></div>
+    ${side('left', pr.left, lc)}${side('right', pr.right, rc)}
+    <label class="prop"><span>${esc(t('kernValue'))}</span><input type="number" id="kernValue" step="1" value="${rule.value}"></label>
+    <p class="hint">${esc(n > 1 ? t('kernScopeN', { n }) : t('kernScope1'))}${rule.k1 && (rule.k1 !== k1 || rule.k2 !== k2)
+      ? ` ${esc(t('kernFrom', { k: `${kernKeyLabel(rule.k1)} — ${kernKeyLabel(rule.k2)}` }))}` : ''}</p>
+    ${isOverkern(rule.value, pr.left, pr.right) ? `<p class="hint warn">${esc(t('kernOverTip'))}</p>` : ''}
+    <div class="step-row">
+      <button class="btn" type="button" data-kstep="-10">−10</button><button class="btn" type="button" data-kstep="-1">−1</button>
+      <button class="btn" type="button" data-kstep="1">+1</button><button class="btn" type="button" data-kstep="10">+10</button>
+    </div>
+    <button class="btn btn-block" type="button" data-kstep="reset" ${own ? '' : 'disabled'}>${icon('close', 15)}<span>${esc(t('kernReset'))}</span></button>
+    <p class="hint">${esc(t('kernHint'))}</p>`;
+}
+
+function kernListHTML(pr) {
   const p = app.project;
   const all = kernPairs(p);
   const q = (store.get('spline.kernFilter') || '').toLowerCase();
-  const list = all.filter((k) => !q || `${kernKeyLabel(k.left)}${kernKeyLabel(k.right)} ${k.left} ${k.right}`.toLowerCase().includes(q))
-    .sort((a, b) => Number(isGroup(b.left) && isGroup(b.right)) - Number(isGroup(a.left) && isGroup(a.right))
-      || a.left.localeCompare(b.left) || a.right.localeCompare(b.right));
-  let pairHTML = `<p class="hint">${esc(t('kernNoPair'))}</p>`;
-  if (pr) {
-    const rule = effectiveKern(p, pr.left, pr.right);
-    const [k1, k2] = kernView.targetKeys(pr);
-    const own = p.kerning?.[k1]?.[k2] !== undefined;
-    const lc = charOf(pr.left) || pr.left.name, rc = charOf(pr.right) || pr.right.name;
-    const side = (which, glyph, ch) => {
-      const prop = which === 'left' ? 'kernRight' : 'kernLeft';
-      const label = which === 'left' ? t('kernGroupOfRight', { c: ch }) : t('kernGroupOfLeft', { c: ch });
-      return `<div class="kside">
-        <label class="field-inline"><span>${esc(label)}</span>
-          <input type="text" data-pair-group="${which}" list="${prop}List" value="${esc(glyph[prop] || '')}" placeholder="${esc(t('kernNoGroup'))}" spellcheck="false"></label>
-        <label class="check"><input type="checkbox" data-use-group="${which}" ${kernView.useGroups[which] ? 'checked' : ''} ${glyph[prop] ? '' : 'disabled'}>${esc(t('kernUseGroup'))}</label>
-      </div>`;
-    };
-    pairHTML = `
-      <div class="pair-big"><span>${esc(lc)}</span><span>${esc(rc)}</span></div>
-      ${side('left', pr.left, lc)}${side('right', pr.right, rc)}
-      <label class="prop"><span>${esc(t('kernValue'))}</span><input type="number" id="kernValue" step="1" value="${rule.value}"></label>
-      <p class="hint">${esc(t('kernEditing', { k: `${kernKeyLabel(k1)} — ${kernKeyLabel(k2)}` }))}${rule.k1 && (rule.k1 !== k1 || rule.k2 !== k2)
-        ? ` ${esc(t('kernFrom', { k: `${kernKeyLabel(rule.k1)} — ${kernKeyLabel(rule.k2)}` }))}` : ''}</p>
-      <div class="step-row">
-        <button class="btn" type="button" data-kstep="-10">−10</button><button class="btn" type="button" data-kstep="-1">−1</button>
-        <button class="btn" type="button" data-kstep="1">+1</button><button class="btn" type="button" data-kstep="10">+10</button>
-      </div>
-      <button class="btn btn-block" type="button" data-kstep="reset" ${own ? '' : 'disabled'}>${icon('close', 15)}<span>${esc(t('kernReset'))}</span></button>
-      <p class="hint">${esc(t('kernHint'))}</p>`;
-  }
-  $('kernPanel').innerHTML = section('kernPair', t('kernPair'), pairHTML)
-    + section('kernList', `${t('kernAll')} (${all.length})`, `
+  const show = store.get('spline.kernShow', 'all');
+  const [sortBy, dir] = (store.get('spline.kernSort') || 'left:1').split(':');
+  const near = pr && {
+    L: [pr.left.name, groupKey(pr.left.kernRight)].filter(Boolean),
+    R: [pr.right.name, groupKey(pr.right.kernLeft)].filter(Boolean),
+  };
+  const list = all.filter((k) => (!q || `${kernKeyLabel(k.left)}${kernKeyLabel(k.right)} ${k.left} ${k.right}`.toLowerCase().includes(q))
+    && (show !== 'exc' || isException(k))
+    && (show !== 'over' || pairIsOverkern(k))
+    && (show !== 'pair' || (near && (near.L.includes(k.left) || near.R.includes(k.right)))));
+  const key = { left: (k) => kernKeyLabel(k.left), right: (k) => kernKeyLabel(k.right) };
+  list.sort((a, b) => (sortBy === 'value' ? a.value - b.value : key[sortBy](a).localeCompare(key[sortBy](b)) || a.value - b.value) * Number(dir));
+  const head = (id, label) => `<button type="button" data-ksort="${id}" aria-sort="${sortBy === id ? (dir === '1' ? 'ascending' : 'descending') : 'none'}">${esc(label)}${sortBy === id ? (dir === '1' ? ' ↑' : ' ↓') : ''}</button>`;
+  const opt = (v, label) => `<option value="${v}" ${show === v ? 'selected' : ''}>${esc(t(label))}</option>`;
+  return `
+    <div class="kern-tools">
       <input type="search" id="kernFilter" placeholder="${esc(t('search'))}" value="${esc(q)}">
-      <div class="kern-list">${list.length ? list.map((k) => {
-        const kind = isGroup(k.left) && isGroup(k.right) ? '' : (isGroup(k.left) || isGroup(k.right) ? 'mixed' : 'glyphs');
-        return `<div class="row">
-          <button type="button" class="pick" data-kpick data-l="${esc(k.left)}" data-r="${esc(k.right)}">
-            <span class="${isGroup(k.left) ? 'kgroup' : ''}">${esc(kernKeyLabel(k.left))}</span>
-            <span class="${isGroup(k.right) ? 'kgroup' : ''}">${esc(kernKeyLabel(k.right))}</span>
-            ${kind ? `<small class="hint">${esc(t('kernException'))}</small>` : ''}</button>
-          <span class="val ${k.value < 0 ? 'neg' : 'pos'}">${k.value}</span>
+      <select id="kernShow" aria-label="${esc(t('kernShowLabel'))}">${opt('all', 'kernShowAll')}${opt('exc', 'kernShowExc')}${opt('pair', 'kernShowPair')}${opt('over', 'kernShowOver')}</select>
+    </div>
+    <div class="kern-list">
+      <div class="row head"><div class="pick">${head('left', t('kernColLeft'))}${head('right', t('kernColRight'))}</div>${head('value', t('kernColValue'))}<span></span></div>
+      ${list.length ? list.map((k) => {
+        const over = pairIsOverkern(k);
+        return `<div class="row${isException(k) ? ' exc' : ''}${over ? ' over' : ''}">
+          <button type="button" class="pick" data-kpick data-l="${esc(k.left)}" data-r="${esc(k.right)}" ${isException(k) ? `data-tip="${esc(t('kernException'))}"` : ''}>
+            <span class="${isGroup(k.left) ? 'kgroup' : 'kglyph'}">${esc(kernKeyLabel(k.left))}</span>
+            <span class="${isGroup(k.right) ? 'kgroup' : 'kglyph'}">${esc(kernKeyLabel(k.right))}</span></button>
+          <span class="val ${k.value < 0 ? 'neg' : 'pos'}" ${over ? `data-tip="${esc(t('kernOverTip'))}"` : ''}>${k.value}</span>
           <button type="button" class="btn btn-icon" data-kdel data-l="${esc(k.left)}" data-r="${esc(k.right)}" aria-label="${esc(t('delete'))}" data-tip="${esc(t('delete'))}">${icon('close', 13)}</button>
         </div>`;
-      }).join('') : `<p class="hint" style="padding:8px">${esc(t('kernEmpty'))}</p>`}</div>`)
+      }).join('') : `<p class="hint" style="padding:8px">${esc(t(all.length ? 'kernNoMatch' : 'kernEmpty'))}</p>`}</div>
+    <div class="btn-row">
+      <button class="btn" type="button" data-kclean data-tip="${esc(t('kernCleanTip'))}">${esc(t('kernClean'))}</button>
+      <button class="btn" type="button" data-kcompress data-tip="${esc(t('kernCompressTip'))}">${esc(t('kernCompress'))}</button>
+    </div>`;
+}
+
+function renderKernPanel() {
+  const pr = kernView.pair();
+  const n = kernPairs(app.project).length;
+  $('kernPanel').innerHTML = section('kernPair', t('kernPair'), kernPairHTML(pr))
+    + section('kernList', `${t('kernAll')} (${n})`, kernListHTML(pr))
     + groupDatalists();
+}
+
+// Removes pairs whose glyphs were deleted or whose groups have no members.
+function cleanKerning() {
+  const dead = kernPairs(app.project).filter((k) => !keyGlyphs(k.left, 'right').length || !keyGlyphs(k.right, 'left').length);
+  finishKernCleanup(dead);
+}
+
+// Removes exceptions that change nothing: every pair they decide would get
+// the same value from the broader rule anyway.
+function compressKerning() {
+  const p = app.project;
+  const redundant = kernPairs(p).filter((k) => {
+    if (!isException(k)) return false;
+    let decides = false;
+    for (const l of keyGlyphs(k.left, 'right')) {
+      for (const r of keyGlyphs(k.right, 'left')) {
+        const now = effectiveKern(p, l, r);
+        if (now.k1 !== k.left || now.k2 !== k.right) continue; // a more specific rule wins there
+        decides = true;
+        if (effectiveKern(p, l, r, [k.left, k.right]).value !== k.value) return false;
+      }
+    }
+    return decides;
+  });
+  finishKernCleanup(redundant);
+}
+
+function finishKernCleanup(pairs) {
+  if (!pairs.length) { toast(t('kernNothing')); return; }
+  app.history.pushKerning(app.project);
+  for (const k of pairs) deleteKern(app.project, k.left, k.right);
+  app.onKernChanged();
+  renderKernPanel();
+  toast(t('kernRemoved', { n: pairs.length }));
 }
 
 // Suggestions for group fields: the groups already used in the font.
@@ -1626,10 +1729,7 @@ $('kernPanel').addEventListener('change', (e) => {
     kernView.writeKern(pr, Number(e.target.value) || 0);
     app.onKernChanged();
   }
-  if (e.target.dataset.useGroup) {
-    kernView.useGroups[e.target.dataset.useGroup] = e.target.checked;
-    renderKernPanel();
-  }
+  if (e.target.id === 'kernShow') { store.set('spline.kernShow', e.target.value); renderKernPanel(); }
   if (e.target.dataset.pairGroup) {
     // Rename / assign the group right from the pair.
     const which = e.target.dataset.pairGroup;
@@ -1642,6 +1742,20 @@ $('kernPanel').addEventListener('change', (e) => {
     renderKernPanel();
   }
 });
+// Delete / Backspace on a row of the pair list removes that pair.
+$('kernPanel').addEventListener('keydown', (e) => {
+  const pick = e.target.closest?.('[data-kpick]');
+  if (!pick || (e.key !== 'Delete' && e.key !== 'Backspace')) return;
+  e.preventDefault();
+  const rows = [...$('kernPanel').querySelectorAll('[data-kpick]')];
+  const i = rows.indexOf(pick);
+  app.history.pushKerning(app.project);
+  deleteKern(app.project, pick.dataset.l, pick.dataset.r);
+  app.onKernChanged();
+  renderKernPanel();
+  const after = $('kernPanel').querySelectorAll('[data-kpick]');
+  after[Math.min(i, after.length - 1)]?.focus();
+});
 $('kernPanel').addEventListener('input', (e) => {
   if (e.target.id === 'kernFilter') {
     store.set('spline.kernFilter', e.target.value);
@@ -1653,6 +1767,22 @@ $('kernPanel').addEventListener('input', (e) => {
   }
 });
 $('kernPanel').addEventListener('click', (e) => {
+  const scope = e.target.closest('[data-scope]');
+  if (scope) {
+    kernView.useGroups[scope.dataset.scope] = scope.dataset.v === 'group';
+    renderKernPanel();
+    kernView.render();
+    return;
+  }
+  const sort = e.target.closest('[data-ksort]')?.dataset.ksort;
+  if (sort) {
+    const [by, dir] = (store.get('spline.kernSort') || 'left:1').split(':');
+    store.set('spline.kernSort', `${sort}:${by === sort ? -Number(dir) : 1}`);
+    renderKernPanel();
+    return;
+  }
+  if (e.target.closest('[data-kclean]')) { cleanKerning(); return; }
+  if (e.target.closest('[data-kcompress]')) { compressKerning(); return; }
   const step = e.target.closest('[data-kstep]')?.dataset.kstep;
   if (step) {
     const pr = kernView.pair();
