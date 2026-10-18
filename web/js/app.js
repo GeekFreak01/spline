@@ -3235,7 +3235,10 @@ async function start() {
   if (location.hash === '#kern') showKern(false);
   else if (m && findGlyph(decodeURIComponent(m[1]))) openEditor(decodeURIComponent(m[1]), false);
   else history.replaceState({}, '', location.pathname);
-  if (!app.platform.web) checkUpdates();
+  if (!app.platform.web) {
+    checkUpdates();
+    setInterval(() => checkUpdates(), 3 * 3600 * 1000);
+  }
 }
 
 // ================================================================ updates
@@ -3261,26 +3264,16 @@ function newerVersion(a, b) {
   return false;
 }
 
-// Checks GitHub for a newer release: automatically once a day, or from the
-// Help menu. A badge in the status bar links to the release page. The saved
-// answer is used only by the version that saved it, so after an update the
-// badge does not offer the version that is already running.
+// Checks GitHub for a newer release: at start, every few hours while the
+// app is open, and from the Help menu. A badge in the status bar links to
+// the release page.
 async function checkUpdates(manual = false) {
-  const last = Number(store.get('spline.updateChecked', '0'));
-  let cached = null;
-  try { cached = JSON.parse(store.get('spline.updateInfo') || 'null'); } catch { cached = null; }
-  if (!manual && cached && cached.current === app.platform.version && Date.now() - last < 24 * 3600 * 1000) {
-    updateInfo = cached;
-    showUpdateBadge();
-    return;
-  }
   try {
+    // The Go side keeps GitHub's answer for an hour, so asking often is cheap.
     const r = await fetch(`/api/update${manual ? '?force=1' : ''}`);
     if (!r.ok) throw new Error(await r.text());
     updateInfo = await r.json();
     if (updateInfo.error) throw new Error(updateInfo.error);
-    store.set('spline.updateChecked', String(Date.now()));
-    store.set('spline.updateInfo', JSON.stringify(updateInfo));
   } catch (err) {
     if (manual) toast(t('updateCheckFailed', { err: err.message }), 'error');
     return;
