@@ -208,18 +208,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .kern-list .btn-icon { width: 24px; height: 24px; }
 .kern-list .row button.pick { display: flex; align-items: baseline; gap: 6px; }
 .kgroup { color: var(--accent); font-family: var(--font-mono); font-size: var(--fs-s); }
-.kside { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
-.kside-head { font-weight: 600; color: var(--text); }
-.kscope { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px; }
-.kscope button {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 44px; padding: 5px 8px; text-align: left;
-  border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--bg-input); color: var(--text-2); cursor: pointer;
-}
-.kscope button b { font-weight: 600; color: var(--text); font-size: var(--fs-s); }
-.kscope button span { font-size: 11px; line-height: 1.3; overflow-wrap: anywhere; }
-.kscope button:hover:not(:disabled) { border-color: var(--line); }
-.kscope button[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
-.kscope button:disabled { opacity: 0.5; cursor: default; }
 .kern-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
 .kern-tools select { width: auto; max-width: 130px; }
 .kern-list .row { grid-template-columns: minmax(0, 1fr) 48px 26px; }
@@ -234,7 +222,54 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .dialog.wide { width: min(1100px, calc(100vw - 32px)); }
 .dialog.wide .body { max-height: min(78vh, 820px); }
 .kg-dialog { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
-.kg-top { display: grid; grid-template-columns: minmax(0, 1fr) auto 220px; gap: 8px; }
+.kg-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.kg-dialog > .hint { margin: -2px 0 0; }
+
+/* Segmented control: one choice of a few. */
+.seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--radius); background: var(--bg-input); border: 1px solid var(--line-soft); }
+.seg button { flex: 1; min-height: 28px; padding: 0 12px; border: 0; border-radius: 3px; background: none; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+.seg button:hover { color: var(--text); }
+.seg button[aria-selected="true"], .seg button[aria-checked="true"] { background: var(--accent); color: #fff; }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.seg-sm { display: flex; }
+.seg-sm button { min-height: 24px; padding: 0 6px; font-size: var(--fs-s); }
+
+/* Groups window: list of groups | letters of the chosen one. */
+.kg-split { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 12px; min-height: 0; height: min(58vh, 560px); }
+.kg-split .kg-list { max-height: none; height: 100%; gap: 1px; padding: 0; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--bg-input); }
+.kg-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; padding: 0 10px; border: 0; background: none; color: var(--text); text-align: left; cursor: pointer; flex: none; }
+.kg-row small { color: var(--text-3); font-family: var(--font-mono); font-size: 11px; }
+.kg-row:hover { background: var(--bg-raised); }
+.kg-row[aria-current="true"] { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.kg-row.drop { background: var(--accent-soft); outline: 1px dashed var(--accent); outline-offset: -2px; }
+.kg-row.kg-new { justify-content: flex-start; color: var(--text-3); cursor: default; border-top: 1px solid var(--line-soft); margin-top: auto; }
+.kg-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+.kg-main-head { display: flex; align-items: center; gap: 8px; }
+.kg-main-head .kg-name { width: 220px; height: 30px; font-size: 15px; }
+.kg-main-head small { color: var(--text-3); flex: 1; }
+.kg-main-head select { width: auto; margin-left: auto; }
+.kg-main .kg-chips { flex: 1 1 auto; align-content: flex-start; overflow: auto; }
+.kg-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.kg-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center;
+  min-height: 260px; padding: 24px; border: 1px dashed var(--line); border-radius: var(--radius); }
+.kg-empty b { font-size: 15px; }
+.kg-empty p { max-width: 460px; color: var(--text-2); }
+
+/* Kerning pair panel: the two letters side by side. */
+.kp-sides { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.kp-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.kp-letter { font: 400 40px/1.15 var(--font-guide); text-align: center; background: var(--bg-input); border: 1px solid var(--line-soft); border-radius: var(--radius); }
+.kp-field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--text-3); }
+.kp-field input { width: 100%; }
+.kp-members { font-size: 11px; color: var(--text-3); line-height: 1.4; overflow-wrap: anywhere; }
+.kp-more, .link-btn { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
+.kp-more:hover, .link-btn:hover { text-decoration: underline; }
+.link-btn { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; font-size: var(--fs-s); }
+.kp-value { display: grid; grid-template-columns: 38px 32px minmax(0, 1fr) 32px 38px; gap: 4px; }
+.kp-value .btn { padding: 0; min-width: 0; }
+.kp-value input { text-align: center; font-family: var(--font-mono); width: 100%; }
+.kp-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 26px; }
+.kp-meta .btn-icon { width: 26px; height: 26px; flex: none; }
 .kg-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; min-height: 0; }
 .kg-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .kg-col h3 { margin: 0; }

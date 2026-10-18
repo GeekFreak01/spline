@@ -258,7 +258,7 @@ function menuDefs() {
       '-',
       { label: 'varNewMenu', key: keyLabel('newVariant'), run: newVariant, enabled: inEditor || app.selected.size === 1 },
       { label: 'ligNewMenu', key: keyLabel('newLigature'), run: newLigature },
-      { label: 'kgTitleMenu', key: keyLabel('groups'), run: groupsDialog },
+      { label: 'kgTitleMenu', key: keyLabel('groups'), run: () => groupsDialog() },
       { label: 'sgMenu', key: keyLabel('shapeGroups'), run: shapeGroupsDialog },
       { label: 'fontInfo', key: keyLabel('fontInfo'), run: editFontInfo },
     ] },
@@ -1625,40 +1625,47 @@ function kernPairHTML(pr) {
   const rule = effectiveKern(p, pr.left, pr.right);
   const [k1, k2] = kernView.targetKeys(pr);
   const own = p.kerning?.[k1]?.[k2] !== undefined;
-  const lc = glyphLabel(pr.left), rc = glyphLabel(pr.right);
-  // One letter of the pair: its group on the facing side and the choice
-  // between kerning the whole group and only this letter.
-  const side = (which, glyph, ch) => {
+  // One letter of the pair: big, its group on the side facing the other
+  // letter, and whether the value is for that group or for this letter.
+  const side = (which, glyph) => {
     const prop = which === 'left' ? 'kernRight' : 'kernLeft';
-    const members = glyph[prop] ? groupMembers(p, glyph[prop], which === 'left' ? 'right' : 'left') : [];
-    const useGroup = kernView.useGroups[which] && !!glyph[prop];
-    return `<div class="kside">
-      <div class="kside-head">${esc(t(which === 'left' ? 'kernLeftLetter' : 'kernRightLetter', { c: ch }))}</div>
-      <label class="field-inline"><span>${esc(t(which === 'left' ? 'kernGroupOfRight' : 'kernGroupOfLeft', { c: ch }))}</span>
-        <input type="text" data-pair-group="${which}" list="${prop}List" value="${esc(glyph[prop] || '')}" placeholder="${esc(t('kernNoGroup'))}" spellcheck="false"></label>
-      <div class="kscope" role="radiogroup" aria-label="${esc(t('kernScopeLabel'))}">
-        <button type="button" role="radio" data-scope="${which}" data-v="group" aria-checked="${useGroup}" ${glyph[prop] ? '' : 'disabled'}>
-          <b>${esc(t('kernWholeGroup'))}</b><span>${glyph[prop] ? esc(membersText(members)) : esc(t('kernNoGroupHint'))}</span></button>
-        <button type="button" role="radio" data-scope="${which}" data-v="glyph" aria-checked="${!useGroup}">
-          <b>${esc(t('kernOnly', { c: ch }))}</b><span>${esc(t('kernOnlyHint'))}</span></button>
-      </div>
+    const gside = which === 'left' ? 'right' : 'left';
+    const name = glyph[prop];
+    const members = name ? groupMembers(p, name, gside) : [];
+    const useGroup = kernView.useGroups[which] && !!name;
+    const ch = glyphLabel(glyph);
+    const MAX = 6;
+    const more = members.length > MAX
+      ? ` <button type="button" class="kp-more" data-kg-open="${gside}:${esc(name)}" data-tip="${esc(t('kgOpenAll'))}">+${members.length - MAX}</button>` : '';
+    return `<div class="kp-side">
+      <div class="kp-letter">${esc(ch)}</div>
+      <label class="kp-field"><span>${esc(t(which === 'left' ? 'kpGroupRight' : 'kpGroupLeft'))}</span>
+        <input type="text" data-pair-group="${which}" list="${prop}List" value="${esc(name || '')}" placeholder="${esc(t('kernNoGroup'))}" spellcheck="false"></label>
+      ${name ? `<div class="seg seg-sm" role="radiogroup" aria-label="${esc(t('kernScopeLabel'))}">
+          <button type="button" role="radio" data-scope="${which}" data-v="group" aria-checked="${useGroup}" data-tip="${esc(t('kpGroupTip', { m: membersText(members) }))}">${esc(t('kpGroup'))}</button>
+          <button type="button" role="radio" data-scope="${which}" data-v="glyph" aria-checked="${!useGroup}" data-tip="${esc(t('kernOnlyHint'))}">${esc(t('kpLetter'))}</button>
+        </div>
+        <div class="kp-members">${esc(members.slice(0, MAX).map(glyphLabel).join(' '))}${more}</div>` : ''}
     </div>`;
   };
   const n = keyGlyphs(k1, 'right').length * keyGlyphs(k2, 'left').length;
+  const from = rule.k1 && (rule.k1 !== k1 || rule.k2 !== k2)
+    ? ` ${t('kernFrom', { k: `${kernKeyLabel(rule.k1)} — ${kernKeyLabel(rule.k2)}` })}` : '';
   return `
-    <div class="pair-big"><span>${esc(lc)}</span><span>${esc(rc)}</span></div>
-    ${side('left', pr.left, lc)}${side('right', pr.right, rc)}
-    <button class="btn btn-block" type="button" data-kgroups>${icon('grid', 15)}<span>${esc(t('kgOpenAll'))}</span></button>
-    <label class="prop"><span>${esc(t('kernValue'))}</span><input type="number" id="kernValue" step="1" value="${rule.value}"></label>
-    <p class="hint">${esc(n > 1 ? t('kernScopeN', { n }) : t('kernScope1'))}${rule.k1 && (rule.k1 !== k1 || rule.k2 !== k2)
-      ? ` ${esc(t('kernFrom', { k: `${kernKeyLabel(rule.k1)} — ${kernKeyLabel(rule.k2)}` }))}` : ''}</p>
-    ${isOverkern(rule.value, pr.left, pr.right) ? `<p class="hint warn">${esc(t('kernOverTip'))}</p>` : ''}
-    <div class="step-row">
-      <button class="btn" type="button" data-kstep="-10">−10</button><button class="btn" type="button" data-kstep="-1">−1</button>
-      <button class="btn" type="button" data-kstep="1">+1</button><button class="btn" type="button" data-kstep="10">+10</button>
+    <div class="kp-sides">${side('left', pr.left)}${side('right', pr.right)}</div>
+    <div class="kp-value">
+      <button class="btn" type="button" data-kstep="-10" aria-label="−10">−10</button>
+      <button class="btn" type="button" data-kstep="-1" aria-label="−1">−1</button>
+      <input type="number" id="kernValue" step="1" value="${rule.value}" aria-label="${esc(t('kernValue'))}">
+      <button class="btn" type="button" data-kstep="1" aria-label="+1">+1</button>
+      <button class="btn" type="button" data-kstep="10" aria-label="+10">+10</button>
     </div>
-    <button class="btn btn-block" type="button" data-kstep="reset" ${own ? '' : 'disabled'}>${icon('close', 15)}<span>${esc(t('kernReset'))}</span></button>
-    <p class="hint">${esc(t('kernHint'))}</p>`;
+    <div class="kp-meta">
+      <span class="hint">${esc((n > 1 ? t('kernScopeN', { n }) : t('kernScope1')) + from)}</span>
+      ${own ? `<button class="btn btn-icon" type="button" data-kstep="reset" aria-label="${esc(t('kernReset'))}" data-tip="${esc(t('kernReset'))}">${icon('trash', 14)}</button>` : ''}
+    </div>
+    ${isOverkern(rule.value, pr.left, pr.right) ? `<p class="hint warn">${esc(t('kernOverTip'))}</p>` : ''}
+    <button class="link-btn" type="button" data-kgroups>${icon('grid', 14)}<span>${esc(t('kgOpenAll'))}</span></button>`;
 }
 
 // Sidebearings of both letters of the pair, editable right in the line.
@@ -2180,29 +2187,34 @@ function onSuggestClick(e) {
 
 // ---------------------------------------------------------------- groups window
 
-// Kerning groups of all glyphs at a glance: a column for the left sides and
-// one for the right sides, a card per group. Drag letters between cards (or
-// select them and use the bar above the column), rename a group in place.
-const kg = { sel: { left: new Set(), right: new Set() }, search: '', cat: 'all', last: null };
+// Kerning groups of one side at a time: the groups in a list, the letters
+// of the chosen group next to it. Letters are added by typing them, by
+// selecting and moving them, or by dragging them onto a group in the list.
+const kg = { side: 'left', current: null, sel: new Set(), search: '', cat: 'all', last: null };
 const SIDE_PROP = { left: 'kernLeft', right: 'kernRight' };
 
-function groupsDialog() {
+// Groups of one side: Map name -> glyphs ("" = without a group).
+function sideGroups(side) {
+  const prop = SIDE_PROP[side];
+  const groups = new Map([['', []]]);
+  for (const g of app.project.glyphs) {
+    const k = g[prop] || '';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(g);
+  }
+  return groups;
+}
+
+// side / name: open on that side with that group chosen.
+function groupsDialog(side, name) {
   if ($('dialog').open) return;
-  kg.sel.left.clear();
-  kg.sel.right.clear();
+  kg.sel.clear();
+  kg.current = name ?? null;
+  if (side === 'left' || side === 'right') kg.side = side;
   showDialog({
     title: t('kgTitle'),
     cancel: false,
-    body: `<div class="kg-dialog">
-      <p class="hint">${esc(t('kgHelp'))}</p>
-      <div class="kg-top">
-        <input type="search" id="kgSearch" placeholder="${esc(t('kgSearch'))}" aria-label="${esc(t('kgSearch'))}" value="${esc(kg.search)}">
-        <button type="button" class="btn" data-sg-open>${icon('kerning', 15)}<span>${esc(t('sgMenu'))}</span></button>
-        <select id="kgCat" aria-label="${esc(t('categories'))}">${CATEGORIES.filter((c) => c.id !== 'empty' && c.id !== 'done')
-          .map((c) => `<option value="${c.id}" ${kg.cat === c.id ? 'selected' : ''}>${esc(t(c.id))}</option>`).join('')}</select>
-      </div>
-      <div class="kg-cols" id="kgCols">${groupsColsHTML()}</div>
-    </div>`,
+    body: `<div class="kg-dialog" id="kgBody">${groupsBodyHTML()}</div>`,
   }).then(() => {
     if (app.mode === 'kern') { renderKernPanel(); kernView.render(); }
     else if (app.mode === 'editor') renderGlyphPanel(); else renderInspector();
@@ -2212,94 +2224,107 @@ function groupsDialog() {
   // Another dialog may already be open in its place when this one's close
   // event arrives.
   dlg.addEventListener('close', () => { if (!dlg.open) dlg.classList.remove('wide'); }, { once: true });
-  // The dialog is a form: Enter in the search or a name field must not close it.
+  // The dialog is a form: Enter in a field must not close it.
   dlg.querySelector('form').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); e.target.blur(); }
+    if (e.key !== 'Enter' || !e.target.matches('input')) return;
+    e.preventDefault();
+    if (e.target.id === 'kgAddInput') addLettersToGroup(e.target.value); else e.target.blur();
   });
-  const body = dlg.querySelector('.kg-dialog');
+  const body = $('kgBody');
   body.addEventListener('input', (e) => {
-    if (e.target.id === 'kgSearch') { kg.search = e.target.value; refreshGroupsDialog(); }
+    if (e.target.id === 'kgSearch') { kg.search = e.target.value; refreshGroupsDialog(true); }
   });
   body.addEventListener('change', (e) => {
     if (e.target.id === 'kgCat') { kg.cat = e.target.value; refreshGroupsDialog(); }
     if (e.target.dataset.kgRename !== undefined) {
-      renameGroup(e.target.dataset.side, e.target.dataset.kgRename, cleanGroupName(e.target.value));
+      const to = cleanGroupName(e.target.value);
+      renameGroup(kg.side, e.target.dataset.kgRename, to);
+      if (to) kg.current = to;
+      refreshGroupsDialog();
     }
-    if (e.target.dataset.kgMove) {
-      const side = e.target.dataset.kgMove;
-      moveToGroup(side, [...kg.sel[side]], e.target.value);
-    }
+    if (e.target.dataset.kgMove !== undefined) moveToGroup(kg.side, [...kg.sel], e.target.value);
   });
   body.addEventListener('click', (e) => {
-    if (e.target.closest('[data-sg-open]')) { shapeGroupsDialog(); return; }
+    const side = e.target.closest('[data-kg-side]');
+    if (side) { kg.side = side.dataset.kgSide; kg.current = null; kg.sel.clear(); refreshGroupsDialog(); return; }
+    const row = e.target.closest('[data-kg-group]');
+    if (row) { kg.current = row.dataset.kgGroup; kg.sel.clear(); refreshGroupsDialog(); return; }
     const chip = e.target.closest('.kg-chip');
     if (chip) { selectChip(chip, e); return; }
-    const clear = e.target.closest('[data-kg-clear]');
-    if (clear) { kg.sel[clear.dataset.kgClear].clear(); refreshGroupsDialog(); }
+    if (e.target.closest('[data-kg-add]')) { addLettersToGroup($('kgAddInput').value); return; }
+    if (e.target.closest('[data-kg-new]')) { moveToGroup(kg.side, [...kg.sel], '__new'); return; }
+    if (e.target.closest('[data-kg-ungroup]')) { moveToGroup(kg.side, [...kg.sel], '__none'); return; }
+    if (e.target.closest('[data-kg-dissolve]')) {
+      moveToGroup(kg.side, sideGroups(kg.side).get(kg.current).map((g) => g.name), '__none');
+      kg.current = '';
+      refreshGroupsDialog();
+      return;
+    }
+    if (e.target.closest('[data-sg-open]')) { shapeGroupsDialog(); return; }
+    if (e.target.closest('[data-kg-base]')) { autoGroupsAll(); refreshGroupsDialog(); }
   });
   body.addEventListener('dragstart', (e) => {
     const chip = e.target.closest('.kg-chip');
     if (!chip) return;
-    const side = chip.dataset.side;
-    if (!kg.sel[side].has(chip.dataset.glyph)) { kg.sel[side].clear(); kg.sel[side].add(chip.dataset.glyph); }
-    e.dataTransfer.setData('text/plain', JSON.stringify({ side, glyphs: [...kg.sel[side]] }));
+    if (!kg.sel.has(chip.dataset.glyph)) { kg.sel.clear(); kg.sel.add(chip.dataset.glyph); }
+    e.dataTransfer.setData('text/plain', JSON.stringify([...kg.sel]));
     e.dataTransfer.effectAllowed = 'move';
-    kg.dragSide = side;
   });
-  body.addEventListener('dragend', () => { kg.dragSide = null; body.querySelectorAll('.drop').forEach((c) => c.classList.remove('drop')); });
+  body.addEventListener('dragend', () => body.querySelectorAll('.drop').forEach((c) => c.classList.remove('drop')));
   body.addEventListener('dragover', (e) => {
-    const card = e.target.closest('.kg-card');
-    if (!card || card.dataset.side !== kg.dragSide) return;
+    const row = e.target.closest('[data-kg-group], [data-kg-new]');
+    if (!row) return;
     e.preventDefault();
-    body.querySelectorAll('.drop').forEach((c) => c !== card && c.classList.remove('drop'));
-    card.classList.add('drop');
+    body.querySelectorAll('.drop').forEach((c) => c !== row && c.classList.remove('drop'));
+    row.classList.add('drop');
   });
   body.addEventListener('drop', (e) => {
-    const card = e.target.closest('.kg-card');
-    if (!card) return;
+    const row = e.target.closest('[data-kg-group], [data-kg-new]');
+    if (!row) return;
     e.preventDefault();
-    let data;
-    try { data = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
-    if (data.side !== card.dataset.side) return;
-    moveToGroup(data.side, data.glyphs, card.dataset.group);
+    let names;
+    try { names = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
+    moveToGroup(kg.side, names, row.dataset.kgNew !== undefined ? '__new' : (row.dataset.kgGroup || '__none'));
   });
 }
 
-function refreshGroupsDialog() {
-  const cols = $('kgCols');
-  if (!cols || !$('dialog').open) return;
-  const scroll = [...cols.querySelectorAll('.kg-list')].map((l) => l.scrollTop);
-  cols.innerHTML = groupsColsHTML();
-  cols.querySelectorAll('.kg-list').forEach((l, i) => { l.scrollTop = scroll[i] || 0; });
+// keepFocus: re-render while typing in the search field.
+function refreshGroupsDialog(keepFocus = false) {
+  const body = $('kgBody');
+  if (!body || !$('dialog').open) return;
+  const list = body.querySelector('.kg-list');
+  const scroll = list ? list.scrollTop : 0;
+  const caret = keepFocus ? $('kgSearch')?.selectionStart : null;
+  body.innerHTML = groupsBodyHTML();
+  const l = body.querySelector('.kg-list');
+  if (l) l.scrollTop = scroll;
+  if (keepFocus) { const s = $('kgSearch'); s.focus(); s.setSelectionRange(caret, caret); }
 }
 
 function selectChip(chip, e) {
-  const side = chip.dataset.side, name = chip.dataset.glyph, sel = kg.sel[side];
-  if (e.shiftKey && kg.last?.side === side) {
-    // Range within the same card.
+  const name = chip.dataset.glyph, sel = kg.sel;
+  if (e.shiftKey && kg.last) {
     const chips = [...chip.parentElement.querySelectorAll('.kg-chip')].map((c) => c.dataset.glyph);
-    const a = chips.indexOf(kg.last.name), b = chips.indexOf(name);
+    const a = chips.indexOf(kg.last), b = chips.indexOf(name);
     if (a >= 0) for (const n of chips.slice(Math.min(a, b), Math.max(a, b) + 1)) sel.add(n);
     else sel.add(name);
-  } else if (e.ctrlKey || e.metaKey) {
+  } else if (e.ctrlKey || e.metaKey || sel.size) {
+    // Plain clicks add to the selection too: picking letters one by one is
+    // the usual way to fill a group.
     if (sel.has(name)) sel.delete(name); else sel.add(name);
-  } else if (sel.size === 1 && sel.has(name)) {
-    sel.clear();
   } else {
-    sel.clear();
     sel.add(name);
   }
-  kg.last = { side, name };
+  kg.last = name;
   refreshGroupsDialog();
 }
 
-// Glyphs shown in the window: the chosen category and the search.
+// Glyphs shown: the chosen category and the search.
 function groupsVisible(g) {
   const cat = CATEGORIES.find((c) => c.id === kg.cat);
   if (cat && cat.id !== 'all' && !cat.test(charOf(g))) return false;
   const q = kg.search.trim().toLowerCase();
-  return !q || charOf(g).toLowerCase() === q || g.name.toLowerCase().includes(q)
-    || (g.kernLeft || '').toLowerCase().includes(q) || (g.kernRight || '').toLowerCase().includes(q);
+  return !q || charOf(g).toLowerCase() === q || g.name.toLowerCase().includes(q);
 }
 
 // Number of kerning rules that use a group.
@@ -2309,53 +2334,90 @@ function groupRuleCount(side, name) {
   return Object.values(k).reduce((n, rights) => n + (key in rights ? 1 : 0), 0);
 }
 
-function groupsColsHTML() {
-  const col = (side) => {
-    const prop = SIDE_PROP[side];
-    const glyphs = app.project.glyphs.filter(groupsVisible);
-    const groups = new Map();
-    for (const g of glyphs) {
-      const k = g[prop] || '';
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k).push(g);
-    }
-    const names = [...groups.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b));
-    const chip = (g) => `<button type="button" class="kg-chip${kg.sel[side].has(g.name) ? ' sel' : ''}" draggable="true"
-      data-side="${side}" data-glyph="${esc(g.name)}" aria-pressed="${kg.sel[side].has(g.name)}" data-tip="${esc(g.name)}">${esc(glyphLabel(g))}</button>`;
-    const card = (name, members) => {
-      const n = name ? groupRuleCount(side, name) : 0;
-      return `<div class="kg-card" data-side="${side}" data-group="${esc(name)}">
-        <div class="kg-card-head">${name
-          ? `<input type="text" class="kg-name" data-kg-rename="${esc(name)}" data-side="${side}" value="${esc(name)}" spellcheck="false" aria-label="${esc(t('kgRename'))}">
-             <small>${esc(n ? t('kgRules', { n }) : t('kgNoRules'))}</small>`
-          : `<b>${esc(t('kgNone'))}</b><small>${members.length}</small>`}</div>
-        <div class="kg-chips">${members.map(chip).join('')}</div>
-      </div>`;
-    };
-    const sel = kg.sel[side];
-    const all = [...new Set(app.project.glyphs.map((g) => g[prop]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-    const bar = sel.size ? `<div class="kg-bar">
-        <span>${esc(t('kgSelected', { n: sel.size }))}</span>
-        <select data-kg-move="${side}" aria-label="${esc(t('kgMoveTo'))}">
-          <option value="" selected disabled>${esc(t('kgMoveTo'))}</option>
-          <option value="__new">${esc(t('kgNewGroup'))}</option>
-          <option value="__none">${esc(t('kgNone'))}</option>
-          ${all.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}
-        </select>
-        <button type="button" class="btn" data-kg-clear="${side}">${esc(t('kgDeselect'))}</button></div>`
-      : `<div class="kg-bar hint">${esc(t('kgSelectHint'))}</div>`;
-    return `<section class="kg-col">
-      <h3>${esc(t(side === 'left' ? 'kgLeftSides' : 'kgRightSides'))}</h3>
-      <p class="hint">${esc(t(side === 'left' ? 'kgLeftSidesHint' : 'kgRightSidesHint'))}</p>
-      ${bar}
-      <div class="kg-list">
-        <div class="kg-card kg-new" data-side="${side}" data-group="__new">${icon('plus', 14)}<span>${esc(t('kgDropNew'))}</span></div>
-        ${groups.has('') ? card('', groups.get('')) : ''}
-        ${names.map((n) => card(n, groups.get(n))).join('')}
+function groupsBodyHTML() {
+  const side = kg.side;
+  const groups = sideGroups(side);
+  const names = [...groups.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const q = kg.search.trim().toLowerCase();
+  const shown = names.filter((n) => !q || n.toLowerCase().includes(q) || groups.get(n).some((g) => charOf(g).toLowerCase() === q));
+  if (kg.current === null || (kg.current && !groups.has(kg.current))) kg.current = names[0] ?? '';
+  const tab = (id, label) => `<button type="button" role="tab" data-kg-side="${id}" aria-selected="${side === id}">${esc(t(label))}</button>`;
+  const head = `<div class="kg-top">
+      <div class="seg" role="tablist">${tab('left', 'kgSideLeft')}${tab('right', 'kgSideRight')}</div>
+      <input type="search" id="kgSearch" placeholder="${esc(t('kgSearch'))}" aria-label="${esc(t('kgSearch'))}" value="${esc(kg.search)}">
+      ${names.length ? `<button type="button" class="btn" data-sg-open>${icon('kerning', 15)}<span>${esc(t('sgMenu'))}</span></button>` : ''}
+    </div>
+    <p class="hint">${esc(t(side === 'left' ? 'kgLeftSidesHint' : 'kgRightSidesHint'))}</p>`;
+
+  // No groups yet: a clear way to start instead of a wall of letters.
+  if (!names.length) {
+    return `${head}<div class="kg-empty">
+      <b>${esc(t('kgEmptyTitle'))}</b><p>${esc(t('kgEmptyText'))}</p>
+      <div class="btn-row"><button type="button" class="btn btn-primary" data-sg-open>${icon('kerning', 15)}<span>${esc(t('sgMenu'))}</span></button>
+      <button type="button" class="btn" data-kg-base>${esc(t('kgByBase'))}</button></div></div>`;
+  }
+
+  const row = (n, label, count, extra = '') => `<button type="button" class="kg-row" data-kg-group="${esc(n)}" aria-current="${kg.current === n}">
+      <span>${esc(label)}</span><small>${count}${extra}</small></button>`;
+  const list = `<nav class="kg-list" aria-label="${esc(t('kgTitle'))}">
+      ${row('', t('kgNone'), groups.get('').length)}
+      ${shown.map((n) => row(n, n, groups.get(n).length)).join('')}
+      <div class="kg-row kg-new" data-kg-new>${icon('plus', 13)}<span>${esc(t('kgDropNew'))}</span></div>
+    </nav>`;
+
+  const cur = kg.current;
+  const members = (groups.get(cur) || []).filter(groupsVisible);
+  const chip = (g) => `<button type="button" class="kg-chip${kg.sel.has(g.name) ? ' sel' : ''}" draggable="true"
+      data-glyph="${esc(g.name)}" aria-pressed="${kg.sel.has(g.name)}" data-tip="${esc(g.name)}">${esc(glyphLabel(g))}</button>`;
+  const all = names;
+  const selBar = kg.sel.size ? `<div class="kg-bar">
+      <span>${esc(t('kgSelected', { n: kg.sel.size }))}</span>
+      <select data-kg-move aria-label="${esc(t('kgMoveTo'))}">
+        <option value="" selected disabled>${esc(t('kgMoveTo'))}</option>
+        ${all.filter((n) => n !== cur).map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}
+      </select>
+      <button type="button" class="btn" data-kg-new>${esc(t('kgNewGroup'))}</button>
+      ${cur ? `<button type="button" class="btn" data-kg-ungroup>${esc(t('kgUngroup'))}</button>` : ''}
+    </div>` : '';
+  const main = cur
+    ? `<div class="kg-main-head">
+        <input type="text" class="kg-name" data-kg-rename="${esc(cur)}" value="${esc(cur)}" spellcheck="false" aria-label="${esc(t('kgRename'))}">
+        <small>${esc((() => { const n = groupRuleCount(side, cur); return n ? t('kgRules', { n }) : t('kgNoRules'); })())}</small>
+        <button type="button" class="btn btn-icon" data-kg-dissolve aria-label="${esc(t('kgDissolve'))}" data-tip="${esc(t('kgDissolve'))}">${icon('trash', 15)}</button>
       </div>
-    </section>`;
-  };
-  return col('left') + col('right');
+      <div class="kg-chips">${members.map(chip).join('') || `<p class="hint">${esc(t('kgNoMembers'))}</p>`}</div>
+      ${selBar}
+      <div class="kg-add">
+        <input type="text" id="kgAddInput" placeholder="${esc(t('kgAddPlaceholder'))}" aria-label="${esc(t('kgAddLetters'))}" spellcheck="false">
+        <button type="button" class="btn" data-kg-add>${icon('plus', 14)}<span>${esc(t('kgAdd'))}</span></button>
+      </div>`
+    : `<div class="kg-main-head"><b>${esc(t('kgNone'))}</b>
+        <select id="kgCat" aria-label="${esc(t('categories'))}">${CATEGORIES.filter((c) => c.id !== 'empty' && c.id !== 'done')
+          .map((c) => `<option value="${c.id}" ${kg.cat === c.id ? 'selected' : ''}>${esc(t(c.id))}</option>`).join('')}</select></div>
+      ${selBar || `<p class="hint">${esc(t('kgUngroupedHint'))}</p>`}
+      <div class="kg-chips">${members.map(chip).join('')}</div>`;
+  return `${head}<div class="kg-split">${list}<section class="kg-main">${main}</section></div>`;
+}
+
+// Typed letters ("ОСЭЮ") go into the current group.
+function addLettersToGroup(text) {
+  const { names, unknown } = parseGlyphList(text);
+  if (unknown.length) toast(t('varUnknown', { c: unknown.join(' ') }), 'error');
+  if (!names.length || !kg.current) return;
+  moveToGroup(kg.side, names, kg.current);
+}
+
+// "Groups from base letter" for every glyph of the font.
+function autoGroupsAll() {
+  app.history.pushGroups(app.project);
+  for (const g of app.project.glyphs) {
+    const ch = charOf(g);
+    if (!ch.trim()) continue;
+    const bg = app.project.glyphs.find((x) => x.unicode === baseLetter(ch).codePointAt(0)) || g;
+    g.kernLeft = bg.kernLeft || bg.name;
+    g.kernRight = bg.kernRight || bg.name;
+  }
+  markChanged();
 }
 
 // Puts glyphs into a group ("" or "__none" removes them, "__new" makes a
@@ -2373,7 +2435,8 @@ function moveToGroup(side, names, target) {
   }
   app.history.pushGroups(app.project);
   for (const g of glyphs) { if (group) g[prop] = group; else delete g[prop]; }
-  kg.sel[side].clear();
+  kg.sel.clear();
+  if (target === '__new') kg.current = group; // show the new group
   markChanged();
   refreshGroupsDialog();
 }
@@ -2524,6 +2587,8 @@ onKernPanels('click', (e) => {
   }
   if (e.target.closest('[data-kclean]')) { cleanKerning(); return; }
   if (e.target.closest('[data-kgroups]')) { groupsDialog(); return; }
+  const kgOpen = e.target.closest('[data-kg-open]');
+  if (kgOpen) { const [sd, ...nm] = kgOpen.dataset.kgOpen.split(':'); groupsDialog(sd, nm.join(':')); return; }
   if (e.target.closest('[data-kcompress]')) { compressKerning(); return; }
   const step = e.target.closest('[data-kstep]')?.dataset.kstep;
   if (step) {
@@ -2925,7 +2990,7 @@ const COMMANDS = {
   undo, redo,
   zoomIn: () => editor.zoomBy(1.25), zoomOut: () => editor.zoomBy(0.8), zoomFit: () => editor.fit(),
   prev: () => stepGlyph(-1), next: () => stepGlyph(1),
-  autoGroups, groups: groupsDialog, newVariant, newLigature,
+  autoGroups, groups: () => groupsDialog(), newVariant, newLigature,
   xfReset, xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
 };
 
@@ -2963,7 +3028,7 @@ const ACTIONS = {
   newVariant: { run: newVariant, when: () => app.mode === 'editor' || app.selected.size === 1, label: () => t('varNewMenu') },
   newLigature: { run: newLigature, label: () => t('ligNewMenu') },
   shapeGroups: { run: shapeGroupsDialog, label: () => t('sgMenu') },
-  fontInfo: { run: editFontInfo }, groups: { run: groupsDialog, label: () => t('kgTitle') }, shortcuts: { run: helpDialog, always: true },
+  fontInfo: { run: editFontInfo }, groups: { run: () => groupsDialog(), label: () => t('kgTitle') }, shortcuts: { run: helpDialog, always: true },
 };
 
 let keyCapture = null; // the shortcut being reassigned in the shortcuts dialog
