@@ -75,6 +75,8 @@ export class KernView {
     this.items = [];
     // Edit the pair at group level (true) or as a glyph exception (false).
     this.useGroups = { left: true, right: true };
+    // Draw every member of the pair's groups over the pair (see collisions).
+    this.showGroupMembers = false;
     this.dpr = window.devicePixelRatio || 1;
     new ResizeObserver(() => this.resize()).observe(canvas.parentElement);
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
@@ -313,6 +315,31 @@ export class KernView {
         ctx.globalAlpha = 1;
       }
     });
+
+    // Members of the groups being kerned, faint, on top of the pair: the
+    // left group right-aligned to the left letter, the right group from the
+    // right letter's origin.
+    if (pr && this.showGroupMembers) {
+      const L = items[this.cursor - 1], R = items[this.cursor];
+      const ghost = (g, x, baseline) => {
+        if (!g.contours.length) return;
+        ctx.save();
+        ctx.setTransform(dpr * s, 0, 0, -dpr * s, dpr * x, dpr * baseline);
+        ctx.beginPath();
+        tracePath(ctx, g, true);
+        ctx.restore();
+        ctx.fill('nonzero');
+      };
+      ctx.fillStyle = accent;
+      ctx.globalAlpha = 0.28;
+      if (this.useGroups.left && L.g.kernRight) {
+        for (const m of groupMembers(this.app.project, L.g.kernRight, 'right')) if (m !== L.g) ghost(m, L.x + L.adv - m.advance * s, L.baseline);
+      }
+      if (this.useGroups.right && R.g.kernLeft) {
+        for (const m of groupMembers(this.app.project, R.g.kernLeft, 'left')) if (m !== R.g) ghost(m, R.x, R.baseline);
+      }
+      ctx.globalAlpha = 1;
+    }
 
     // Kerning between letters: a bar from where the gap would be to where it
     // is (blue: tighter, yellow: looser), the value on hover and for the pair

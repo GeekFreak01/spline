@@ -231,6 +231,33 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .kern-list .row.over .val { color: var(--danger); font-weight: 700; }
 .kern-list .row .pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .kglyph { color: var(--dot-orange); }
+.dialog.wide { width: min(1100px, calc(100vw - 32px)); }
+.dialog.wide .body { max-height: min(78vh, 820px); }
+.kg-dialog { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.kg-top { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 8px; }
+.kg-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; min-height: 0; }
+.kg-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.kg-col h3 { margin: 0; }
+.kg-bar { display: flex; align-items: center; gap: 6px; min-height: 30px; flex-wrap: wrap; }
+.kg-bar select { width: auto; }
+.kg-list { display: flex; flex-direction: column; gap: 4px; max-height: min(56vh, 600px); overflow: auto; padding-right: 4px; }
+.kg-card { border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--bg-input); padding: 4px 6px; display: flex; align-items: center; gap: 8px; }
+.kg-card.drop { border-color: var(--accent); background: var(--accent-soft); }
+.kg-card-head { flex: none; width: 150px; display: flex; flex-direction: column; gap: 1px; }
+.kg-card-head small { color: var(--text-3); white-space: nowrap; font-size: 11px; }
+.kg-name { width: 100%; min-width: 0; font-weight: 600; height: 24px; }
+.kg-chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 3px; min-height: 30px; align-content: center; }
+.kg-chip {
+  min-width: 30px; height: 30px; padding: 0 5px; border: 1px solid var(--line-soft); border-radius: 3px;
+  background: var(--bg-panel); color: var(--text); font: 400 17px/1 var(--font-guide); cursor: grab;
+}
+.kg-chip:hover { border-color: var(--line); }
+.kg-chip.sel { border-color: var(--accent); background: var(--accent-soft); }
+.kg-new { flex-direction: row; align-items: center; justify-content: center; gap: 6px; border-style: dashed; color: var(--text-3); min-height: 38px; }
+.kspace { display: grid; grid-template-columns: 26px repeat(3, minmax(0, 1fr)); gap: 6px; align-items: end; }
+.kspace b { font: 400 22px/1 var(--font-guide); padding-bottom: 4px; }
+.kspace label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--text-3); text-align: center; }
+.kspace input { text-align: center; padding: 0 4px; width: 100%; }
 .kg-note { display: block; margin-top: 2px; font-size: 11px; line-height: 1.3; color: var(--text-3); overflow-wrap: anywhere; }
 .dock .hint.warn { color: var(--danger); }
 .field-inline { display: grid; grid-template-columns: minmax(0, 1fr) 90px; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-s); }
