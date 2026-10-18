@@ -839,7 +839,11 @@ export class Editor {
       const a = { x: hit.h.fx ? (hit.h.fx > 0 ? b.minX : b.maxX) : x.c.x, y: hit.h.fy ? (hit.h.fy > 0 ? b.minY : b.maxY) : x.c.y };
       this.drag = { kind: 'xscale', h: hit.h, a, base };
     } else if (hit.kind === 'move') {
-      this.drag = { kind: 'xmove', start: p, base };
+      // The box point nearest to where it was grabbed (a corner, an edge
+      // middle or the centre) is the one that snaps to the grid and guides.
+      const refs = [...this.xHandles().map((h) => h.p), x.c].map((q) => this.xWorld(q));
+      const ref = refs.reduce((a, b) => (Math.hypot(b.x - p.x, b.y - p.y) < Math.hypot(a.x - p.x, a.y - p.y) ? b : a));
+      this.drag = { kind: 'xmove', start: p, ref, base };
     } else {
       const cw = this.xWorld(x.c);
       this.drag = { kind: 'xrotate', start: Math.atan2(p.y - cw.y, p.x - cw.x), base };
@@ -851,7 +855,10 @@ export class Editor {
     Object.assign(x, d.base);
     if (d.kind === 'xmove') {
       let dx = p.x - d.start.x, dy = p.y - d.start.y;
-      if (e.shiftKey) ({ x: dx, y: dy } = snap45({ x: 0, y: 0 }, { x: dx, y: dy }));
+      if (e.shiftKey) { ({ x: dx, y: dy } = snap45({ x: 0, y: 0 }, { x: dx, y: dy })); this.snapMark = null; } else {
+        const to = this.snap({ x: d.ref.x + dx, y: d.ref.y + dy });
+        dx = to.x - d.ref.x; dy = to.y - d.ref.y;
+      }
       x.tx += dx; x.ty += dy;
     } else if (d.kind === 'xrotate') {
       const cw = this.xWorld(x.c);
@@ -859,6 +866,7 @@ export class Editor {
       if (e.shiftKey) ang = Math.round(ang / (Math.PI / 12)) * (Math.PI / 12); // 15° steps
       x.angle = ang;
     } else {
+      p = this.snap(p); // the dragged handle lands on the grid or a guide
       const fromCenter = e.altKey;
       const a = fromCenter ? x.c : d.a;
       const aw = this.xWorld(a); // stays where it is
@@ -1463,7 +1471,7 @@ export class Editor {
     this.drawOverlay(colors);
 
     // Snap marker: a small cross where the point is held.
-    const showMark = this.snapMark && (this.drag ? ['move', 'handle', 'shape', 'penHandle'].includes(this.drag.kind)
+    const showMark = this.snapMark && (this.drag ? ['move', 'handle', 'shape', 'penHandle', 'xmove', 'xscale'].includes(this.drag.kind)
       : ['pen', 'rect', 'ellipse'].includes(this.activeTool()) && this.hover);
     if (showMark) {
       const m = S(this.snapMark);

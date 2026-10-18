@@ -2242,6 +2242,7 @@ async function start() {
   app.platform = {
     canAssociate: !!session?.canAssociate, associated: !!session?.associated,
     web: !!session?.web, privacy: !!session?.privacy, // hosted website (spline --web)
+    version: session?.version || '',
   };
 
   let loaded = false;
@@ -2294,12 +2295,24 @@ function openPage(page) {
 
 let updateInfo = null;
 
+// "v1.2.3" newer than "v1.2.0"?
+function newerVersion(a, b) {
+  const pa = /^v?(\d+)\.(\d+)\.(\d+)/.exec(a || ''), pb = /^v?(\d+)\.(\d+)\.(\d+)/.exec(b || '');
+  if (!pa || !pb) return false;
+  for (let i = 1; i <= 3; i++) if (Number(pa[i]) !== Number(pb[i])) return Number(pa[i]) > Number(pb[i]);
+  return false;
+}
+
 // Checks GitHub for a newer release: automatically once a day, or from the
-// Help menu. A badge in the status bar offers the update.
+// Help menu. A badge in the status bar links to the release page. The saved
+// answer is used only by the version that saved it, so after an update the
+// badge does not offer the version that is already running.
 async function checkUpdates(manual = false) {
   const last = Number(store.get('spline.updateChecked', '0'));
-  if (!manual && Date.now() - last < 24 * 3600 * 1000) {
-    try { updateInfo = JSON.parse(store.get('spline.updateInfo') || 'null'); } catch { updateInfo = null; }
+  let cached = null;
+  try { cached = JSON.parse(store.get('spline.updateInfo') || 'null'); } catch { cached = null; }
+  if (!manual && cached && cached.current === app.platform.version && Date.now() - last < 24 * 3600 * 1000) {
+    updateInfo = cached;
     showUpdateBadge();
     return;
   }
@@ -2315,43 +2328,26 @@ async function checkUpdates(manual = false) {
     return;
   }
   showUpdateBadge();
-  if (manual && !updateInfo.available) toast(t('upToDate', { v: updateInfo.current }));
-  if (manual && updateInfo.available) installUpdate();
+  if (manual && !updateAvailable()) toast(t('upToDate', { v: updateInfo.current }));
+  if (manual && updateAvailable()) openUpdatePage();
 }
+
+const updateAvailable = () => !!updateInfo && newerVersion(updateInfo.latest, app.platform.version || updateInfo.current);
 
 function showUpdateBadge() {
   const b = $('updateBadge');
-  const show = !!updateInfo?.available && updateInfo.latest !== updateInfo.current;
+  const show = updateAvailable();
   b.hidden = !show;
-  if (show) b.textContent = t('updateBadge', { v: updateInfo.latest.replace(/^v/, '') });
-}
-
-async function installUpdate() {
-  if (!updateInfo?.available) return;
-  const v = updateInfo.latest.replace(/^v/, '');
-  if (!updateInfo.installed) {
-    // Portable copy or macOS/Linux: show the release page.
-    if (await confirmDialog(t('updatePortable', { v }), t('updateOpenPage'), false)) openPage('releases');
-    return;
-  }
-  const ok = await showDialog({
-    title: t('updateTitle', { v }),
-    body: `<p>${esc(t('updateBody'))}</p>${app.dirty ? `<p class="hint">${esc(t('updateUnsaved'))}</p>` : ''}`,
-    okLabel: t('updateNow'),
-  });
-  if (!ok) return;
-  autosave();
-  toast(t('updateDownloading', { v }));
-  try {
-    const r = await fetch('/api/update/install', { method: 'POST', headers: { 'X-Spline': '1' } });
-    if (!r.ok) throw new Error(await r.text());
-    toast(t('updateInstalling'));
-  } catch (err) {
-    toast(t('updateFailed', { err: err.message }), 'error');
+  if (show) {
+    b.textContent = t('updateBadge', { v: updateInfo.latest.replace(/^v/, '') });
+    b.dataset.tip = t('updateBadgeTip');
   }
 }
 
-$('updateBadge').addEventListener('click', installUpdate);
+// The latest release on GitHub: download the installer there.
+function openUpdatePage() { openPage('releases'); }
+
+$('updateBadge').addEventListener('click', openUpdatePage);
 
 // ================================================================ app window frame
 

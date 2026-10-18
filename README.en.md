@@ -45,7 +45,7 @@ but everything is kept as simple as possible: one program file, nothing to set u
 
 ### Updates
 
-Spline checks once a day whether a new version is out (and on Help → Check for Updates). If there is one, the status bar shows "Version … available". A copy installed with the installer updates itself: it downloads the new installer from GitHub, verifies its SHA-256 checksum, installs over the old version in the same folder and restarts. A portable copy opens the release page. You can also update by hand: run the new `Spline-Setup-<version>.exe`, it installs over the old version.
+Spline checks once a day whether a new version is out (and on Help → Check for Updates). If there is one, the status bar shows "Version … available". A click on it opens the latest release on GitHub: download `Spline-Setup-<version>.exe` and run it, it installs over the old version in the same folder. When you already have the latest version, the badge is not shown.
 
 ### Icon for `.sp` files (Windows)
 
