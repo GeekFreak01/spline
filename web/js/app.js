@@ -263,7 +263,9 @@ function menuDefs() {
       { label: 'fontInfo', key: keyLabel('fontInfo'), run: editFontInfo },
     ] },
     { id: 'menuWindow', items: [
-      ...PANELS.map(([id, label]) => ({ label, check: !isHidden(id), run: () => setHidden(id, !isHidden(id)) })),
+      // Only the panels of the current view: glyphs or kerning.
+      ...PANELS.filter(([id]) => id.startsWith('kern') === (app.mode === 'kern'))
+        .map(([id, label]) => ({ label, check: !isHidden(id), run: () => setHidden(id, !isHidden(id)) })),
       { label: 'preview', check: !$('preview').hidden, run: () => setPreviewHidden(!$('preview').hidden) },
       '-',
       { label: 'resetPanels', run: () => { resetPanels(); setPreviewHidden(false); } },
