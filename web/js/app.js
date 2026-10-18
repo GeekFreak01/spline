@@ -2045,7 +2045,9 @@ function shapeGroupsDialog() {
   });
   const dlg = $('dialog');
   dlg.classList.add('wide');
-  dlg.addEventListener('close', () => dlg.classList.remove('wide'), { once: true });
+  // Another dialog may already be open in its place when this one's close
+  // event arrives.
+  dlg.addEventListener('close', () => { if (!dlg.open) dlg.classList.remove('wide'); }, { once: true });
   dlg.querySelector('form').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.matches('input[type=text]')) { e.preventDefault(); e.target.blur(); }
   });
@@ -2193,7 +2195,9 @@ function groupsDialog() {
   });
   const dlg = $('dialog');
   dlg.classList.add('wide');
-  dlg.addEventListener('close', () => dlg.classList.remove('wide'), { once: true });
+  // Another dialog may already be open in its place when this one's close
+  // event arrives.
+  dlg.addEventListener('close', () => { if (!dlg.open) dlg.classList.remove('wide'); }, { once: true });
   // The dialog is a form: Enter in the search or a name field must not close it.
   dlg.querySelector('form').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); e.target.blur(); }
