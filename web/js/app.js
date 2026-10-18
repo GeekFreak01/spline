@@ -734,6 +734,7 @@ function alignSection() {
 }
 
 function runAlign(id) {
+  endTransform();
   if (app.mode !== 'editor') return;
   const ok = id.startsWith('dist-') ? editor.distribute(id.slice(5)) : editor.align(id);
   if (!ok) toast(t(id.startsWith('dist-') ? 'alNeedThree' : 'alNothing'), 'error');
@@ -756,6 +757,7 @@ const PATH_OPS = [
 ];
 
 function runPathOp(kind) {
+  endTransform();
   if (app.mode !== 'editor') return;
   try {
     if (!editor.pathOp(kind)) toast(t('pathOpNeedTwo'), 'error');
@@ -948,6 +950,7 @@ function transformTargets() {
 }
 
 function applyTransform(kind, value = 0) {
+  endTransform();
   if (!Number.isFinite(value)) return;
   const targets = transformTargets();
   for (const { g, nodes } of targets) {
@@ -1022,6 +1025,7 @@ function xfStart() {
 // Reads the fields and redraws the targets. `final` (Enter, leaving the
 // field) also puts clamped values back into the fields.
 function liveTransform(final) {
+  endTransform();
   const v = {};
   for (const k of Object.keys(XF_DEFAULT)) {
     const el = tfField(k);
@@ -1066,6 +1070,7 @@ function xfApply(v) {
 
 // Puts the targets back as they were before the session.
 function xfReset() {
+  endTransform();
   if (xfValid()) xfApply({ ...XF_DEFAULT });
   xf = null;
   for (const [k, val] of Object.entries(XF_DEFAULT)) {
@@ -2352,8 +2357,19 @@ function stepGlyph(dir) {
 
 // ================================================================ undo
 
-function undo() { applyHistory(app.history.undo(app.project)); }
-function redo() { applyHistory(app.history.redo(app.project)); }
+// Ctrl+Z during free transform cancels the transform itself (the glyph
+// returns to how it was before Ctrl+T), like in Photoshop.
+function undo() {
+  if (app.mode === 'editor' && editor.xform) { editor.cancelTransform(); return; }
+  applyHistory(app.history.undo(app.project));
+}
+function redo() {
+  if (app.mode === 'editor' && editor.xform) editor.commitTransform();
+  applyHistory(app.history.redo(app.project));
+}
+
+// Other edits apply an open free transform first, so it cannot undo them.
+const endTransform = () => { if (app.mode === 'editor' && editor.xform) editor.commitTransform(); };
 function applyHistory(name) {
   if (!name) return;
   markChanged();

@@ -792,6 +792,11 @@ export class Editor {
     return true;
   }
 
+  xformStale() {
+    const live = new Set(this.glyph.contours.flatMap((c) => c.nodes));
+    return this.xform.nodes.some((n) => !live.has(n));
+  }
+
   xWorld(p) {
     const x = this.xform, cos = Math.cos(x.angle), sin = Math.sin(x.angle);
     const vx = (p.x - x.c.x) * x.sx, vy = (p.y - x.c.y) * x.sy;
@@ -1582,6 +1587,9 @@ export class Editor {
       ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
       ctx.setLineDash([]);
     }
+    // The glyph's points were replaced under an open free transform (undo,
+    // another edit): the box would move points that are gone, so drop it.
+    if (this.xform && this.xformStale()) { this.xform = null; this.app.onTransformChange?.(); }
     if (this.xform) this.drawTransform(colors);
     this.drawKeyObject(colors);
     if (d?.kind === 'stroke') {
