@@ -22,6 +22,7 @@ const CurrentVersion = 1
 const (
 	maxGlyphs   = 10000
 	maxContours = 2000
+	maxRules    = 2000
 	maxNodes    = 20000
 	maxCoord    = 30000
 )
@@ -99,6 +100,27 @@ type Project struct {
 	// most specific entry wins: glyph+glyph, glyph+group, group+glyph,
 	// group+group.
 	Kerning map[string]map[string]float64 `json:"kerning,omitempty"`
+	// Contextual alternates ('calt'): a glyph changes its shape depending on
+	// its neighbours, e.g. a connecting stroke in handwriting.
+	Contextual []Alternate `json:"contextual,omitempty"`
+	// Ligatures ('liga'): a sequence of glyphs drawn as one glyph.
+	Ligatures []Ligature `json:"ligatures,omitempty"`
+}
+
+// Alternate replaces Glyph with Use when the glyph before it is one of
+// Prev and the glyph after it is one of Next. An empty list means "any".
+// At least one of the lists is set.
+type Alternate struct {
+	Glyph string   `json:"glyph"`
+	Use   string   `json:"use"`
+	Prev  []string `json:"prev,omitempty"`
+	Next  []string `json:"next,omitempty"`
+}
+
+// Ligature replaces the sequence Glyphs (two or more) with Use.
+type Ligature struct {
+	Glyphs []string `json:"glyphs"`
+	Use    string   `json:"use"`
 }
 
 // Parse decodes and validates a .sp document.
@@ -154,6 +176,19 @@ func (p *Project) Validate() error {
 			if !finite(v) || math.Abs(v) > 5000 {
 				return fmt.Errorf("invalid kerning value for %q %q", left, right)
 			}
+		}
+	}
+	if len(p.Contextual) > maxRules || len(p.Ligatures) > maxRules {
+		return errors.New("too many substitution rules")
+	}
+	for _, a := range p.Contextual {
+		if a.Glyph == "" || a.Use == "" || len(a.Prev)+len(a.Next) == 0 || len(a.Prev) > maxGlyphs || len(a.Next) > maxGlyphs {
+			return errors.New("invalid contextual alternate")
+		}
+	}
+	for _, l := range p.Ligatures {
+		if l.Use == "" || len(l.Glyphs) < 2 || len(l.Glyphs) > 16 {
+			return errors.New("invalid ligature")
 		}
 	}
 	for _, g := range p.Guides {

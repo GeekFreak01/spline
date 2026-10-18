@@ -52,6 +52,8 @@ type fontData struct {
 	glyphs []glyphData    // glyph 0 is .notdef
 	gid    map[string]int // project glyph name -> glyph id
 	kern   []kernPair
+	calt   []caltRule
+	ligs   []ligRule
 	names  names
 	bbox   box
 	now    time.Time
@@ -98,6 +100,13 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 		if k := buildKern(fd.kern); k != nil {
 			tables["kern"] = k
 		}
+	}
+	gsub, err := buildGSUB(fd.calt, fd.ligs)
+	if err != nil {
+		return nil, err
+	}
+	if gsub != nil {
+		tables["GSUB"] = gsub
 	}
 	tables["head"] = buildHead(fd)
 	tables["hhea"] = buildHhea(fd)
@@ -169,6 +178,7 @@ func prepare(p *project.Project, f Format) *fontData {
 		fd.bbox.maxY = math.Max(fd.bbox.maxY, g.bbox.maxY)
 	}
 	fd.kern = collectKerning(p, fd.gid)
+	fd.calt, fd.ligs = collectSubst(p, fd.gid)
 	return fd
 }
 
