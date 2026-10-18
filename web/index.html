@@ -84,7 +84,14 @@
 
     <!-- ============ Kerning ============ -->
     <section class="view view-kern" id="kernView" hidden>
-      <div class="canvas-wrap"><canvas id="kernCanvas" tabindex="0" role="img" aria-label="Kerning"></canvas></div>
+      <div class="center">
+        <div class="dock-top" data-zone="top"></div>
+        <div class="center-row">
+          <aside class="dock dock-left" data-zone="left"></aside>
+          <div class="canvas-wrap"><canvas id="kernCanvas" tabindex="0" role="img" aria-label="Kerning"></canvas></div>
+          <div class="dock-icons" data-zone="icons"></div>
+        </div>
+      </div>
       <aside class="dock" id="kernPanel"></aside>
     </section>
 

@@ -116,12 +116,16 @@ function windowFor(id, flyout) {
   return w;
 }
 
+// A window never runs past the bottom of the screen: its body scrolls.
+const fitHeight = (w) => { w.style.maxHeight = `${Math.max(120, innerHeight - w.getBoundingClientRect().top - 12)}px`; };
+
 function clampWindow(w) {
   const r = w.getBoundingClientRect();
   const x = Math.min(Math.max(0, r.left), Math.max(0, innerWidth - 80));
   const y = Math.min(Math.max(0, r.top), Math.max(0, innerHeight - 30));
   w.style.left = `${x}px`;
   w.style.top = `${y}px`;
+  fitHeight(w);
   const f = state[w.dataset.float]?.float;
   if (f) { f.x = x; f.y = y; }
 }
@@ -164,6 +168,7 @@ export function layoutPanels() {
       const body = w.querySelector('.float-body');
       if (body.firstElementChild !== d) body.replaceChildren(d);
       w.hidden = hidden || (flyout && openFlyout !== id);
+      if (!w.hidden) fitHeight(w);
       if (flyout && !hidden) iconIds.push([id, w.querySelector('.float-title').textContent]);
     }
     iconIds.sort((a, b) => (order.get(a[0]) ?? 99) - (order.get(b[0]) ?? 99));
@@ -187,6 +192,7 @@ function positionFlyout(id) {
   const width = w.getBoundingClientRect().width || 260;
   w.style.left = `${Math.max(0, bar.left - width - 4)}px`;
   w.style.top = `${Math.max(0, Math.min(b.top, innerHeight - w.getBoundingClientRect().height - 30))}px`;
+  fitHeight(w);
 }
 
 function toggleFlyout(id) {

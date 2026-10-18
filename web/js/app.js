@@ -855,14 +855,15 @@ function updateMetricInputs() {
 }
 
 // Panels of the right dock; floating ones live in #floatLayer.
-const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel' };
-const VIEW_OF = { grid: 'gridView', editor: 'editorView' };
+const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
+const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['variants', 'varTitle'], ['actions', 'actions'], ['font', 'fontSection']];
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['variants', 'varTitle'], ['actions', 'actions'], ['font', 'fontSection'],
+  ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
 initPanels({
   layer: $('floatLayer'),
-  views: [$('gridView'), $('editorView')],
+  views: [$('gridView'), $('editorView'), $('kernView')],
   active: () => (DOCK_OF[app.mode] ? { view: $(VIEW_OF[app.mode]), dock: $(DOCK_OF[app.mode]) } : null),
   labels: {
     get dock() { return esc(t('panelDock')); }, get close() { return esc(t('panelClose')); }, get collapse() { return esc(t('panelCollapse')); },
@@ -871,6 +872,7 @@ initPanels({
   panelIcons: {
     glyph: icon('pen', 18), selection: icon('select', 18), pathops: icon('opUnite', 18), align: icon('alignHCenter', 18),
     transform: icon('transform', 18), variants: icon('variants', 18), actions: icon('spacing', 18), font: icon('type', 18),
+    kernPair: icon('kerning', 18), kernSpacing: icon('spacing', 18), kernSuggest: icon('check', 18), kernList: icon('search', 18),
   },
   onChange: () => renderMenus(),
 });
@@ -1709,6 +1711,14 @@ function kernListHTML(pr) {
     </div>`;
 }
 
+// The kerning panel's sections may sit in the dock, in another dock place
+// of the kerning view or in a floating window: listen in all of them.
+function onKernPanels(type, fn) {
+  for (const el of [$('kernPanel'), $('floatLayer'), ...$('kernView').querySelectorAll('[data-zone]')]) {
+    el.addEventListener(type, (e) => { if (app.mode === 'kern') fn(e); });
+  }
+}
+
 function renderKernPanel() {
   const pr = kernView.pair();
   const n = kernPairs(app.project).length;
@@ -1717,6 +1727,8 @@ function renderKernPanel() {
     + section('kernSuggest', t('ksTitle'), kernSuggestHTML())
     + section('kernList', `${t('kernAll')} (${n})`, kernListHTML(pr))
     + groupDatalists();
+  recordOrder($('kernPanel'));
+  if (app.mode === 'kern') layoutPanels();
 }
 
 // Removes pairs whose glyphs were deleted or whose groups have no members.
@@ -2438,7 +2450,7 @@ $('optionsBar').addEventListener('keydown', (e) => {
   if (e.target.id === 'kernText' && e.key === 'Enter') { e.preventDefault(); $('kernCanvas').focus(); }
 });
 
-$('kernPanel').addEventListener('change', (e) => {
+onKernPanels('change', (e) => {
   const pr = kernView.pair();
   if (!pr) return;
   if (e.target.id === 'kernValue') {
@@ -2469,20 +2481,20 @@ $('kernPanel').addEventListener('change', (e) => {
   }
 });
 // Delete / Backspace on a row of the pair list removes that pair.
-$('kernPanel').addEventListener('keydown', (e) => {
+onKernPanels('keydown', (e) => {
   const pick = e.target.closest?.('[data-kpick]');
   if (!pick || (e.key !== 'Delete' && e.key !== 'Backspace')) return;
   e.preventDefault();
-  const rows = [...$('kernPanel').querySelectorAll('[data-kpick]')];
+  const rows = [...document.querySelectorAll('#kernView [data-kpick], #floatLayer [data-kpick]')];
   const i = rows.indexOf(pick);
   app.history.pushKerning(app.project);
   deleteKern(app.project, pick.dataset.l, pick.dataset.r);
   app.onKernChanged();
   renderKernPanel();
-  const after = $('kernPanel').querySelectorAll('[data-kpick]');
+  const after = document.querySelectorAll('#kernView [data-kpick], #floatLayer [data-kpick]');
   after[Math.min(i, after.length - 1)]?.focus();
 });
-$('kernPanel').addEventListener('input', (e) => {
+onKernPanels('input', (e) => {
   if (e.target.id === 'kernFilter') {
     store.set('spline.kernFilter', e.target.value);
     const pos = e.target.selectionStart;
@@ -2492,7 +2504,7 @@ $('kernPanel').addEventListener('input', (e) => {
     f.setSelectionRange(pos, pos);
   }
 });
-$('kernPanel').addEventListener('click', (e) => {
+onKernPanels('click', (e) => {
   if (onSuggestClick(e)) return;
   const scope = e.target.closest('[data-scope]');
   if (scope) {
