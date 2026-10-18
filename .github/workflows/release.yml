@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # all tags and commits, for the release notes
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -28,10 +30,14 @@ jobs:
           build darwin  amd64 spline-macos-amd64
           build linux   amd64 spline-linux-amd64
           build linux   arm64 spline-linux-arm64
+      # What changed since the previous version, from the commit messages:
+      # visible on the release page (and from the update badge in the app).
+      - name: Release notes
+        run: bash .github/scripts/release-notes.sh "${GITHUB_REF_NAME}" > notes.md
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          generate_release_notes: true
+          body_path: notes.md
 
   # Windows installer (Inno Setup): asks for the install folder, adds Start
   # menu / desktop shortcuts, .sp file association and an uninstaller.
