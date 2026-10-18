@@ -13,7 +13,7 @@
 <p align="center">
   <img alt="Go" src="https://img.shields.io/badge/100%25-Go-00add8?style=flat-square&logo=go&logoColor=white">
   <img alt="Windows · macOS · Linux · Web" src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux%20%C2%B7%20Web-один%20файл-2f7bf5?style=flat-square">
-  <a href="https://github.com/GeekFreak01/spline/releases/latest"><img alt="Версия" src="https://img.shields.io/github/v/release/GeekFreak01/spline?style=flat-square&label=версия&color=3a3a3a"></a>
+  <a href="https://github.com/GeekFreak01/spline/releases/latest"><img alt="Версия" src="https://img.shields.io/github/v/release/GeekFreak01/spline?style=flat-square&label=%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F&color=3a3a3a"></a>
   <img alt="Лицензия MIT" src="https://img.shields.io/badge/лицензия-MIT-3a3a3a?style=flat-square">
   <img alt="Русский и английский" src="https://img.shields.io/badge/язык-RU%20%C2%B7%20EN-d69e2e?style=flat-square">
 </p>
