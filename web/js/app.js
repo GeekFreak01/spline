@@ -33,7 +33,7 @@ setDefaults({
   'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'],
   'op.unite': ['Ctrl+Alt+U'], 'op.subtract': ['Ctrl+Alt+M'], 'op.intersect': ['Ctrl+Alt+I'],
   'op.exclude': ['Ctrl+Alt+E'], 'op.divide': ['Ctrl+Alt+D'], 'op.removeOverlap': ['Ctrl+Alt+O'],
-  autoSpacing: [], flipH: [], flipV: [], fontInfo: [], groups: [], shortcuts: ['F1'],
+  autoSpacing: [], flipH: [], flipV: [], fontInfo: [], groups: [], newVariant: [], newLigature: [], shortcuts: ['F1'],
   kernShowGroups: ['Alt+G'], kernNextSample: ['Ctrl+]'], kernPrevSample: ['Ctrl+['],
 });
 
@@ -255,6 +255,8 @@ function menuDefs() {
       '-',
       ...PATH_OPS.map((op) => ({ label: op.label, key: keyLabel(`op.${op.id}`), run: () => runPathOp(op.id), enabled: inEditor })),
       '-',
+      { label: 'varNewMenu', key: keyLabel('newVariant'), run: newVariant, enabled: inEditor || app.selected.size === 1 },
+      { label: 'ligNewMenu', key: keyLabel('newLigature'), run: newLigature },
       { label: 'kgTitleMenu', key: keyLabel('groups'), run: groupsDialog },
       { label: 'fontInfo', key: keyLabel('fontInfo'), run: editFontInfo },
     ] },
@@ -699,6 +701,7 @@ function renderGlyphPanelBody() {
 `)
     + alignSection()
     + transformSection()
+    + variantsSection(g)
     + section('actions', t('actions'), `
       <button class="btn btn-block" type="button" data-cmd="spacing">${icon('spacing', 15)}<span>${esc(t('autoSpacing'))}</span></button>
       <button class="btn btn-block" type="button" data-cmd="importSvg">${icon('open', 15)}<span>${esc(t('importSvg'))}</span></button>
@@ -851,7 +854,7 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['actions', 'actions'], ['font', 'fontSection']];
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['variants', 'varTitle'], ['actions', 'actions'], ['font', 'fontSection']];
 
 initPanels({
   layer: $('floatLayer'),
@@ -863,7 +866,7 @@ initPanels({
   icons: { dock: icon('panelDock', 14), close: icon('close', 14), collapse: icon('chevronRight', 14) },
   panelIcons: {
     glyph: icon('pen', 18), selection: icon('select', 18), pathops: icon('opUnite', 18), align: icon('alignHCenter', 18),
-    transform: icon('transform', 18), actions: icon('spacing', 18), font: icon('type', 18),
+    transform: icon('transform', 18), variants: icon('variants', 18), actions: icon('spacing', 18), font: icon('type', 18),
   },
   onChange: () => renderMenus(),
 });
@@ -882,6 +885,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
     if (sec) store.set(`spline.sec.${sec}`, e.target.open ? '1' : '0');
   }, true);
   dock.addEventListener('change', (e) => {
+    if (onVariantsChange(e)) return;
     if (e.target.dataset.kgroup) {
       const prop = e.target.dataset.kgroup;
       const v = cleanGroupName(e.target.value);
@@ -909,6 +913,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
     if (e.key === 'Enter' && e.target.dataset.tf) { e.preventDefault(); liveTransform(true); }
   });
   dock.addEventListener('click', (e) => {
+    if (onVariantsClick(e)) return;
     const sw = e.target.closest('[data-role="colorPick"] [data-color]');
     if (sw) { setColor(sw.dataset.color); return; }
     const al = e.target.closest('[data-align]');
@@ -1108,6 +1113,7 @@ async function deleteSelectedGlyphs() {
   const n = app.selected.size;
   if (!n || !(await confirmDialog(t('confirmDelete', { n }), t('delete')))) return;
   app.project.glyphs = app.project.glyphs.filter((g) => !app.selected.has(g.name));
+  dropRulesOf(app.selected);
   app.selected.clear();
   markChanged();
   renderAll();
@@ -1198,7 +1204,7 @@ const KEY_GROUPS = [
   ['keysTools', TOOLS.map((tl) => `tool.${tl.id}`)],
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
-  ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'flipH', 'flipV', 'groups', 'fontInfo']],
+  ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'fontInfo']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -1738,6 +1744,219 @@ function finishKernCleanup(pairs) {
   app.onKernChanged();
   renderKernPanel();
   toast(t('kernRemoved', { n: pairs.length }));
+}
+
+// ---------------------------------------------------------------- variants and ligatures
+
+// A variant is a glyph named "<base>.<suffix>" without a character of its
+// own ("о.alt"); contextual rules put it in place of the base glyph when the
+// neighbours match ('calt' in the font). A ligature glyph replaces a
+// sequence of letters ('liga'). Browsers, text editors and design apps apply
+// both by default, so the Preview shows them right away.
+
+// The glyph a variant belongs to, or null.
+function variantBase(g) {
+  const i = g.name.indexOf('.');
+  return i > 0 ? findGlyph(g.name.slice(0, i)) : null;
+}
+
+// "о.alt" rather than "uni043E.alt".
+function variantLabel(g) {
+  const base = variantBase(g);
+  return base ? glyphLabel(base) + g.name.slice(base.name.length) : g.name;
+}
+
+const variantsOf = (g) => app.project.glyphs.filter((x) => x.name.startsWith(`${g.name}.`));
+const ligatureOf = (g) => app.project.ligatures.find((l) => l.use === g.name);
+
+// "бвг" or "бвг o.alt" -> glyph names; unknown characters are reported.
+function parseGlyphList(text) {
+  const names = [], unknown = [];
+  for (const token of String(text).trim().split(/\s+/).filter(Boolean)) {
+    if (findGlyph(token)) { names.push(token); continue; }
+    for (const ch of Array.from(token)) {
+      const g = app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
+      if (g) names.push(g.name); else unknown.push(ch);
+    }
+  }
+  return { names: [...new Set(names)], unknown };
+}
+
+// Glyph names -> "бвг o.alt" (characters together, names apart).
+function glyphListText(names) {
+  let out = '';
+  for (const n of names) {
+    const g = findGlyph(n);
+    const ch = g && charOf(g).trim();
+    out += ch ? ch : ` ${n} `;
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+function uniqueGlyphName(base) {
+  let name = base;
+  for (let i = 2; findGlyph(name); i++) name = `${base}${i}`;
+  return name;
+}
+
+// Copies the glyph into a new variant and opens it, with an empty rule to
+// fill in.
+function newVariant() {
+  const base = app.mode === 'editor' ? (variantBase(app.current) || app.current) : selectedGlyphs()[0];
+  if (!base) return;
+  const g = {
+    name: uniqueGlyphName(`${base.name}.alt`), advance: base.advance, contours: structuredClone(base.contours),
+    ...(base.kernLeft ? { kernLeft: base.kernLeft } : {}), ...(base.kernRight ? { kernRight: base.kernRight } : {}),
+  };
+  app.history.pushGroups(app.project);
+  app.project.glyphs.splice(app.project.glyphs.indexOf(base) + 1, 0, g);
+  app.project.contextual.push({ glyph: base.name, use: g.name, prev: [], next: [] });
+  markChanged();
+  toast(t('varCreated', { n: variantLabel(g) }));
+  openEditor(g.name);
+}
+
+// Asks for a sequence of letters and makes a ligature glyph for it, drawn
+// first as the letters side by side.
+async function newLigature() {
+  const data = await showDialog({
+    title: t('ligNew'),
+    body: `<label class="field">${esc(t('ligLetters'))}<input type="text" name="seq" required spellcheck="false" placeholder="ши, ffi, ТТ"></label>
+      <p class="hint">${esc(t('ligNewHint'))}</p>`,
+    okLabel: t('create'),
+  });
+  if (!data) return;
+  const { names, unknown } = parseGlyphList(data.get('seq'));
+  if (unknown.length) toast(t('varUnknown', { c: unknown.join(' ') }), 'error');
+  if (names.length < 2) { toast(t('ligNeedTwo'), 'error'); return; }
+  const existing = app.project.ligatures.find((l) => l.glyphs.join(' ') === names.join(' '));
+  if (existing) { openEditor(existing.use); return; }
+  const parts = names.map(findGlyph);
+  let x = 0;
+  const contours = [];
+  for (const p of parts) {
+    for (const c of p.contours) {
+      const cc = structuredClone(c);
+      for (const n of cc.nodes) for (const q of [n, n.in, n.out]) if (q) q.x += x;
+      contours.push(cc);
+    }
+    x += p.advance;
+  }
+  const g = { name: uniqueGlyphName(names.join('_')), advance: x, contours };
+  app.history.pushGroups(app.project);
+  app.project.glyphs.push(g);
+  app.project.ligatures.push({ glyphs: names, use: g.name });
+  markChanged();
+  openEditor(g.name);
+}
+
+// Rules mentioning deleted glyphs go with them.
+function dropRulesOf(names) {
+  const gone = (n) => names.has(n);
+  const p = app.project;
+  p.contextual = p.contextual.filter((r) => !gone(r.glyph) && !gone(r.use))
+    .map((r) => ({ ...r, prev: r.prev.filter((n) => !gone(n)), next: r.next.filter((n) => !gone(n)) }));
+  p.ligatures = p.ligatures.filter((l) => !gone(l.use) && !l.glyphs.some(gone));
+}
+
+// Panel section in the editor: what this glyph has or is.
+function variantsSection(g) {
+  const p = app.project;
+  const base = variantBase(g);
+  const lig = ligatureOf(g);
+  let body = '';
+  if (lig) {
+    body = `<div class="sub-head">${esc(t('ligIs'))}</div>
+      <label class="prop"><span>${esc(t('ligLetters'))}</span><input type="text" data-lig-seq value="${esc(glyphListText(lig.glyphs))}" spellcheck="false"></label>
+      <p class="hint">${esc(t('ligHint'))}</p>
+      <button class="btn btn-block btn-danger" type="button" data-lig-del>${icon('close', 15)}<span>${esc(t('ligDelete'))}</span></button>`;
+  } else if (base) {
+    const rules = p.contextual.map((r, i) => ({ r, i })).filter(({ r }) => r.use === g.name);
+    body = `<div class="var-base">${glyphSVG(base, 'var-mini')}<span>${esc(t('varOf', { c: glyphLabel(base) }))}</span>
+        <button class="btn" type="button" data-open-glyph="${esc(base.name)}">${esc(t('varOpenBase'))}</button></div>
+      <div class="sub-head">${esc(t('varWhen'))}</div>
+      ${rules.map(({ r, i }) => `<div class="var-rule" data-rule="${i}">
+        <label><span>${esc(t('varPrev'))}</span><input type="text" data-rule-prev="${i}" value="${esc(glyphListText(r.prev))}" placeholder="${esc(t('varAny'))}" spellcheck="false"></label>
+        <label><span>${esc(t('varNext'))}</span><input type="text" data-rule-next="${i}" value="${esc(glyphListText(r.next))}" placeholder="${esc(t('varAny'))}" spellcheck="false"></label>
+        <button class="btn btn-icon" type="button" data-rule-del="${i}" aria-label="${esc(t('varRuleDelete'))}" data-tip="${esc(t('varRuleDelete'))}">${icon('close', 14)}</button>
+        ${!r.prev.length && !r.next.length ? `<p class="hint warn">${esc(t('varEmptyRule'))}</p>` : ''}
+      </div>`).join('')}
+      <button class="btn btn-block" type="button" data-rule-add>${icon('plus', 15)}<span>${esc(t('varRuleAdd'))}</span></button>
+      <p class="hint">${esc(t('varHint'))}</p>`;
+  } else {
+    const vars = variantsOf(g);
+    const summary = (v) => {
+      const rules = p.contextual.filter((r) => r.use === v.name && (r.prev.length || r.next.length));
+      if (!rules.length) return t('varNoRules');
+      return rules.map((r) => [r.prev.length ? t('varAfterShort', { l: glyphListText(r.prev) }) : '', r.next.length ? t('varBeforeShort', { l: glyphListText(r.next) }) : '']
+        .filter(Boolean).join(', ')).join('; ');
+    };
+    body = `${vars.length ? `<div class="var-list">${vars.map((v) => `<button type="button" class="var-item" data-open-glyph="${esc(v.name)}">
+        ${glyphSVG(v, 'var-mini')}<span><b>${esc(variantLabel(v))}</b><small>${esc(summary(v))}</small></span></button>`).join('')}</div>`
+      : `<p class="hint">${esc(t('varNone'))}</p>`}
+      <button class="btn btn-block" type="button" data-cmd="newVariant">${icon('plus', 15)}<span>${esc(t('varNew'))}</span></button>
+      <button class="btn btn-block" type="button" data-cmd="newLigature">${icon('plus', 15)}<span>${esc(t('ligNew'))}</span></button>`;
+  }
+  return section('variants', t('varTitle'), body);
+}
+
+// Edits from the panel section.
+function onVariantsChange(e) {
+  const p = app.project;
+  const el = e.target;
+  const prevI = el.dataset.rulePrev, nextI = el.dataset.ruleNext;
+  if (prevI !== undefined || nextI !== undefined) {
+    const { names, unknown } = parseGlyphList(el.value);
+    if (unknown.length) toast(t('varUnknown', { c: unknown.join(' ') }), 'error');
+    app.history.pushGroups(p);
+    const r = p.contextual[Number(prevI ?? nextI)];
+    if (prevI !== undefined) r.prev = names; else r.next = names;
+    markChanged();
+    renderGlyphPanel();
+    return true;
+  }
+  if (el.dataset.ligSeq !== undefined) {
+    const { names, unknown } = parseGlyphList(el.value);
+    if (unknown.length) toast(t('varUnknown', { c: unknown.join(' ') }), 'error');
+    if (names.length < 2) { toast(t('ligNeedTwo'), 'error'); renderGlyphPanel(); return true; }
+    app.history.pushGroups(p);
+    ligatureOf(app.current).glyphs = names;
+    markChanged();
+    renderGlyphPanel();
+    return true;
+  }
+  return false;
+}
+
+function onVariantsClick(e) {
+  const p = app.project;
+  const open = e.target.closest('[data-open-glyph]');
+  if (open) { openEditor(open.dataset.openGlyph); return true; }
+  if (e.target.closest('[data-rule-add]')) {
+    const base = variantBase(app.current);
+    if (!base) return true;
+    app.history.pushGroups(p);
+    p.contextual.push({ glyph: base.name, use: app.current.name, prev: [], next: [] });
+    markChanged();
+    renderGlyphPanel();
+    return true;
+  }
+  const del = e.target.closest('[data-rule-del]');
+  if (del) {
+    app.history.pushGroups(p);
+    p.contextual.splice(Number(del.dataset.ruleDel), 1);
+    markChanged();
+    renderGlyphPanel();
+    return true;
+  }
+  if (e.target.closest('[data-lig-del]')) {
+    app.history.pushGroups(p);
+    p.ligatures = p.ligatures.filter((l) => l.use !== app.current.name);
+    markChanged();
+    renderGlyphPanel();
+    return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------- groups window
@@ -2471,7 +2690,7 @@ const COMMANDS = {
   undo, redo,
   zoomIn: () => editor.zoomBy(1.25), zoomOut: () => editor.zoomBy(0.8), zoomFit: () => editor.fit(),
   prev: () => stepGlyph(-1), next: () => stepGlyph(1),
-  autoGroups, groups: groupsDialog,
+  autoGroups, groups: groupsDialog, newVariant, newLigature,
   xfReset, xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
 };
 
@@ -2506,6 +2725,8 @@ const ACTIONS = {
   kernShowGroups: { run: () => toggleKernGroups(), when: () => app.mode === 'kern', label: () => t('kernShowGroups') },
   kernNextSample: { run: () => stepKernSample(1), when: () => app.mode === 'kern', label: () => t('kernNextSample') },
   kernPrevSample: { run: () => stepKernSample(-1), when: () => app.mode === 'kern', label: () => t('kernPrevSample') },
+  newVariant: { run: newVariant, when: () => app.mode === 'editor' || app.selected.size === 1, label: () => t('varNewMenu') },
+  newLigature: { run: newLigature, label: () => t('ligNewMenu') },
   fontInfo: { run: editFontInfo }, groups: { run: groupsDialog, label: () => t('kgTitle') }, shortcuts: { run: helpDialog, always: true },
 };
 

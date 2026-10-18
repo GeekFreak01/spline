@@ -52,6 +52,14 @@ export function validateProject(p) {
     }
   }
   p.kerning = kern;
+  // Substitutions: contextual alternates and ligatures (glyph names).
+  const names = (a) => (Array.isArray(a) ? a.filter((n) => typeof n === 'string' && n) : []);
+  p.contextual = (Array.isArray(p.contextual) ? p.contextual : [])
+    .filter((r) => r && typeof r.glyph === 'string' && typeof r.use === 'string' && r.glyph && r.use)
+    .map((r) => ({ glyph: r.glyph, use: r.use, prev: names(r.prev), next: names(r.next) }));
+  p.ligatures = (Array.isArray(p.ligatures) ? p.ligatures : [])
+    .filter((l) => l && typeof l.use === 'string' && l.use && names(l.glyphs).length >= 2)
+    .map((l) => ({ glyphs: names(l.glyphs), use: l.use }));
   p.guides = (Array.isArray(p.guides) ? p.guides : [])
     .filter((g) => g && (g.axis === 'x' || g.axis === 'y') && Number.isFinite(g.pos));
   for (const g of p.glyphs) {

@@ -258,6 +258,19 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .kspace b { font: 400 22px/1 var(--font-guide); padding-bottom: 4px; }
 .kspace label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--text-3); text-align: center; }
 .kspace input { text-align: center; padding: 0 4px; width: 100%; }
+.var-mini { width: 34px; height: 34px; flex: none; color: var(--text); background: var(--bg-input); border-radius: 3px; }
+.var-base { display: flex; align-items: center; gap: 8px; }
+.var-base span { flex: 1; min-width: 0; font-weight: 600; }
+.var-list { display: flex; flex-direction: column; gap: 4px; }
+.var-item { display: flex; align-items: center; gap: 8px; padding: 4px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: none; color: var(--text); text-align: left; cursor: pointer; }
+.var-item:hover { border-color: var(--line); background: var(--bg-raised); }
+.var-item span { display: flex; flex-direction: column; min-width: 0; }
+.var-item small { color: var(--text-3); font-size: 11px; overflow-wrap: anywhere; }
+.var-rule { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 26px; gap: 6px; align-items: end; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
+.var-rule label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--text-3); }
+.var-rule input { width: 100%; }
+.var-rule .btn-icon { width: 26px; height: 26px; }
+.var-rule .hint { grid-column: 1 / -1; }
 .kg-note { display: block; margin-top: 2px; font-size: 11px; line-height: 1.3; color: var(--text-3); overflow-wrap: anywhere; }
 .dock .hint.warn { color: var(--danger); }
 .field-inline { display: grid; grid-template-columns: minmax(0, 1fr) 90px; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-s); }

@@ -109,7 +109,7 @@ type Project struct {
 
 // Alternate replaces Glyph with Use when the glyph before it is one of
 // Prev and the glyph after it is one of Next. An empty list means "any".
-// At least one of the lists is set.
+// Rules with both lists empty are kept in the file but do nothing.
 type Alternate struct {
 	Glyph string   `json:"glyph"`
 	Use   string   `json:"use"`
@@ -182,7 +182,9 @@ func (p *Project) Validate() error {
 		return errors.New("too many substitution rules")
 	}
 	for _, a := range p.Contextual {
-		if a.Glyph == "" || a.Use == "" || len(a.Prev)+len(a.Next) == 0 || len(a.Prev) > maxGlyphs || len(a.Next) > maxGlyphs {
+		// A rule without context is allowed (the user is still filling it
+		// in); the font builder skips it.
+		if a.Glyph == "" || a.Use == "" || len(a.Prev) > maxGlyphs || len(a.Next) > maxGlyphs {
 			return errors.New("invalid contextual alternate")
 		}
 	}

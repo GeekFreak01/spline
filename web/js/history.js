@@ -14,8 +14,9 @@ export class History {
   // Call right before changing kerning values.
   pushKerning(project) { this.#add({ kerning: structuredClone(project.kerning || {}) }); }
 
-  // Call right before changing kerning groups (renaming a group also
-  // renames its kerning keys, so the kerning is kept too).
+  // Call right before changing kerning groups or substitution rules
+  // (renaming a group also renames its kerning keys, so the kerning is
+  // kept too).
   pushGroups(project) { this.#add(groupsSnap(project)); }
 
   #add(s) {
@@ -39,6 +40,8 @@ export class History {
         if (r) g.kernRight = r; else delete g.kernRight;
       }
       project.kerning = structuredClone(s.kerning);
+      project.contextual = structuredClone(s.contextual);
+      project.ligatures = structuredClone(s.ligatures);
       return GROUPS;
     }
     if (s.kerning) {
@@ -58,5 +61,7 @@ export class History {
 const groupsSnap = (p) => ({
   groups: Object.fromEntries(p.glyphs.map((g) => [g.name, [g.kernLeft || '', g.kernRight || '']])),
   kerning: structuredClone(p.kerning || {}),
+  contextual: structuredClone(p.contextual || []),
+  ligatures: structuredClone(p.ligatures || []),
 });
 const snap = (g) => ({ name: g.name, advance: g.advance, contours: structuredClone(g.contours) });
