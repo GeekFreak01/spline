@@ -9,6 +9,7 @@ import { History, KERNING, GROUPS } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
 import { Editor } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
+import { proposeGroups, letterKind, pairGap } from './shape.js';
 import { setDefaults, keyLabel, comboOf, comboLabel, actionFor, assign, resetAll, bindings, isCustom, BROWSER_RESERVED, TAKEN } from './keys.js';
 import { initPanels, layoutPanels, setHidden, isHidden, resetPanels, recordOrder, watchResize } from './panels.js';
 
@@ -33,7 +34,7 @@ setDefaults({
   'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'],
   'op.unite': ['Ctrl+Alt+U'], 'op.subtract': ['Ctrl+Alt+M'], 'op.intersect': ['Ctrl+Alt+I'],
   'op.exclude': ['Ctrl+Alt+E'], 'op.divide': ['Ctrl+Alt+D'], 'op.removeOverlap': ['Ctrl+Alt+O'],
-  autoSpacing: [], flipH: [], flipV: [], fontInfo: [], groups: [], newVariant: [], newLigature: [], shortcuts: ['F1'],
+  autoSpacing: [], flipH: [], flipV: [], fontInfo: [], groups: [], newVariant: [], newLigature: [], shapeGroups: [], shortcuts: ['F1'],
   kernShowGroups: ['Alt+G'], kernNextSample: ['Ctrl+]'], kernPrevSample: ['Ctrl+['],
 });
 
@@ -258,6 +259,7 @@ function menuDefs() {
       { label: 'varNewMenu', key: keyLabel('newVariant'), run: newVariant, enabled: inEditor || app.selected.size === 1 },
       { label: 'ligNewMenu', key: keyLabel('newLigature'), run: newLigature },
       { label: 'kgTitleMenu', key: keyLabel('groups'), run: groupsDialog },
+      { label: 'sgMenu', key: keyLabel('shapeGroups'), run: shapeGroupsDialog },
       { label: 'fontInfo', key: keyLabel('fontInfo'), run: editFontInfo },
     ] },
     { id: 'menuWindow', items: [
@@ -1209,7 +1211,7 @@ const KEY_GROUPS = [
   ['keysTools', TOOLS.map((tl) => `tool.${tl.id}`)],
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
-  ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'fontInfo']],
+  ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups', 'fontInfo']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -1712,6 +1714,7 @@ function renderKernPanel() {
   const n = kernPairs(app.project).length;
   $('kernPanel').innerHTML = section('kernPair', t('kernPair'), kernPairHTML(pr))
     + (pr ? section('kernSpacing', t('kernSpacing'), kernSpacingHTML(pr)) : '')
+    + section('kernSuggest', t('ksTitle'), kernSuggestHTML())
     + section('kernList', `${t('kernAll')} (${n})`, kernListHTML(pr))
     + groupDatalists();
 }
@@ -1964,6 +1967,201 @@ function onVariantsClick(e) {
   return false;
 }
 
+// ---------------------------------------------------------------- shape helpers
+
+// Groups by shape: compares the left and right side profiles of the drawn
+// letters and proposes groups; letters with accents follow their base.
+const sg = { tolerance: null };
+
+function shapeGroupsProposal() {
+  const p = app.project, info = p.info;
+  const bases = p.glyphs.filter((g) => {
+    const ch = charOf(g);
+    return g.contours.length && letterKind(ch) && baseLetter(ch) === ch;
+  });
+  const result = {};
+  for (const side of ['left', 'right']) {
+    const prop = SIDE_PROP[side];
+    result[side] = proposeGroups(bases, info, side, sg.tolerance).map((members) => {
+      // Keep a name the members already share most, so kerning stays.
+      const count = new Map();
+      for (const m of members) if (m[prop]) count.set(m[prop], (count.get(m[prop]) || 0) + 1);
+      const keep = [...count.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      const sorted = [...members].sort((a, b) => a.unicode - b.unicode);
+      return { name: keep || cleanGroupName(glyphLabel(sorted[0])), members: sorted, on: members.length > 1 };
+    }).sort((a, b) => b.members.length - a.members.length || a.name.localeCompare(b.name));
+  }
+  return result;
+}
+
+function shapeGroupsDialog() {
+  if ($('dialog').open) $('dialog').close();
+  sg.tolerance ??= Math.round(app.project.info.unitsPerEm * 0.03);
+  let prop = shapeGroupsProposal();
+  const colHTML = (side) => {
+    const multi = prop[side].filter((c) => c.members.length > 1);
+    const singles = prop[side].filter((c) => c.members.length === 1);
+    return `<section class="kg-col"><h3>${esc(t(side === 'left' ? 'kgLeftSides' : 'kgRightSides'))}</h3>
+      <div class="kg-list">${multi.map((c) => {
+        const i = prop[side].indexOf(c);
+        return `<div class="kg-card">
+          <div class="kg-card-head"><label class="check"><input type="checkbox" data-sg-on="${side}:${i}" ${c.on ? 'checked' : ''}>${esc(t('sgUse'))}</label>
+            <input type="text" class="kg-name" data-sg-name="${side}:${i}" value="${esc(c.name)}" spellcheck="false" aria-label="${esc(t('kgRename'))}"></div>
+          <div class="kg-chips">${c.members.map((g) => `<span class="kg-chip">${esc(glyphLabel(g))}</span>`).join('')}</div></div>`;
+      }).join('') || `<p class="hint">${esc(t('sgNone'))}</p>`}
+      ${singles.length ? `<p class="hint">${esc(t('sgSingles', { l: singles.map((c) => glyphLabel(c.members[0])).join(' ') }))}</p>` : ''}</div></section>`;
+  };
+  const render = () => { $('sgCols').innerHTML = colHTML('left') + colHTML('right'); };
+  showDialog({
+    title: t('sgTitle'),
+    okLabel: t('sgApply'),
+    body: `<div class="kg-dialog">
+      <p class="hint">${esc(t('sgHelp'))}</p>
+      <label class="sg-tol"><span>${esc(t('sgStrict'))}</span>
+        <input type="range" id="sgTol" min="8" max="${Math.round(app.project.info.unitsPerEm * 0.1)}" value="${sg.tolerance}">
+        <span>${esc(t('sgLoose'))}</span><output id="sgTolOut">${sg.tolerance}</output></label>
+      <div class="kg-cols" id="sgCols"></div></div>`,
+  }).then((data) => {
+    if (!data) return;
+    const p = app.project;
+    app.history.pushGroups(p);
+    let n = 0;
+    for (const side of ['left', 'right']) {
+      const key = SIDE_PROP[side];
+      for (const c of prop[side]) {
+        if (!c.on || !c.name) continue;
+        for (const m of c.members) {
+          // The letter and its accented forms (À, Á… follow A).
+          for (const g of p.glyphs) {
+            const ch = charOf(g);
+            if (g === m || (ch && baseLetter(ch) === charOf(m) && g !== m)) { g[key] = c.name; n++; }
+          }
+        }
+      }
+    }
+    markChanged();
+    toast(t('sgApplied', { n }));
+    if (app.mode === 'kern') { renderKernPanel(); kernView.render(); } else if (app.mode === 'editor') renderGlyphPanel(); else renderInspector();
+  });
+  const dlg = $('dialog');
+  dlg.classList.add('wide');
+  dlg.addEventListener('close', () => dlg.classList.remove('wide'), { once: true });
+  dlg.querySelector('form').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.matches('input[type=text]')) { e.preventDefault(); e.target.blur(); }
+  });
+  render();
+  const body = dlg.querySelector('.kg-dialog');
+  body.addEventListener('input', (e) => {
+    if (e.target.id !== 'sgTol') return;
+    sg.tolerance = Number(e.target.value);
+    $('sgTolOut').textContent = sg.tolerance;
+    prop = shapeGroupsProposal();
+    render();
+  });
+  body.addEventListener('change', (e) => {
+    const on = e.target.dataset.sgOn, name = e.target.dataset.sgName;
+    if (on) { const [side, i] = on.split(':'); prop[side][i].on = e.target.checked; }
+    if (name) { const [side, i] = name.split(':'); prop[side][i].name = cleanGroupName(e.target.value); }
+  });
+}
+
+// Kerning suggestions for the line. Each side of a letter has the spacing
+// the designer gave it, measured next to its control letter ("H", "n",
+// "Н", "н"); a pair needs kerning when its letters together stand further
+// apart (or closer) than those two spacings add up to: "LL", "oo", "Hn"
+// get nothing, "AV", "To", "LT" get negative values.
+let kernSuggestions = [];
+
+function suggestKerning() {
+  const p = app.project, info = p.info;
+  const items = kernView.layout();
+  const zone = [info.descender, info.ascender];
+  // The control letter of a kind: "n" for lowercase, "H" for the rest, in
+  // the letter's own script.
+  const refOf = (g, kind) => {
+    const cyr = /[а-яёА-ЯЁ]/.test(charOf(g));
+    const c = kind === 'small' ? (cyr ? 'н' : 'n') : (cyr ? 'Н' : 'H');
+    return p.glyphs.find((x) => x.unicode === c.codePointAt(0) && x.contours.length)
+      || p.glyphs.find((x) => x.unicode === (kind === 'small' ? 110 : 72) && x.contours.length);
+  };
+  const kindOf = (g) => letterKind(charOf(g)) || 'other';
+  // How much white a side brings next to its own control letter, minus
+  // half of the control pair: the spacing the designer gave that side.
+  const side = (g, which) => {
+    const ref = refOf(g, kindOf(g));
+    if (!ref) return null;
+    const pair = which === 'right' ? pairGap(g, ref, zone) : pairGap(ref, g, zone);
+    const own = pairGap(ref, ref, zone);
+    return pair && own ? { v: pair.close - own.close / 2, tight: own.tight } : null;
+  };
+  const out = [], seen = new Set();
+  for (let i = 1; i < items.length; i++) {
+    const L = items[i - 1].g, R = items[i].g;
+    if (!L || !R || !L.contours.length || !R.contours.length || !charOf(L).trim() || !charOf(R).trim()) continue;
+    const a = side(L, 'right'), b = side(R, 'left'), have = pairGap(L, R, zone);
+    if (!a || !b || !have) continue;
+    // The eye does not read a gap as fully as geometry does (a diagonal
+    // channel looks narrower than it is), so only part of the difference.
+    let s = 0.4 * (a.v + b.v - have.close);
+    // Kerning never pulls the closest rows nearer than about a third of
+    // the normal gap (it only limits, it does not push letters apart).
+    const minTight = Math.min(a.tight, b.tight) * 0.35;
+    if (s < 0 && have.tight + s < minTight) s = Math.min(0, minTight - have.tight);
+    s = Math.round(s / 5) * 5;
+    if (Math.abs(s) < 10) s = 0;
+    if (isOverkern(s, L, R)) s = -Math.floor(0.4 * Math.min(L.advance, R.advance) / 5) * 5;
+    const k1 = L.kernRight ? groupKey(L.kernRight) : L.name, k2 = R.kernLeft ? groupKey(R.kernLeft) : R.name;
+    const key = `${k1} ${k2}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const now = effectiveKern(p, L, R).value;
+    if (Math.abs(s - now) >= 10) out.push({ L, R, k1, k2, now, value: s, at: i });
+  }
+  kernSuggestions = out;
+  renderKernPanel();
+  if (!out.length) toast(t('ksNone'));
+}
+
+function kernSuggestHTML() {
+  return `<button class="btn btn-block" type="button" data-ks-run>${icon('kerning', 15)}<span>${esc(t('ksRun'))}</span></button>
+    ${kernSuggestions.length ? `<div class="ks-list">${kernSuggestions.map((s, i) => `<div class="ks-row">
+        <button type="button" class="ks-pair" data-ks-go="${i}" data-tip="${esc(`${kernKeyLabel(s.k1)} — ${kernKeyLabel(s.k2)}`)}">${esc(glyphLabel(s.L) + glyphLabel(s.R))}</button>
+        <span class="ks-val">${s.now} → <b class="${s.value < 0 ? 'neg' : 'pos'}">${s.value}</b></span>
+        <button type="button" class="btn btn-icon" data-ks-ok="${i}" aria-label="${esc(t('ksAccept'))}" data-tip="${esc(t('ksAccept'))}">${icon('check', 14)}</button>
+        <button type="button" class="btn btn-icon" data-ks-no="${i}" aria-label="${esc(t('ksReject'))}" data-tip="${esc(t('ksReject'))}">${icon('close', 14)}</button>
+      </div>`).join('')}</div>
+      <div class="btn-row"><button class="btn" type="button" data-ks-all>${esc(t('ksAcceptAll'))}</button><button class="btn" type="button" data-ks-clear>${esc(t('ksClear'))}</button></div>` : ''}
+    <p class="hint">${esc(t('ksHint'))}</p>`;
+}
+
+function acceptSuggestions(list) {
+  if (!list.length) return;
+  app.history.pushKerning(app.project);
+  for (const s of list) setKern(app.project, s.k1, s.k2, s.value, !(isGroup(s.k1) && isGroup(s.k2)));
+  kernSuggestions = kernSuggestions.filter((s) => !list.includes(s));
+  app.onKernChanged();
+  renderKernPanel();
+}
+
+function onSuggestClick(e) {
+  if (e.target.closest('[data-ks-run]')) { suggestKerning(); return true; }
+  if (e.target.closest('[data-ks-all]')) { acceptSuggestions([...kernSuggestions]); return true; }
+  if (e.target.closest('[data-ks-clear]')) { kernSuggestions = []; renderKernPanel(); return true; }
+  const ok = e.target.closest('[data-ks-ok]');
+  if (ok) { acceptSuggestions([kernSuggestions[Number(ok.dataset.ksOk)]]); return true; }
+  const no = e.target.closest('[data-ks-no]');
+  if (no) { kernSuggestions.splice(Number(no.dataset.ksNo), 1); renderKernPanel(); return true; }
+  const go = e.target.closest('[data-ks-go]');
+  if (go) {
+    kernView.cursor = kernSuggestions[Number(go.dataset.ksGo)].at;
+    kernView.useGroups = { left: true, right: true };
+    renderKernPanel();
+    kernView.render();
+    return true;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------- groups window
 
 // Kerning groups of all glyphs at a glance: a column for the left sides and
@@ -1983,6 +2181,7 @@ function groupsDialog() {
       <p class="hint">${esc(t('kgHelp'))}</p>
       <div class="kg-top">
         <input type="search" id="kgSearch" placeholder="${esc(t('kgSearch'))}" aria-label="${esc(t('kgSearch'))}" value="${esc(kg.search)}">
+        <button type="button" class="btn" data-sg-open>${icon('kerning', 15)}<span>${esc(t('sgMenu'))}</span></button>
         <select id="kgCat" aria-label="${esc(t('categories'))}">${CATEGORIES.filter((c) => c.id !== 'empty' && c.id !== 'done')
           .map((c) => `<option value="${c.id}" ${kg.cat === c.id ? 'selected' : ''}>${esc(t(c.id))}</option>`).join('')}</select>
       </div>
@@ -2014,6 +2213,7 @@ function groupsDialog() {
     }
   });
   body.addEventListener('click', (e) => {
+    if (e.target.closest('[data-sg-open]')) { shapeGroupsDialog(); return; }
     const chip = e.target.closest('.kg-chip');
     if (chip) { selectChip(chip, e); return; }
     const clear = e.target.closest('[data-kg-clear]');
@@ -2289,6 +2489,7 @@ $('kernPanel').addEventListener('input', (e) => {
   }
 });
 $('kernPanel').addEventListener('click', (e) => {
+  if (onSuggestClick(e)) return;
   const scope = e.target.closest('[data-scope]');
   if (scope) {
     kernView.useGroups[scope.dataset.scope] = scope.dataset.v === 'group';
@@ -2743,6 +2944,7 @@ const ACTIONS = {
   kernPrevSample: { run: () => stepKernSample(-1), when: () => app.mode === 'kern', label: () => t('kernPrevSample') },
   newVariant: { run: newVariant, when: () => app.mode === 'editor' || app.selected.size === 1, label: () => t('varNewMenu') },
   newLigature: { run: newLigature, label: () => t('ligNewMenu') },
+  shapeGroups: { run: shapeGroupsDialog, label: () => t('sgMenu') },
   fontInfo: { run: editFontInfo }, groups: { run: groupsDialog, label: () => t('kgTitle') }, shortcuts: { run: helpDialog, always: true },
 };
 
