@@ -6,6 +6,7 @@ import {
 import { applyStroke } from './trace.js';
 import { openCorner, reconnect, deleteSegment } from './corners.js';
 import { matchContour } from './masters.js';
+import { effectiveKern } from './kerning.js';
 import { addExtremesTo } from './simplify.js';
 import { unite, subtract, removeOverlap, shapesOf, pathOperation, knifeCut } from './boolean.js';
 import { t } from './i18n.js';
@@ -85,15 +86,99 @@ export class Editor {
 
   // ---------------------------------------------------------------- setup
 
-  open(glyph) {
+  // view: keep this zoom and position instead of fitting the glyph (moving
+  // along the text line).
+  open(glyph, view = null) {
     if (this.xform) this.commitTransform();
     this.finishPen();
     this.glyph = glyph;
     this.measure = null;
     this.sel.clear();
     this.drag = null;
-    this.fit();
+    if (view && this.w) { this.view = { ...this.view, ...view }; this.render(); } else this.fit();
     this.updateAria();
+  }
+
+  // ---------------------------------------------------------------- text line
+
+  // The glyphs of the line around the one being edited: [{ g, x }] in font
+  // units, x from this glyph's origin, with kerning. this.line holds glyph
+  // names; this.lineAt is where this glyph is in it.
+  lineItems() {
+    if (!this.line?.length) return [];
+    const p = this.app.project;
+    const byName = this.app.glyphByName;
+    const items = [];
+    let x = 0, prev = null;
+    this.line.forEach((name, i) => {
+      const g = i === this.lineAt ? this.glyph : byName?.(name);
+      if (!g) return;
+      if (prev) x += effectiveKern(p, prev, g).value;
+      items.push({ g, x, i });
+      x += g.advance;
+      prev = g;
+    });
+    const me = items.find((it) => it.i === this.lineAt);
+    const shift = me ? me.x : 0;
+    for (const it of items) it.x -= shift;
+    return items;
+  }
+
+  // x (font units) of caret position k: before line item k.
+  caretX(k) {
+    const items = this.lineItems();
+    if (!items.length) return 0;
+    const at = items.find((it) => it.i >= k);
+    if (at) return at.x;
+    const last = items[items.length - 1];
+    return last.x + last.g.advance;
+  }
+
+  // The line item under a screen point (not this glyph), or null.
+  lineItemAt(sx, sy) {
+    const p = this.toFont(sx, sy);
+    const info = this.app.project.info;
+    if (p.y > info.ascender + 100 || p.y < info.descender - 100) return null;
+    return this.lineItems().find((it) => it.i !== this.lineAt && p.x >= it.x && p.x < it.x + it.g.advance) || null;
+  }
+
+  // The neighbours in the line, filled like ink, a little lighter.
+  drawLine(colors, dpr) {
+    const items = this.lineItems();
+    if (items.length < 2 && this.tool !== 'text') return;
+    const ctx = this.ctx, v = this.view;
+    for (const it of items) {
+      if (it.i === this.lineAt) continue;
+      ctx.save();
+      ctx.setTransform(dpr * v.scale, 0, 0, -dpr * v.scale, dpr * (v.ox + it.x * v.scale), dpr * v.oy);
+      ctx.beginPath();
+      tracePath(ctx, it.g, true);
+      ctx.restore();
+      ctx.fillStyle = colors.ink;
+      ctx.globalAlpha = 0.45;
+      ctx.fill('nonzero');
+      ctx.globalAlpha = 1;
+    }
+    if (this.tool === 'text') {
+      const info = this.app.project.info;
+      const x = Math.round(this.toScreen({ x: this.caretX(this.lineCursor), y: 0 }).x) + 0.5;
+      const top = this.toScreen({ x: 0, y: info.ascender }).y, bottom = this.toScreen({ x: 0, y: info.descender }).y;
+      ctx.strokeStyle = colors.primary;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
+    }
+  }
+
+  // Text tool: the caret goes to the boundary nearest the click.
+  downText(p) {
+    const items = this.lineItems();
+    let best = 0, bestD = Infinity;
+    for (let k = 0; k <= (this.line?.length || 0); k++) {
+      const d = Math.abs(this.caretX(k) - p.x);
+      if (d < bestD) { bestD = d; best = k; }
+    }
+    this.lineCursor = items.length ? best : 0;
+    this.render();
   }
 
   updateAria() {
@@ -305,6 +390,8 @@ export class Editor {
       const sp = this.snap(p);
       this.measure = { start: sp, end: sp };
       this.drag = { kind: 'measure' };
+    } else if (tool === 'text') {
+      this.downText(p);
     } else if (tool === 'select') {
       this.downSelect(e, sx, sy, p);
     } else if (tool === 'pen') {
@@ -1236,7 +1323,13 @@ export class Editor {
       const g = this.rulerZone(sx, sy) ? null : this.guideAt(sx, sy);
       if (g) { this.app.onGuideEdit?.(g); return; }
     }
-    if (!this.glyph || this.tool !== 'select') return;
+    if (!this.glyph) return;
+    if (this.tool === 'text' || this.tool === 'select') {
+      const { sx, sy } = this.eventPos(e);
+      const hit = !this.nodeAt(sx, sy) && !this.segmentAt(sx, sy) && this.contourAt(sx, sy) < 0 ? this.lineItemAt(sx, sy) : null;
+      if (hit) { this.app.editLineItem?.(hit.i); return; }
+    }
+    if (this.tool !== 'select') return;
     const { sx, sy } = this.eventPos(e);
     const n = this.nodeAt(sx, sy);
     if (n) {
@@ -1305,6 +1398,7 @@ export class Editor {
       return;
     }
     if (tool === 'hand') cur = this.drag ? 'grabbing' : 'grab';
+    else if (tool === 'text') cur = 'text';
     else if (tool === 'brush' || tool === 'eraser') cur = 'none';
     else if (tool === 'select') {
       if (this.handleAt(sx, sy) || this.nodeAt(sx, sy)) cur = 'pointer';
@@ -1906,6 +2000,7 @@ export class Editor {
     }
 
     this.drawOtherMasters(colors, dpr);
+    this.drawLine(colors, dpr);
 
     // Outline.
     ctx.save();

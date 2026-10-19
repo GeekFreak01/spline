@@ -42,7 +42,7 @@ setDefaults({
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
   snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
   'tool.measure': ['M'], selShapeCycle: ['Shift+V'], 'tool.pixel': ['G'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
-  'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'],
+  'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'], 'tool.text': ['T'],
   'op.unite': ['Ctrl+Alt+U'], 'op.subtract': ['Ctrl+Alt+M'], 'op.intersect': ['Ctrl+Alt+I'],
   'op.exclude': ['Ctrl+Alt+E'], 'op.divide': ['Ctrl+Alt+D'], 'op.removeOverlap': ['Ctrl+Alt+O'],
   autoSpacing: [], flipH: [], flipV: [], fontInfo: [], groups: [], newVariant: [], newLigature: [], shapeGroups: [], shortcuts: ['F1'],
@@ -58,6 +58,7 @@ const TOOLS = [
   { id: 'ellipse', icon: 'ellipse', key: 'O' },
   { id: 'knife', icon: 'knife', key: 'K' },
   { id: 'hand', icon: 'hand', key: 'H' },
+  { id: 'text', icon: 'type', key: 'T' },
   { id: 'measure', icon: 'ruler', key: 'M', ext: true },
   { id: 'pixel', icon: 'pixel', key: 'G', ext: true },
 ];
@@ -847,6 +848,7 @@ function renderGridOptions() {
 }
 
 $('optionsBar').addEventListener('input', (e) => {
+  if (e.target.id === 'lineText') { onLineInput(e.target.value); return; }
   if (e.target.id === 'searchInput') { app.search = e.target.value; renderGrid(); updateStatus(); }
   if (e.target.id === 'tileSize') {
     $('glyphGrid').style.setProperty('--tile', `${e.target.value}px`);
@@ -1856,6 +1858,7 @@ function drawEditorOptions() {
       <label data-tip="${esc(t('stabilizerTip'))}">${esc(t('stabilizer'))}
       <input type="range" data-opt="stabilizer" min="0" max="10" step="1" value="${editor.stabilizer}"><output class="mono" id="stabOut">${editor.stabilizer}</output></label>
       </div><div class="sep"></div>` : ''}
+    ${editor.tool === 'text' ? `<div class="group line-group"><label>${esc(t('lineText'))}<input class="kern-text" id="lineText" value="${esc(lineText())}" spellcheck="false" data-tip="${esc(t('lineTextTip'))}"></label></div><div class="sep"></div>` : ''}
     ${editor.tool === 'pixel' ? `<div class="group">
       <label data-tip="${esc(t('pxSizeTip'))}">${esc(t('pxSize'))}<input type="number" data-opt="pixelSize" min="4" max="500" step="1" value="${editor.pixelSize}"></label>
       <div class="seg" role="radiogroup">
@@ -1962,7 +1965,7 @@ function setViewTabs() {
   $('tabKerning').setAttribute('aria-selected', app.mode === 'kern');
 }
 
-function openEditor(name, push = true) {
+function openEditor(name, push = true, opts = {}) {
   const g = findGlyph(name);
   if (!g) return;
   $('kernView').hidden = true;
@@ -1975,12 +1978,20 @@ function openEditor(name, push = true) {
   $('editorView').hidden = false;
   if (push) history.pushState({ glyph: name }, '', `#glyph=${encodeURIComponent(name)}`);
   else history.replaceState({ glyph: name }, '', `#glyph=${encodeURIComponent(name)}`);
+  // The text line: kept when the glyph is in it, else it starts anew.
+  if (opts.lineAt !== undefined) editor.lineAt = opts.lineAt;
+  else {
+    const at = editor.line?.indexOf(name) ?? -1;
+    if (at >= 0) editor.lineAt = at;
+    else { editor.line = [name]; editor.lineAt = 0; editor.lineCursor = 1; }
+  }
+  saveLine();
   renderToolbar();
   renderEditorOptions();
   renderGlyphPanel();
   editor.setTool(editor.tool);
   editor.resize();
-  editor.open(g);
+  editor.open(g, opts.view);
   editor.preview = null;
   filterState.active = false;
   if (app.extended) queueMicrotask(previewFilter);
@@ -1988,6 +1999,100 @@ function openEditor(name, push = true) {
   updateStatus();
   renderPreviewText();
   $('canvas').focus({ preventScroll: true });
+}
+
+// ---------------------------------------------------------------- text line
+// Editing in a line of text, as in Glyphs: the neighbours are drawn around
+// the glyph, the Text tool types, a double-click edits another glyph.
+
+editor.line = (store.get('spline.editLine') || '').split(' ').filter(Boolean);
+editor.lineAt = 0;
+editor.lineCursor = 0;
+app.glyphByName = (name) => findGlyph(name);
+
+function saveLine() { store.set('spline.editLine', (editor.line || []).join(' ')); }
+
+// The line as text: characters, and "/name " for a glyph without one.
+function lineText() {
+  return (editor.line || []).map((n) => {
+    const g = findGlyph(n);
+    const ch = g && charOf(g);
+    return ch && ch.trim() ? ch : `/${n} `;
+  }).join('');
+}
+
+// Text back into glyph names ("/a.alt " for a glyph by its name).
+function parseLine(text) {
+  const out = [];
+  for (let i = 0; i < text.length;) {
+    if (text[i] === '/') {
+      const m = /^\/([^\s/]+) ?/.exec(text.slice(i));
+      if (m && findGlyph(m[1])) { out.push(m[1]); i += m[0].length; continue; }
+    }
+    const ch = String.fromCodePoint(text.codePointAt(i));
+    const g = app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
+    if (g) out.push(g.name);
+    i += ch.length;
+  }
+  return out;
+}
+
+// Moves the editing to item i of the line; the canvas does not jump.
+app.editLineItem = (i) => {
+  const name = editor.line?.[i];
+  if (!name || i === editor.lineAt) return;
+  const items = editor.lineItems();
+  const it = items.find((x) => x.i === i);
+  const v = editor.view;
+  const view = it ? { scale: v.scale, oy: v.oy, ox: v.ox + it.x * v.scale } : null;
+  openEditor(name, false, { lineAt: i, view });
+};
+
+// Text tool keys: type, move the caret, delete; Esc edits the glyph at the caret.
+function lineKey(e) {
+  const line = editor.line || (editor.line = []);
+  const k = editor.lineCursor;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    editor.lineCursor = Math.max(0, Math.min(line.length, k + (e.key === 'ArrowLeft' ? -1 : 1)));
+  } else if (e.key === 'Home' || e.key === 'End') {
+    editor.lineCursor = e.key === 'Home' ? 0 : line.length;
+  } else if (e.key === 'Backspace' || e.key === 'Delete') {
+    const at = e.key === 'Backspace' ? k - 1 : k;
+    if (at < 0 || at >= line.length || at === editor.lineAt) return true; // the glyph being edited stays
+    line.splice(at, 1);
+    if (at < editor.lineAt) editor.lineAt--;
+    if (e.key === 'Backspace') editor.lineCursor--;
+  } else if (e.key === 'Escape' || e.key === 'Enter') {
+    const at = Math.max(0, Math.min(line.length - 1, k > 0 ? k - 1 : 0));
+    setTool('select');
+    app.editLineItem(at);
+    return true;
+  } else if (e.key.length === 1 || /^\p{L}|\p{N}|\p{P}|\p{S}$/u.test(e.key)) {
+    const names = parseLine(e.key);
+    if (!names.length) return true;
+    line.splice(k, 0, ...names);
+    if (k <= editor.lineAt) editor.lineAt += names.length;
+    editor.lineCursor += names.length;
+  } else return false;
+  saveLine();
+  const input = $('lineText');
+  if (input && document.activeElement !== input) input.value = lineText();
+  editor.render();
+  return true;
+}
+
+// The line field of the Text tool's options bar.
+function onLineInput(text) {
+  const names = parseLine(text);
+  const cur = app.current?.name;
+  if (!names.length) return;
+  editor.line = names;
+  const at = names.indexOf(cur);
+  saveLine();
+  if (at >= 0) { editor.lineAt = at; editor.lineCursor = Math.min(editor.lineCursor, names.length); editor.render(); return; }
+  // This glyph is no longer in the line: edit the first one instead.
+  editor.lineCursor = names.length;
+  openEditor(names[0], false, { lineAt: 0 });
 }
 
 function showGrid(push = true) {
@@ -3124,6 +3229,7 @@ $('optionsBar').addEventListener('change', (e) => {
 });
 $('optionsBar').addEventListener('keydown', (e) => {
   if (e.target.id === 'kernText' && e.key === 'Enter') { e.preventDefault(); $('kernCanvas').focus(); }
+  if (e.target.id === 'lineText' && (e.key === 'Enter' || e.key === 'Escape')) { e.preventDefault(); $('canvas').focus(); }
 });
 
 onKernPanels('change', (e) => {
@@ -4984,11 +5090,15 @@ document.addEventListener('keydown', (e) => {
   const act = combo && ACTIONS[actionFor(combo)];
   if (act) {
     const busy = !act.always && (typing(e.target) || e.target.closest?.('#menus'));
-    // In the kerning view plain keys type text.
-    const kernText = app.mode === 'kern' && !mod && !e.altKey && combo.replace(/^Shift\+/, '').length === 1;
+    // In the kerning view and with the Text tool plain keys type text.
+    const plain = !mod && !e.altKey && combo.replace(/^Shift\+/, '').length === 1;
+    const kernText = plain && (app.mode === 'kern' || (app.mode === 'editor' && editor.tool === 'text'));
     if (!busy && !kernText && (!act.when || act.when())) { e.preventDefault(); act.run(); return; }
   }
   if (typing(e.target) || e.target.closest?.('#menus')) return;
+  if (app.mode === 'editor' && editor.tool === 'text' && !mod && !e.altKey && e.target === $('canvas')) {
+    if (lineKey(e)) { e.preventDefault(); return; }
+  }
   if (app.mode === 'kern') {
     // The canvas works like a text line: type to add letters, arrows move
     // the cursor, Alt+arrows change the kerning (Shift: by 1).
