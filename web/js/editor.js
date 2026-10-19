@@ -1,7 +1,7 @@
 // Canvas glyph editor: select, pen, brush, eraser, rectangle, ellipse, hand.
 import {
   segments, pointAt, tracePath, flatten, polyBox, normalizeDirections, insertNode,
-  rectContour, ellipseContour, movePoint, charOf, reverseContour,
+  rectContour, ellipseContour, movePoint, charOf, reverseContour, pointInPolygon,
 } from './model.js';
 import { applyStroke } from './trace.js';
 import { unite, subtract, removeOverlap, shapesOf, pathOperation, knifeCut } from './boolean.js';
@@ -338,6 +338,8 @@ export class Editor {
     }
     if (!e.shiftKey) this.sel.clear();
     this.drag = { kind: 'marquee', start: { sx, sy }, end: { sx, sy }, base: new Set(this.sel) };
+    // Extended mode: a free-hand lasso instead of a rectangle.
+    if (this.extended && this.selectShape === 'lasso') this.drag.lasso = [{ sx, sy }];
   }
 
   downPen(e, sx, sy, p) {
@@ -467,6 +469,7 @@ export class Editor {
         break;
       case 'marquee':
         d.end = { sx, sy };
+        d.lasso?.push({ sx, sy });
         break;
       case 'penHandle':
         if (Math.hypot(sx - d.start.sx, sy - d.start.sy) > 3) {
@@ -562,9 +565,11 @@ export class Editor {
         const x0 = Math.min(d.start.sx, d.end.sx), x1 = Math.max(d.start.sx, d.end.sx);
         const y0 = Math.min(d.start.sy, d.end.sy), y1 = Math.max(d.start.sy, d.end.sy);
         this.sel = new Set(d.base);
+        const poly = d.lasso?.map((q) => ({ x: q.sx, y: q.sy }));
         this.glyph.contours.forEach((c, ci) => c.nodes.forEach((n, ni) => {
           const s = this.toScreen(n);
-          if (s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1) this.sel.add(`${ci}:${ni}`);
+          const inside = poly ? poly.length > 2 && pointInPolygon(s, poly) : s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1;
+          if (inside) this.sel.add(`${ci}:${ni}`);
         }));
         break;
       }
@@ -1504,6 +1509,28 @@ export class Editor {
     return true;
   }
 
+  // Makes the handles of the selected points even: on one line through the
+  // point and of equal length. A point with one handle gets the mirrored
+  // second one.
+  evenHandles() {
+    const nodes = this.selectedNodes().filter((n) => n.in || n.out);
+    if (!nodes.length) return false;
+    this.app.history.push(this.glyph);
+    for (const n of nodes) {
+      const a = n.in || { x: 2 * n.x - n.out.x, y: 2 * n.y - n.out.y };
+      const b = n.out || { x: 2 * n.x - n.in.x, y: 2 * n.y - n.in.y };
+      let dx = b.x - a.x, dy = b.y - a.y;
+      const l = Math.hypot(dx, dy) || 1;
+      dx /= l; dy /= l;
+      const len = (Math.hypot(a.x - n.x, a.y - n.y) + Math.hypot(b.x - n.x, b.y - n.y)) / 2;
+      n.in = { x: Math.round(n.x - dx * len), y: Math.round(n.y - dy * len) };
+      n.out = { x: Math.round(n.x + dx * len), y: Math.round(n.y + dy * len) };
+      n.smooth = true;
+    }
+    this.afterEdit(false);
+    return true;
+  }
+
   // Alt+arrows: move only the points, their handles stay.
   nudgeNodesOnly(dx, dy) {
     const nodes = this.selectedNodes();
@@ -1836,7 +1863,18 @@ export class Editor {
     const d = this.drag;
     const tool = this.activeTool();
     this.drawMeasure(colors);
-    if (d?.kind === 'marquee') {
+    if (d?.kind === 'marquee' && d.lasso) {
+      ctx.fillStyle = 'rgba(37,99,235,0.08)';
+      ctx.strokeStyle = colors.primary;
+      ctx.setLineDash([5, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      d.lasso.forEach((q, i) => (i ? ctx.lineTo(q.sx, q.sy) : ctx.moveTo(q.sx, q.sy)));
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else if (d?.kind === 'marquee') {
       const x = Math.min(d.start.sx, d.end.sx), y = Math.min(d.start.sy, d.end.sy);
       ctx.fillStyle = 'rgba(37,99,235,0.08)';
       ctx.strokeStyle = colors.primary;

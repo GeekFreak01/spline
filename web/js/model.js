@@ -68,6 +68,8 @@ export function validateProject(p) {
     if (!(g.compose && typeof g.compose.base === 'string' && Array.isArray(g.compose.marks))) delete g.compose;
     if (g.composeOff !== true) delete g.composeOff;
     if (!Array.isArray(g.background) || !g.background.length) delete g.background;
+    if (Array.isArray(g.snapshots)) g.snapshots = g.snapshots.filter((x) => x && Array.isArray(x.contours) && Number.isFinite(x.advance)).slice(-20);
+    if (!g.snapshots?.length) delete g.snapshots;
     for (const k of ['lsbKey', 'rsbKey', 'widthKey']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];
     const im = g.image;
     if (!(im && typeof im.data === 'string' && im.data.startsWith('data:image/')

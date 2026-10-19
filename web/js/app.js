@@ -1003,6 +1003,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
   });
   dock.addEventListener('click', (e) => {
     if (onVariantsClick(e)) return;
+    if (snapshotClick(e)) return;
     const sw = e.target.closest('[data-role="colorPick"] [data-color]');
     if (sw) { setColor(sw.dataset.color); return; }
     const al = e.target.closest('[data-align]');
@@ -1384,6 +1385,7 @@ function helpDialog() {
 
 const editor = new Editor(app, $('canvas'));
 editor.extended = app.extended;
+editor.selectShape = store.get('spline.selectShape', 'rect');
 editor.showBackground = store.get('spline.showBackground', '1') === '1';
 document.documentElement.dataset.mode = app.extended ? 'extended' : 'simple';
 editor.showGuide = store.get('spline.showGuide', '1') === '1';
@@ -1484,6 +1486,11 @@ function renderEditorOptions() {
       <label data-tip="${esc(t('stabilizerTip'))}">${esc(t('stabilizer'))}
       <input type="range" data-opt="stabilizer" min="0" max="10" step="1" value="${editor.stabilizer}"><output class="mono" id="stabOut">${editor.stabilizer}</output></label>
       </div><div class="sep"></div>` : ''}
+    ${app.extended && editor.tool === 'select' ? `<div class="group"><span class="opt-label">${esc(t('selShape'))}</span>
+      <div class="seg" role="radiogroup">
+        <button type="button" role="radio" data-cmd="selRect" aria-checked="${editor.selectShape !== 'lasso'}" data-tip="${esc(t('selRectTip'))}">${esc(t('selRect'))}</button>
+        <button type="button" role="radio" data-cmd="selLasso" aria-checked="${editor.selectShape === 'lasso'}" data-tip="${esc(t('selLassoTip'))}">${esc(t('selLasso'))}</button>
+      </div></div><div class="sep"></div>` : ''}
     <div class="group">
       <label class="check"><input type="checkbox" data-opt="guide" ${editor.showGuide ? 'checked' : ''}>${esc(t('guide'))}</label>
       <label class="check"><input type="checkbox" data-opt="grid" ${editor.showGrid ? 'checked' : ''}>${esc(t('grid'))}</label>
@@ -1552,6 +1559,7 @@ function openEditor(name, push = true) {
   editor.open(g);
   renderMenus();
   updateStatus();
+  renderPreviewText();
   $('canvas').focus({ preventScroll: true });
 }
 
@@ -1571,6 +1579,7 @@ function showGrid(push = true) {
     el?.scrollIntoView({ block: 'center' });
     el?.focus({ preventScroll: true });
   }
+  renderPreviewText();
 }
 
 window.addEventListener('popstate', (e) => {
@@ -1620,6 +1629,19 @@ function letterSample(g) {
   const [a, b] = Array.from(ctl);
   return `${a}${a}${ch}${a}${a} ${b}${b}${ch}${b}${b} ${have.map((c) => ch + c).join('')}${ch}`;
 }
+
+// The preview button of the extended mode: the glyph being edited between
+// control letters, written with "*" so it follows the open glyph.
+function previewAroundCurrent() {
+  const g = app.current;
+  const sample = g ? letterSample(g) : '';
+  const ctl = sample ? sample.slice(0, 2)[0] + sample.slice(6, 7) : 'HO';
+  const [a, b] = Array.from(ctl);
+  $('previewInput').value = `${a}${a}*${a}${a} ${b}${b}*${b}${b} ${a}*${b}*${a}`;
+  store.set('spline.previewText', $('previewInput').value);
+  renderPreviewText();
+}
+$('previewCurrent').addEventListener('click', previewAroundCurrent);
 
 // Puts a sample in the line: one of KERN_SAMPLES or "letter" (for the
 // letter after the cursor).
@@ -2788,6 +2810,7 @@ function setExtended(on) {
   renderAll();
   if (app.mode === 'editor') { renderToolbar(); renderEditorOptions(); renderGlyphPanel(); editor.render(); }
   if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
+  renderPreviewText();
   toast(t(on ? 'extOn' : 'extOff'));
 }
 
@@ -2825,7 +2848,8 @@ function pointsSection() {
   return section('points', t('ptTitle'), `
     <div class="btn-row">${b('ptExtremes', 'addExtremes', 'addExtremes')}${b('ptAlign', 'alignPoints', 'alignPoints')}</div>
     <div class="btn-row">${b('ptBreak', 'breakContour', 'breakContour')}${b('ptJoin', 'joinContours', 'joinContours')}</div>
-    <div class="btn-row">${b('ptFirst', 'makeFirst', 'makeFirst')}${b('ptInvert', 'invertSelection', 'invertSelection')}</div>
+    <div class="btn-row">${b('ptEven', 'evenHandles', 'evenHandles')}${b('ptFirst', 'makeFirst', 'makeFirst')}</div>
+    <div class="btn-row">${b('ptInvert', 'invertSelection', 'invertSelection')}</div>
     <p class="hint">${esc(t('ptHint'))}</p>`);
 }
 
@@ -2838,7 +2862,60 @@ function backgroundSection(g) {
       <button class="btn" type="button" data-cmd="bgSwap" ${has ? '' : 'disabled'}>${esc(t('bgSwapShort'))}</button>
       <button class="btn" type="button" data-cmd="bgClear" ${has ? '' : 'disabled'}>${esc(t('bgClear'))}</button>
     </div>
-    <p class="hint">${esc(t(has ? 'bgHintHas' : 'bgHint'))}</p>`, false);
+    <p class="hint">${esc(t(has ? 'bgHintHas' : 'bgHint'))}</p>
+    <div class="sub-head">${esc(t('snapTitle'))}</div>
+    ${(g.snapshots || []).map((sn, i) => `<div class="snap-row">
+      <span>${esc(sn.name)}</span>
+      <button class="btn" type="button" data-snap-restore="${i}" data-tip="${esc(t('snapRestoreTip'))}">${esc(t('snapRestore'))}</button>
+      <button class="btn btn-icon" type="button" data-snap-delete="${i}" aria-label="${esc(t('snapDelete'))}" data-tip="${esc(t('snapDelete'))}">${icon('trash', 14)}</button>
+    </div>`).join('') || `<p class="hint">${esc(t('snapHint'))}</p>`}
+    <button class="btn btn-block" type="button" data-cmd="snapSave">${icon('plus', 15)}<span>${esc(t('snapSave'))}</span></button>`, false);
+}
+
+// Snapshots: saved versions of a glyph to come back to (extended mode).
+function saveSnapshot() {
+  const g = app.current;
+  if (!g) return;
+  const list = (g.snapshots ||= []);
+  const time = new Date().toLocaleTimeString(getLang(), { hour: '2-digit', minute: '2-digit' });
+  list.push({ name: `${t('snapName')} ${list.length + 1} · ${time}`, contours: structuredClone(g.contours), advance: g.advance });
+  if (list.length > 20) list.shift();
+  markChanged();
+  renderGlyphPanel();
+}
+
+function snapshotClick(e) {
+  const g = app.current;
+  const r = e.target.closest('[data-snap-restore]'), d = e.target.closest('[data-snap-delete]');
+  if (!g || (!r && !d)) return false;
+  const i = Number((r || d).dataset[r ? 'snapRestore' : 'snapDelete']);
+  const sn = g.snapshots?.[i];
+  if (!sn) return true;
+  if (r) {
+    app.history.push(g);
+    g.contours = structuredClone(sn.contours);
+    g.advance = sn.advance;
+    editor.sel.clear();
+    editor.afterEdit(false);
+    toast(t('snapRestored', { name: sn.name }));
+  } else {
+    g.snapshots.splice(i, 1);
+    if (!g.snapshots.length) delete g.snapshots;
+    markChanged();
+  }
+  renderGlyphPanel();
+  return true;
+}
+
+function evenHandles() {
+  endTransform();
+  if (app.mode === 'editor' && !editor.evenHandles()) toast(t('evenHandlesHint'), 'error');
+}
+
+function setSelectShape(shape) {
+  editor.selectShape = shape;
+  store.set('spline.selectShape', shape);
+  renderEditorOptions();
 }
 
 // Ctrl+arrows in the kerning line (extended mode).
@@ -3436,6 +3513,8 @@ const COMMANDS = {
   ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
   ptBreak: breakContour, ptJoin: joinContours, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
   bgClear: () => backgroundOp('clear'),
+  ptEven: evenHandles, snapSave: saveSnapshot,
+  selRect: () => setSelectShape('rect'), selLasso: () => setSelectShape('lasso'),
   ulFitCap: () => fitUnderlay('cap'), ulFitX: () => fitUnderlay('x'), ulFitAll: () => fitUnderlay('all'),
 };
 
@@ -3606,6 +3685,14 @@ async function updatePreview() {
 }
 
 // Drawn glyphs use the new font; missing ones are dimmed in a fallback font.
+// Extended mode: "*" in the preview text stands for the glyph open in the
+// editor, so "HH*HH OO*OO" shows it between control letters.
+function previewText() {
+  const text = $('previewInput').value;
+  const cur = app.extended && app.mode === 'editor' && app.current ? charOf(app.current) : '';
+  return cur ? text.replaceAll('*', cur) : text;
+}
+
 function renderPreviewText() {
   if (!app.project) return;
   const drawn = new Set(app.project.glyphs.filter((g) => g.contours.length || g.unicode === 32).map((g) => g.unicode));
@@ -3620,7 +3707,7 @@ function renderPreviewText() {
     out.append(span);
     run = '';
   };
-  for (const ch of $('previewInput').value) {
+  for (const ch of previewText()) {
     const mine = drawn.has(ch.codePointAt(0)) || ch === '\n';
     if (mine !== runMine) { flush(); runMine = mine; }
     run += ch;

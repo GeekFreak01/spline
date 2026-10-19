@@ -676,3 +676,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .mkeys { margin-top: 4px; }
 .mkeys input { width: 100%; font: var(--fs-s) var(--font-mono, monospace); text-align: center; }
 .mkeys input.stale { border-color: var(--dot-orange); color: var(--dot-orange); }
+
+/* Controls that exist only in the extended mode. */
+.ext-only { display: none !important; }
+:root[data-mode="extended"] .ext-only { display: inline-flex !important; }
+.snap-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px; align-items: center; font-size: var(--fs-s); color: var(--text-2); }
+.snap-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
