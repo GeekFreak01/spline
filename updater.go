@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -101,6 +102,12 @@ func (s *server) handleOpenPage(w http.ResponseWriter, r *http.Request) {
 		"releases": releasesPage,
 		"issues":   "https://github.com/" + repo + "/issues",
 	}
+	// The guide is a page of the app itself, in the browser.
+	lang := r.URL.Query().Get("lang")
+	if lang != "en" {
+		lang = "ru"
+	}
+	pages["guide"] = fmt.Sprintf("http://127.0.0.1:%d/guide.html?lang=%s", s.port, lang)
 	page, ok := pages[r.URL.Query().Get("page")]
 	if !ok {
 		http.Error(w, "unknown page", http.StatusBadRequest)

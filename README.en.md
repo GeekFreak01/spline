@@ -182,7 +182,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>🪄 Comfort</h3>
-      Autosave · undo and redo · its own window on Windows, no browser · dark and light themes · English and Russian · an icon and double-click for <code>.sp</code> files · font install into the system with one click · Cyrillic font names · an installer with a folder choice · a notice when a new version is out · also works as a website.
+      Autosave · undo and redo · a guide to every part (Help → User Guide) · its own window on Windows, no browser · dark and light themes · English and Russian · an icon and double-click for <code>.sp</code> files · font install into the system with one click · Cyrillic font names · an installer with a folder choice · a notice when a new version is out · also works as a website.
     </td>
   </tr>
 </table>

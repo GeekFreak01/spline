@@ -383,6 +383,7 @@ function menuDefs() {
       { label: 'resetPanels', run: () => { resetPanels(); setPreviewHidden(false); } },
     ] },
     { id: 'menuHelp', items: [
+      { label: 'guideMenu', run: openGuide },
       { label: 'shortcuts', key: keyLabel('shortcuts'), run: helpDialog },
       ...(app.platform?.web ? [
         { label: 'downloadDesktop', run: () => openPage('releases') },
@@ -5206,6 +5207,13 @@ function openPage(page) {
   }
   fetch(`/api/open-page?page=${page}`, { method: 'POST', headers: { 'X-Spline': '1' } })
     .catch(() => window.open(`https://github.com/GeekFreak01/spline${page === 'releases' ? '/releases/latest' : ''}`, '_blank', 'noopener'));
+}
+
+// The guide (guide.html): in the browser, so it can stay open next to the app.
+function openGuide() {
+  if (app.platform?.web) { window.open(`/guide.html?lang=${getLang()}`, '_blank', 'noopener'); return; }
+  fetch(`/api/open-page?page=guide&lang=${getLang()}`, { method: 'POST', headers: { 'X-Spline': '1' } })
+    .catch(() => window.open(`/guide.html?lang=${getLang()}`, '_blank', 'noopener'));
 }
 
 let updateInfo = null;

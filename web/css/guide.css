@@ -1,0 +1,65 @@
+/* Spline guide: the app's colours (see app.css), a page to read. */
+:root, :root[data-theme="dark"] {
+  --bg: #1E1E1E; --panel: #2B2B2B; --panel-2: #323232; --raised: #3A3A3A;
+  --line: #151515; --line-soft: #3D3D3D;
+  --text: #E3E3E3; --text-2: #A8A8A8; --text-3: #8A8A8A;
+  --accent: #3B8EEA; --accent-soft: rgba(59, 142, 234, 0.22); --focus: #6AB0FF;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #D6D6D6; --panel: #F0F0F0; --panel-2: #E4E4E4; --raised: #DADADA;
+  --line: #B4B4B4; --line-soft: #CDCDCD;
+  --text: #1C1C1C; --text-2: #4A4A4A; --text-3: #666666;
+  --accent: #1F6FD1; --accent-soft: rgba(31, 111, 209, 0.16); --focus: #1F6FD1;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { scroll-padding-top: 64px; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+a { color: var(--accent); }
+
+.top {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 14px;
+  height: 48px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 8px; color: var(--text); text-decoration: none; font-weight: 600; }
+.top-title { color: var(--text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.langs { margin-left: auto; display: flex; border: 1px solid var(--line-soft); border-radius: 4px; overflow: hidden; }
+.langs button { border: 0; background: none; color: var(--text-2); padding: 4px 10px; font: inherit; cursor: pointer; }
+.langs button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+
+.layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); max-width: 1180px; margin: 0 auto; }
+.toc { position: sticky; top: 48px; align-self: start; max-height: calc(100vh - 48px); overflow: auto; padding: 20px 12px 20px 16px; }
+.toc a { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 4px; color: var(--text-2); text-decoration: none; }
+.toc a:hover { background: var(--raised); color: var(--text); }
+.toc a[aria-current="true"] { background: var(--accent-soft); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.toc svg { flex: none; }
+
+main { padding: 24px 24px 80px; min-width: 0; }
+.intro { max-width: 760px; color: var(--text-2); margin: 0 0 8px; }
+h1 { font-size: 24px; margin: 0 0 6px; }
+section { max-width: 760px; margin-top: 28px; padding-top: 4px; }
+h2 { display: flex; align-items: center; gap: 10px; font-size: 18px; margin: 0 0 4px; }
+h2 svg { color: var(--accent); }
+.lead { color: var(--text-2); margin: 0 0 12px; }
+.items { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.item { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 12px; padding: 12px 14px; background: var(--panel); }
+.item .ic { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 4px; background: var(--panel-2); color: var(--text); }
+.item h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0; font-size: 14px; }
+.item p { margin: 2px 0 0; color: var(--text-2); }
+.ext { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); }
+kbd {
+  font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; padding: 1px 6px; border-radius: 3px;
+  background: var(--bg); border: 1px solid var(--line-soft); color: var(--text); white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .toc { position: static; max-height: none; display: flex; gap: 4px; overflow-x: auto; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  .toc a { white-space: nowrap; }
+  main { padding: 16px 16px 60px; }
+}
