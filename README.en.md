@@ -214,7 +214,7 @@ The simple mode stays simple. Everything for serious type work switches on in **
       <br>
       <sub>Special Form…: pick what the copy is for and the OpenType feature appears by itself.</sub>
       <h3>🔠 OpenType without code</h3>
-      Special Form…: small caps, figure styles, superscript and subscript, slashed zero, swash, stylistic sets, Bulgarian and Serbian forms · feature checkboxes in the preview · font info: rights, weight, slant, line gap · masters on the weight and width axes (Regular, Bold, Condensed…) with sliders in the preview · smart parts · colour fonts (COLR/CPAL) · export of styles, a variable font and WOFF.
+      Special Form…: small caps, figure styles, superscript and subscript, slashed zero, swash, stylistic sets, Bulgarian and Serbian forms, “1/2” fractions · feature checkboxes in the preview · font info: rights, weight, slant, line gap · WOFF2 and WOFF export for websites.
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/en/ext-table.png" alt="The glyph table: name, Unicode, width, sidebearings, tags “ready” and “check”, a note “the spur is too short”, Export checkboxes; the With a note filter and tags on the left" width="100%">
@@ -222,6 +222,38 @@ The simple mode stays simple. Everything for serious type work switches on in **
       <sub>The table: in-place editing, tags, notes and filters.</sub>
       <h3>📋 Glyph list</h3>
       A table with in-place editing and sorting · renaming that updates kerning and rules · tags, notes, "do not export" · filters · batch commands for the selected glyphs · duplicating.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/en/ext-masters.png" alt="The letter R in the Bold master: the Regular and Bold master switch above the canvas, the wght slider at 560 below and the line “Spline Variable — Regular to Bold” in a medium weight" width="100%">
+      <br>
+      <sub>Regular and Bold masters, a weight slider in the preview.</sub>
+      <h3>🎚️ Masters and variable fonts</h3>
+      One glyph drawn in several styles on the weight and width axes · the master switch above the canvas and in kerning · kerning of its own in every master · export of styles (Light, Medium…) and of a variable font where both outlines and kerning vary.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/en/ext-color.png" alt="The letter S painted red, the Colour window with a palette of six colours, and the multicoloured line “Spline Color Fonts” below" width="100%">
+      <br>
+      <sub>The palette in the Colour window: each contour in its own colour.</sub>
+      <h3>🎨 Colour fonts</h3>
+      A palette and a colour for each contour · the preview shows it in colour right away · the font gets COLR and CPAL, so browsers and apps show the letters in colour.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/en/ext-smart.png" alt="The em dash built from the smart part _dash: the Components panel shows the sliders Length 90 and Weight 0, the preview has a hyphen, an en dash and an em dash from one part" width="100%">
+      <br>
+      <sub>One smart part: hyphen, en dash and em dash are just different lengths.</sub>
+      <h3>🧱 Smart parts</h3>
+      A part with properties (“Length”, “Weight”…) and sliders · every glyph uses it with its own values · edit the part and every glyph that uses it follows.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/en/ext-filters.png" alt="The Weight filter window: offset 34, “Remove overlap afterwards”, the Preview checkbox, Cancel and Apply; the bolder R is shown dashed on the canvas" width="100%">
+      <br>
+      <sub>The Filter menu: every filter has its own window with a preview.</sub>
+      <h3>🪄 Filters</h3>
+      Weight, rounded corners, stroke, handles · a dashed preview right on the canvas · the windows move and remember their place · Transform Metrics for many glyphs at once.
     </td>
   </tr>
 </table>
