@@ -751,3 +751,11 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .sm-slider .with-unit { display: flex; align-items: center; gap: 6px; }
 .seg.sm-states { grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); }
 .dialog .ms-row.two { grid-template-columns: minmax(0, 1fr) 110px 110px 80px; }
+
+.snap-pop { position: relative; }
+.snap-pop [aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.snap-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 1000; display: grid; gap: 6px; padding: 8px 10px; min-width: 180px;
+  background: var(--bg-panel-2, var(--bg-panel)); border: 1px solid var(--line-soft); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.snap-menu[hidden] { display: none; }
+.snap-menu kbd { margin-left: auto; color: var(--text-3); font: var(--fs-s) var(--font-mono, monospace); }
+.snap-menu .check { width: 100%; }

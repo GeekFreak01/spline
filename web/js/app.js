@@ -1765,7 +1765,33 @@ async function clearGuides() {
   editor.render();
 }
 
+// Extended mode: snapping is one magnet button (lit while on) with a small
+// menu; F9 and F10 switch it without opening anything.
+let snapMenuOpen = false;
+function snapButtonHTML() {
+  const on = editor.snapGrid || editor.snapGuides;
+  const row = (opt, label, key) => `<label class="check"><input type="checkbox" data-opt="${opt}" ${editor[opt] ? 'checked' : ''}>${esc(t(label))}<kbd>${esc(keyLabel(key))}</kbd></label>`;
+  return `<div class="group snap-pop">
+    <button class="btn btn-icon" type="button" data-cmd="snapMenu" aria-pressed="${on}" aria-expanded="${snapMenuOpen}" aria-label="${esc(t('snap'))}"
+      data-tip="${esc(t('snap'))}: ${esc(t('snapGrid'))} ${esc(keyLabel('snapGrid'))}, ${esc(t('snapGuides'))} ${esc(keyLabel('snapGuides'))}">${icon('magnet', 15)}</button>
+    <div class="snap-menu" ${snapMenuOpen ? '' : 'hidden'}>${row('snapGrid', 'snapGrid', 'snapGrid')}${row('snapGuides', 'snapGuides', 'snapGuides')}</div>
+  </div>`;
+}
+document.addEventListener('pointerdown', (e) => {
+  if (snapMenuOpen && !e.target.closest('.snap-pop')) { snapMenuOpen = false; if (app.mode === 'editor') renderEditorOptions(); }
+});
+
 function renderEditorOptions() {
+  drawEditorOptions();
+  // The snap menu hangs below its button (the bar itself scrolls).
+  const menu = $('optionsBar').querySelector('.snap-menu:not([hidden])');
+  if (menu) {
+    const r = menu.previousElementSibling.getBoundingClientRect();
+    Object.assign(menu.style, { position: 'fixed', left: `${r.left}px`, top: `${r.bottom + 6}px` });
+  }
+}
+
+function drawEditorOptions() {
   const g = app.current;
   if (!g) return;
   if (editor.xform) { renderTransformOptions(); return; }
@@ -1798,11 +1824,11 @@ function renderEditorOptions() {
       <label>${esc(t('gridStep'))}<input type="number" data-opt="gridStep" min="1" max="500" step="1" value="${editor.gridStep}"></label>
     </div>
     <div class="sep"></div>
-    <div class="group">
+    ${app.extended ? snapButtonHTML() : `<div class="group">
       <span class="opt-label">${esc(t('snap'))}</span>
       <label class="check" data-tip="${esc(t('snapGridTip'))}" data-key="${esc(keyLabel('snapGrid'))}"><input type="checkbox" data-opt="snapGrid" ${editor.snapGrid ? 'checked' : ''}>${esc(t('snapGrid'))}</label>
       <label class="check" data-tip="${esc(t('snapGuidesTip'))}" data-key="${esc(keyLabel('snapGuides'))}"><input type="checkbox" data-opt="snapGuides" ${editor.snapGuides ? 'checked' : ''}>${esc(t('snapGuides'))}</label>
-    </div>
+    </div>`}
     <div class="sep"></div>
     <div class="group">
       <button class="btn btn-icon" type="button" data-cmd="undo" data-tip="${esc(t('undo'))}" data-key="${esc(keyLabel('undo'))}" aria-label="${esc(t('undo'))}">${icon('undo', 15)}</button>
@@ -4737,6 +4763,7 @@ const COMMANDS = {
   btDecompose: () => batch('decompose'), btExportOff: () => batch('exportOff'), btExportOn: () => batch('exportOn'), cmAdd: addComponentDialog, cmDecompose: decomposeCurrent,
   anAuto: autoAnchors, smAdd: addPropDialog,
   selRect: () => setSelectShape('rect'), selLasso: () => setSelectShape('lasso'),
+  snapMenu: () => { snapMenuOpen = !snapMenuOpen; renderEditorOptions(); },
   pxDraw: () => { editor.pixelErase = false; renderEditorOptions(); }, pxErase: () => { editor.pixelErase = true; renderEditorOptions(); },
   newCorner: () => newPartGlyph('corner'), newBrush: () => newPartGlyph('brush'),
   mastersDialog: () => mastersDialog(), exportInstances: () => exportInstances(),
