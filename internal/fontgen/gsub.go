@@ -124,14 +124,20 @@ func lookupTable(kind uint16, sub []byte) []byte {
 // before it is in prev and the glyph after it is in next. ChainContextSubst
 // format 3.
 func chainLookup(r caltRule, apply int) []byte {
+	return chainCoverage(r.prev, []int{r.glyph}, r.next, apply)
+}
+
+// chainCoverage: replace a glyph of `input` (via lookup `apply`) when the
+// glyph before it is in prev and the one after it is in next (empty = any).
+func chainCoverage(prev, inputIDs, next []int, apply int) []byte {
 	var back, ahead [][]byte
-	if len(r.prev) > 0 {
-		back = append(back, coverage(r.prev))
+	if len(prev) > 0 {
+		back = append(back, coverage(uniqueSorted(prev)))
 	}
-	if len(r.next) > 0 {
-		ahead = append(ahead, coverage(r.next))
+	if len(next) > 0 {
+		ahead = append(ahead, coverage(uniqueSorted(next)))
 	}
-	input := coverage([]int{r.glyph})
+	input := coverage(uniqueSorted(inputIDs))
 	header := 2 + 2 + 2*len(back) + 2 + 2 + 2 + 2*len(ahead) + 2 + 4
 	w := &writer{}
 	tail := &writer{}
@@ -208,7 +214,7 @@ func ligatureLookup(ligs []ligRule) []byte {
 }
 
 // buildGSUB writes the GSUB table, or nil when there are no rules.
-func buildGSUB(calt []caltRule, ligs []ligRule, forms []formFeature) ([]byte, error) {
+func buildGSUB(calt []caltRule, ligs []ligRule, forms []formFeature, frac *fracRule) ([]byte, error) {
 	if len(calt) == 0 && len(ligs) == 0 && len(forms) == 0 {
 		return nil, nil
 	}
@@ -236,5 +242,41 @@ func buildGSUB(calt []caltRule, ligs []ligRule, forms []formFeature) ([]byte, er
 		features = append(features, layoutFeature{tag: f.tag, lang: f.lang, lookups: []int{len(lookups)}})
 		lookups = append(lookups, singleMapLookup(f.subst))
 	}
+	if frac != nil {
+		features = append(features, layoutFeature{tag: "frac", lookups: fracLookups(frac, &lookups)})
+	}
 	return buildLayout(features, lookups)
+}
+
+// fracLookups adds the lookups of the frac feature and returns the ones the
+// feature runs, in order:
+//  1. every figure -> numerator;
+//  2. "/" -> fraction slash (when the font has both);
+//  3. a numerator after the slash or after a denominator -> denominator.
+//
+// Step 3 goes left to right, so "1/23" ends as numr, slash, dnom, dnom.
+func fracLookups(r *fracRule, lookups *[][]byte) []int {
+	add := func(l []byte) int { *lookups = append(*lookups, l); return len(*lookups) - 1 }
+	run := []int{add(singleMapLookup(r.numr))}
+	slash := r.slash
+	if r.fraction != 0 {
+		if r.slash != 0 {
+			run = append(run, add(singleMapLookup(map[int]int{r.slash: r.fraction})))
+		}
+		slash = r.fraction
+	}
+	down := map[int]int{} // numerator -> denominator
+	var numrs []int
+	prev := []int{slash}
+	for fig, n := range r.numr {
+		if d, ok := r.dnom[fig]; ok {
+			down[n] = d
+			numrs = append(numrs, n)
+			prev = append(prev, d)
+		}
+	}
+	chain := add(nil) // filled below: it points to the single lookup after it
+	single := add(singleMapLookup(down))
+	(*lookups)[chain] = chainCoverage(prev, numrs, nil, single)
+	return append(run, chain)
 }

@@ -3,6 +3,7 @@ package fontgen
 import (
 	"encoding/binary"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/GeekFreak01/spline/internal/project"
@@ -25,7 +26,8 @@ func tableOf(t *testing.T, font []byte, tag string) []byte {
 // shape applies the GSUB features of the default script to a glyph run.
 // It understands exactly what buildGSUB writes, and reads every offset, so a
 // broken table fails here.
-func shape(t *testing.T, gsub []byte, run []int) []int {
+// With `only`, just these features run.
+func shape(t *testing.T, gsub []byte, run []int, only ...string) []int {
 	t.Helper()
 	u16 := func(b []byte, o int) int { return int(binary.BigEndian.Uint16(b[o:])) }
 	covers := func(c []byte, g int) bool {
@@ -48,10 +50,27 @@ func shape(t *testing.T, gsub []byte, run []int) []int {
 	}
 	out := append([]int(nil), run...)
 	for f := 0; f < u16(lang, 4); f++ {
-		feat := features[u16(features, 2+6*u16(lang, 6+2*f)+4):]
+		rec := 2 + 6*u16(lang, 6+2*f)
+		if len(only) > 0 && !slices.Contains(only, string(features[rec:rec+4])) {
+			continue
+		}
+		feat := features[u16(features, rec+4):]
 		for k := 0; k < u16(feat, 2); k++ {
 			kind, st := sub(u16(feat, 4+2*k))
 			switch kind {
+			case 1: // format 2: coverage index -> substitute
+				if u16(st, 0) != 2 {
+					t.Fatalf("single subst format %d", u16(st, 0))
+				}
+				cov := st[u16(st, 2):]
+				for i := range out {
+					for c := 0; c < u16(cov, 2); c++ {
+						if u16(cov, 4+2*c) == out[i] {
+							out[i] = u16(st, 6+2*c)
+							break
+						}
+					}
+				}
 			case 6:
 				nb := u16(st, 2)
 				inOff := 4 + 2*nb
@@ -67,8 +86,12 @@ func shape(t *testing.T, gsub []byte, run []int) []int {
 					}
 					if ok {
 						_, single := sub(u16(st, rec+2))
-						if covers(single[u16(single, 2):], out[i]) {
-							out[i] = u16(single, 6)
+						cov := single[u16(single, 2):]
+						for c := 0; c < u16(cov, 2); c++ {
+							if u16(cov, 4+2*c) == out[i] {
+								out[i] = u16(single, 6+2*c)
+								break
+							}
 						}
 					}
 				}
@@ -157,6 +180,49 @@ func TestSubstitutions(t *testing.T) {
 		} {
 			if got := shape(t, gsub, g(c.in...)); !reflect.DeepEqual(got, g(c.want...)) {
 				t.Errorf("format %d: %v -> %v, want %v", f, c.in, got, g(c.want...))
+			}
+		}
+	}
+}
+
+func TestFractions(t *testing.T) {
+	p := testProject()
+	h := p.Glyphs[1].Contours
+	add := func(name string, u int) { p.Glyphs = append(p.Glyphs, project.Glyph{Name: name, Unicode: u, Advance: 500, Contours: h}) }
+	for i, n := range []string{"one", "two", "three"} {
+		add(n, '1'+i)
+		add(n+".numr", 0)
+		add(n+".dnom", 0)
+	}
+	add("slash", '/')
+	for _, withFraction := range []bool{false, true} {
+		if withFraction {
+			add("fraction", 0x2044)
+		}
+		fd := prepare(p, TTF)
+		data, err := Build(p, TTF)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g := func(names ...string) []int {
+			var ids []int
+			for _, n := range names {
+				ids = append(ids, fd.gid[n])
+			}
+			return ids
+		}
+		div := "slash"
+		if withFraction {
+			div = "fraction"
+		}
+		gsub := tableOf(t, data, "GSUB")
+		for _, c := range []struct{ in, want []string }{
+			{[]string{"one", "slash", "two"}, []string{"one.numr", div, "two.dnom"}},
+			{[]string{"one", "two", "slash", "three", "one"}, []string{"one.numr", "two.numr", div, "three.dnom", "one.dnom"}},
+			{[]string{"H", "one", "slash", "two", "space", "three"}, []string{"H", "one.numr", div, "two.dnom", "space", "three.numr"}},
+		} {
+			if got := shape(t, gsub, g(c.in...), "frac"); !reflect.DeepEqual(got, g(c.want...)) {
+				t.Errorf("fraction slash %v: %v -> %v, want %v", withFraction, c.in, got, g(c.want...))
 			}
 		}
 	}

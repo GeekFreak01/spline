@@ -116,16 +116,10 @@ func collectForms(p *project.Project, gid map[string]int) []formFeature {
 				}
 			}
 		}
-		if tag == "numr" { // fractions: numerators and denominators
-			add("frac", "", from, to)
-		}
 		add(tag, lang, from, to)
 	}
 	var out []formFeature
 	for _, f := range feats {
-		if f.tag == "frac" {
-			continue // a proper fraction needs context; not generated yet
-		}
 		out = append(out, *f)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -135,6 +129,50 @@ func collectForms(p *project.Project, gid map[string]int) []formFeature {
 		return out[i].lang < out[j].lang
 	})
 	return out
+}
+
+// fracRule: what the frac feature needs. With it on, "1/2" turns into a
+// numerator, a fraction slash and a denominator: every figure becomes its
+// .numr form, the slash becomes the fraction slash (U+2044, when the font
+// has one) and a numerator right after the slash or a denominator becomes
+// a denominator.
+type fracRule struct {
+	numr, dnom map[int]int // figure -> its numerator / denominator form
+	slash      int         // "/" (0 = none)
+	fraction   int         // U+2044 (0 = none)
+}
+
+// collectFrac returns the frac rule, or nil when the font lacks the forms.
+func collectFrac(p *project.Project, gid map[string]int, forms []formFeature) *fracRule {
+	r := &fracRule{}
+	for _, f := range forms {
+		if f.lang != "" {
+			continue
+		}
+		switch f.tag {
+		case "numr":
+			r.numr = f.subst
+		case "dnom":
+			r.dnom = f.subst
+		}
+	}
+	for _, g := range p.Glyphs {
+		switch g.Unicode {
+		case '/':
+			r.slash = gid[g.Name]
+		case 0x2044:
+			r.fraction = gid[g.Name]
+		}
+	}
+	if len(r.numr) == 0 || len(r.dnom) == 0 || (r.slash == 0 && r.fraction == 0) {
+		return nil
+	}
+	for fig := range r.numr {
+		if _, ok := r.dnom[fig]; ok {
+			return r
+		}
+	}
+	return nil
 }
 
 // singleMapLookup writes a SingleSubst format 2 lookup.

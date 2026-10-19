@@ -5058,6 +5058,8 @@ function renderPreviewFeatures() {
   if (!bar) return;
   const found = new Map();
   if (app.extended) for (const g of app.project.glyphs) { const f = formOf(g.name); if (f && !found.has(f.tag + (f.lang || ''))) found.set(f.tag + (f.lang || ''), f); }
+  // Numerators and denominators also make fractions: "1/2" with frac on.
+  if (found.has('numr') && found.has('dnom')) found.set('frac', { tag: 'frac', label: t('pfFrac') });
   const axis = app.extended && hasMasters(app.project) ? app.project.axis : null;
   if (!found.size && !axis) { bar.innerHTML = ''; bar.hidden = true; return; }
   bar.hidden = false;

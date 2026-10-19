@@ -67,6 +67,7 @@ type fontData struct {
 	anchors map[int]glyphAnchors
 	// forms: alternate glyphs named by suffix (a.sc, one.onum, ...).
 	forms []formFeature
+	frac  *fracRule       // fractions from .numr/.dnom figures, nil without them
 	src   []project.Glyph // the exported glyphs, by glyph id
 	colr  map[int][]colorLayer
 	vf    *varData // variable font data, nil for static fonts
@@ -145,7 +146,7 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 			tables["kern"] = k
 		}
 	}
-	gsub, err := buildGSUB(fd.calt, fd.ligs, fd.forms)
+	gsub, err := buildGSUB(fd.calt, fd.ligs, fd.forms, fd.frac)
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +243,7 @@ func prepare(p *project.Project, f Format) *fontData {
 	fd.calt, fd.ligs = collectSubst(p, fd.gid)
 	fd.anchors = collectAnchors(p, fd.gid)
 	fd.forms = collectForms(p, fd.gid)
+	fd.frac = collectFrac(p, fd.gid, fd.forms)
 	return fd
 }
 
