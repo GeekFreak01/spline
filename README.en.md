@@ -187,6 +187,33 @@
   </tr>
 </table>
 
+## Extended mode
+
+The simple mode stays simple. Everything for serious type work switches on in **View → Extended Mode** — the tools appear in the menus, panels and the toolbar, and every button has a label and a tooltip.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>✏️ Editing and spacing</h3>
+      Extremes, align in a line, break and join contours, even handles, first point, lasso, Tab through points, Alt-drag to copy · the Ruler tool: length, angle, stem widths · metric keys <code>=n</code>, <code>=o+10</code>, <code>=|</code> · sidebearings right in the kerning line · background and glyph snapshots.
+    </td>
+    <td width="50%" valign="top">
+      <h3>🧩 Components and anchors</h3>
+      A glyph inside a glyph as a live reference (À = A + `) · anchors <code>top</code>/<code>_top</code>, entry and exit for handwriting · the font gets <code>mark</code>, <code>mkmk</code>, <code>curs</code> and GDEF · adding glyphs by code and whole alphabets.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🔠 OpenType without code</h3>
+      Special Form…: small caps, figure styles, superscript and subscript, slashed zero, swash, stylistic sets, Bulgarian and Serbian forms · feature checkboxes in the preview · font info: rights, weight, slant, line gap · WOFF export.
+    </td>
+    <td width="50%" valign="top">
+      <h3>📋 Glyph list</h3>
+      A table with in-place editing and sorting · renaming that updates kerning and rules · tags, notes, "do not export" · filters · batch commands for the selected glyphs · duplicating.
+    </td>
+  </tr>
+</table>
+
 ## Getting started
 
 **Windows (recommended):** download **`Spline-Setup-<version>.exe`** from [Releases](https://github.com/GeekFreak01/spline/releases/latest) and run it. The installer asks where to install and for whom (just you, without administrator rights, or all users), creates shortcuts and associates `.sp` files with Spline. Uninstall it from Settings → Apps.

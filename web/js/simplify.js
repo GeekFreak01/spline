@@ -8,7 +8,7 @@
 //    `tol` font units of the original. Points with horizontal or vertical
 //    handles (extremes) are kept: fonts render best with them.
 import { fitOne, vec } from './fit.js';
-import { segments, pointAt } from './model.js';
+import { segments, pointAt, insertNode } from './model.js';
 
 const near = (a, b, e) => Math.abs(a.x - b.x) <= e && Math.abs(a.y - b.y) <= e;
 
@@ -122,4 +122,42 @@ export function simplifyContours(contours, tol = 1.5) {
     removed += before - c.nodes.length;
   }
   return removed;
+}
+
+// Parameters (0..1) where one coordinate of a cubic has a zero derivative.
+function extremeTs(a, b, c, d) {
+  const A = -a + 3 * b - 3 * c + d, B = 2 * (a - 2 * b + c), C = b - a;
+  if (Math.abs(A) < 1e-9) return Math.abs(B) < 1e-9 ? [] : [-C / B];
+  const disc = B * B - 4 * A * C;
+  if (disc < 0) return [];
+  const r = Math.sqrt(disc);
+  return [(-B + r) / (2 * A), (-B - r) / (2 * A)];
+}
+
+// Adds points where curves are horizontal or vertical (their extremes) to
+// the contours (all, or those whose index is in `only`). Returns how many.
+export function addExtremesTo(contours, only = null) {
+  let added = 0;
+  contours.forEach((c, ci) => {
+    if (only?.size && !only.has(ci)) return;
+    for (const s of segments(c).reverse()) {
+      if (s.line) continue;
+      const ts = [...extremeTs(s.p0.x, s.c1.x, s.c2.x, s.p3.x), ...extremeTs(s.p0.y, s.c1.y, s.c2.y, s.p3.y)]
+        .filter((t) => t > 0.02 && t < 0.98).sort((a, b) => b - a)
+        .filter((t, i, a) => i === 0 || a[i - 1] - t > 0.02);
+      // Split from the end: the part before each split keeps its shape,
+      // only its parameter shrinks.
+      let seg = s, prev = 1;
+      for (const t of ts) {
+        const node = insertNode(c, seg, t / prev);
+        node.x = Math.round(node.x); node.y = Math.round(node.y);
+        const flat = Math.abs(node.out.y - node.in.y) < Math.abs(node.out.x - node.in.x);
+        for (const h of [node.in, node.out]) { if (flat) h.y = node.y; else h.x = node.x; h.x = Math.round(h.x); h.y = Math.round(h.y); }
+        added++;
+        seg = segments(c)[s.i];
+        prev = t;
+      }
+    }
+  });
+  return added;
 }

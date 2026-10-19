@@ -63,6 +63,7 @@ const P = {
   points: '<circle cx="5" cy="18" r="2"/><circle cx="19" cy="6" r="2"/><path d="M5 16C5 9 12 6 17 6"/><rect x="10" y="9" width="4" height="4"/>',
   components: '<path d="M15.5 8.5 12 5 8.5 8.5 12 12z"/><path d="M8.5 15.5 5 12 8.5 8.5 12 12z"/><path d="M15.5 15.5 19 12l-3.5-3.5L12 12z"/><path d="M8.5 15.5 12 19l3.5-3.5L12 12z"/>',
   anchor: '<path d="M12 22V8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/><circle cx="12" cy="5" r="3"/>',
+  rows: '<path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/>',
   eye: '<path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/>',
 };
 

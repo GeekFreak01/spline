@@ -81,6 +81,11 @@ type Glyph struct {
 	// Anchors place marks and join handwriting: "top"/"bottom" on letters,
 	// "_top"/"_bottom" on marks, "entry"/"exit" for cursive joins.
 	Anchors []Anchor `json:"anchors,omitempty"`
+	// Tags and Note help to organise the glyph list. NoExport keeps a glyph
+	// (a part used as a component, a sketch) out of the font.
+	Tags     []string `json:"tags,omitempty"`
+	Note     string   `json:"note,omitempty"`
+	NoExport bool     `json:"noExport,omitempty"`
 }
 
 // Anchor is a named point of a glyph.

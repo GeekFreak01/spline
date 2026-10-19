@@ -4,6 +4,7 @@ import {
   rectContour, ellipseContour, movePoint, charOf, reverseContour, pointInPolygon,
 } from './model.js';
 import { applyStroke } from './trace.js';
+import { addExtremesTo } from './simplify.js';
 import { unite, subtract, removeOverlap, shapesOf, pathOperation, knifeCut } from './boolean.js';
 import { t } from './i18n.js';
 
@@ -1401,31 +1402,9 @@ export class Editor {
   // Adds points where a curve is horizontal or vertical (its extremes):
   // fonts render and hint best with them.
   addExtremes() {
-    const targets = this.pickedContours();
+    const targets = new Set(this.pickedContours().map((c) => this.glyph.contours.indexOf(c)));
     const copy = structuredClone(this.glyph.contours);
-    let added = 0;
-    for (const c of copy) {
-      if (!targets.includes(this.glyph.contours[copy.indexOf(c)])) continue;
-      for (const s of segments(c).reverse()) {
-        if (s.line) continue;
-        const ts = [...extremeTs(s.p0.x, s.c1.x, s.c2.x, s.p3.x), ...extremeTs(s.p0.y, s.c1.y, s.c2.y, s.p3.y)]
-          .filter((t) => t > 0.02 && t < 0.98).sort((a, b) => b - a)
-          .filter((t, i, a) => i === 0 || a[i - 1] - t > 0.02);
-        // Split from the end: the part before each split keeps its shape,
-        // only its parameter shrinks.
-        let seg = s, prev = 1;
-        for (const t of ts) {
-          const node = insertNode(c, seg, t / prev);
-          node.x = Math.round(node.x); node.y = Math.round(node.y);
-          // The handles of an extreme are exactly horizontal or vertical.
-          const flat = Math.abs(node.out.y - node.in.y) < Math.abs(node.out.x - node.in.x);
-          for (const h of [node.in, node.out]) { if (flat) h.y = node.y; else h.x = node.x; h.x = Math.round(h.x); h.y = Math.round(h.y); }
-          added++;
-          seg = segments(c)[s.i];
-          prev = t;
-        }
-      }
-    }
+    const added = addExtremesTo(copy, targets);
     if (!added) return 0;
     this.app.history.push(this.glyph);
     this.glyph.contours = copy;
@@ -2030,15 +2009,6 @@ export function imageOf(data, onload) {
   return im.complete && im.naturalWidth ? im : null;
 }
 
-// Parameters (0..1) where one coordinate of a cubic has a zero derivative.
-function extremeTs(a, b, c, d) {
-  const A = -a + 3 * b - 3 * c + d, B = 2 * (a - 2 * b + c), C = b - a;
-  if (Math.abs(A) < 1e-9) return Math.abs(B) < 1e-9 ? [] : [-C / B];
-  const disc = B * B - 4 * A * C;
-  if (disc < 0) return [];
-  const r = Math.sqrt(disc);
-  return [(-B + r) / (2 * A), (-B - r) / (2 * A)];
-}
 
 // A point whose two handles lie on one line through it is smooth.
 function lined(n) {

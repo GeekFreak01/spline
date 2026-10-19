@@ -61,9 +61,9 @@ type fontData struct {
 	anchors map[int]glyphAnchors
 	// forms: alternate glyphs named by suffix (a.sc, one.onum, ...).
 	forms []formFeature
-	names  names
-	bbox   box
-	now    time.Time
+	names names
+	bbox  box
+	now   time.Time
 }
 
 // Build compiles the project into font bytes.
@@ -153,6 +153,9 @@ func prepare(p *project.Project, f Format) *fontData {
 	// another font instead of showing an empty gap. Spaces stay.
 	src := []project.Glyph{notdef}
 	for _, g := range p.Glyphs {
+		if g.NoExport {
+			continue
+		}
 		if len(g.Outline()) > 0 || (g.Unicode > 0 && unicode.IsSpace(rune(g.Unicode))) {
 			src = append(src, g)
 		}
@@ -571,9 +574,9 @@ func buildHead(fd *fontData) []byte {
 	w.i16(int16(fd.bbox.maxX))
 	w.i16(int16(fd.bbox.maxY))
 	w.u16(macStyle(fd.info)) // macStyle
-	w.u16(8) // lowestRecPPEM
-	w.i16(2) // fontDirectionHint
-	w.i16(1) // long loca
+	w.u16(8)                 // lowestRecPPEM
+	w.i16(2)                 // fontDirectionHint
+	w.i16(1)                 // long loca
 	w.i16(0)
 	return w.buf
 }
@@ -687,8 +690,8 @@ func buildOS2(fd *fontData) []byte {
 	w.u16(4)
 	w.i16(int16(avg))
 	w.u16(uint16(weightOf(in))) // weight
-	w.u16(5)   // width
-	w.u16(0)   // fsType: installable
+	w.u16(5)                    // width
+	w.u16(0)                    // fsType: installable
 	w.i16(int16(upm * 65 / 100))
 	w.i16(int16(upm * 60 / 100))
 	w.i16(0)

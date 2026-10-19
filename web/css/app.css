@@ -706,3 +706,23 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .field textarea { width: 100%; resize: vertical; font: inherit; color: inherit; background: var(--bg-input); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 6px 8px; }
 .dialog .sf-num { display: none; }
 .dialog form:has(.sf-grid input[value="ss01"]:checked) .sf-num, .dialog form:has(.sf-grid input[value="cv01"]:checked) .sf-num { display: flex; }
+
+/* Extended mode: the glyph list as a table. */
+.glyph-grid.as-table { display: block; padding: 0; }
+.glyph-table { width: 100%; border-collapse: collapse; font-size: var(--fs-s); }
+.glyph-table th { position: sticky; top: 0; z-index: 1; background: var(--bg-panel); text-align: left; border-bottom: 1px solid var(--line); padding: 0; }
+.glyph-table th button { width: 100%; min-height: 30px; padding: 0 8px; border: 0; background: none; color: var(--text-3); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.glyph-table th button:hover { color: var(--text); }
+.glyph-table td { padding: 2px 4px; border-bottom: 1px solid var(--line-soft); }
+.glyph-table tr.trow { cursor: default; }
+.glyph-table tr.trow:hover { background: var(--bg-hover, rgba(255,255,255,0.03)); }
+.glyph-table tr.trow[aria-selected="true"] { background: var(--accent-soft); }
+.glyph-table input[type="text"], .glyph-table input[type="number"] { width: 100%; min-width: 48px; background: transparent; border: 1px solid transparent; }
+.glyph-table input:hover, .glyph-table input:focus { border-color: var(--line-soft); background: var(--bg-input); }
+.glyph-table td.tg { width: 44px; }
+.glyph-table .tglyph { width: 36px; height: 36px; display: block; color: var(--text); }
+.glyph-table .ghost { display: block; width: 36px; text-align: center; font: 22px/36px var(--font-guide); color: var(--tile-ghost); }
+.tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.tag { padding: 2px 8px; border: 1px solid var(--line-soft); border-radius: 999px; background: var(--bg-input); color: var(--text-2); font-size: var(--fs-s); cursor: pointer; }
+.tag[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.seg button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }

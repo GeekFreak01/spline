@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 
+	"golang.org/x/image/font/sfnt"
+
 	"github.com/GeekFreak01/spline/internal/project"
 )
 
@@ -46,5 +48,26 @@ func TestFormsAndWOFF(t *testing.T) {
 	if out := os.Getenv("SPLINE_FONT_OUT"); out != "" {
 		os.WriteFile(out, ttf, 0o644)
 		os.WriteFile(out+".woff", woff, 0o644)
+	}
+}
+
+func TestNoExport(t *testing.T) {
+	p := formsProject()
+	for i := range p.Glyphs {
+		if p.Glyphs[i].Name == "g" {
+			p.Glyphs[i].NoExport = true
+		}
+	}
+	data, err := Build(p, TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := sfnt.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf sfnt.Buffer
+	if gi, _ := f.GlyphIndex(&buf, 'g'); gi != 0 {
+		t.Error("a glyph marked noExport is in the font")
 	}
 }

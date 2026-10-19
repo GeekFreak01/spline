@@ -84,6 +84,10 @@ export function validateProject(p) {
     g.anchors = (Array.isArray(g.anchors) ? g.anchors : [])
       .filter((a) => a && typeof a.name === 'string' && a.name && Number.isFinite(a.x) && Number.isFinite(a.y)).slice(0, 64);
     if (!g.anchors.length) delete g.anchors;
+    if (Array.isArray(g.tags)) g.tags = g.tags.filter((x) => typeof x === 'string' && x.trim()).slice(0, 20); else delete g.tags;
+    if (!g.tags?.length) delete g.tags;
+    if (typeof g.note !== 'string' || !g.note) delete g.note;
+    if (g.noExport !== true) delete g.noExport;
     if (Array.isArray(g.snapshots)) g.snapshots = g.snapshots.filter((x) => x && Array.isArray(x.contours) && Number.isFinite(x.advance)).slice(-20);
     if (!g.snapshots?.length) delete g.snapshots;
     for (const k of ['lsbKey', 'rsbKey', 'widthKey']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];

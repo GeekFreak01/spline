@@ -15,8 +15,8 @@ import { proposeGroups, letterKind, pairGap } from './shape.js';
 import { setDefaults, keyLabel, comboOf, comboLabel, actionFor, assign, resetAll, bindings, isCustom, BROWSER_RESERVED, TAKEN } from './keys.js';
 import { initPanels, layoutPanels, setHidden, isHidden, resetPanels, recordOrder, watchResize } from './panels.js';
 import { recompose, composeInfo } from './compose.js';
-import { simplifyContours } from './simplify.js';
-import { KEY_FIELDS, isKey, outOfSync, updateMetrics, setMetric } from './metrics.js';
+import { simplifyContours, addExtremesTo } from './simplify.js';
+import { KEY_FIELDS, isKey, outOfSync, updateMetrics, setMetric, sides } from './metrics.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -65,6 +65,8 @@ const app = {
   // Extended mode adds the tools of the "Ultimate" update; the simple mode
   // stays as it was. Kept in the settings, not in the project.
   extended: (() => { try { return localStorage.getItem('spline.extended') === '1'; } catch { return false; } })(),
+  gridView: (() => { try { return localStorage.getItem('spline.gridView') || 'tiles'; } catch { return 'tiles'; } })(),
+  smartFilter: null, tagFilter: null, tableSort: null,
   history: new History(),
   selected: new Set(), // glyph names
   anchor: null,
@@ -423,7 +425,7 @@ function groupOf(ch) {
   return CATEGORIES.slice(1).find((c) => c.test(ch))?.id ?? 'other';
 }
 
-function grouped() { return app.category === 'all' && !app.search.trim() && !app.colorFilter; }
+function grouped() { return app.category === 'all' && !app.search.trim() && !app.colorFilter && !app.smartFilter && !app.tagFilter && !(app.extended && app.gridView === 'table'); }
 
 function visibleGlyphs() {
   const cat = CATEGORIES.find((c) => c.id === app.category);
@@ -434,9 +436,12 @@ function visibleGlyphs() {
       if (!isDrawn(g)) return false;
     } else if (cat && !cat.test(ch)) return false;
     if (app.colorFilter && g.color !== app.colorFilter) return false;
+    if (app.extended && app.smartFilter && !SMART_FILTERS[app.smartFilter]?.(g)) return false;
+    if (app.extended && app.tagFilter && !g.tags?.includes(app.tagFilter)) return false;
     if (q) {
       const h = g.unicode ? g.unicode.toString(16) : '';
-      if (!(ch.toLowerCase() === q || g.name.toLowerCase().includes(q) || h === q.replace(/^(u\+|0+)/, ''))) return false;
+      const extra = app.extended && ((g.note || '').toLowerCase().includes(q) || g.tags?.some((x) => x.toLowerCase().includes(q)));
+      if (!(ch.toLowerCase() === q || g.name.toLowerCase().includes(q) || h === q.replace(/^(u\+|0+)/, '') || extra)) return false;
     }
     return true;
   });
@@ -465,8 +470,38 @@ function renderSidebar() {
   $('colorFilter').innerHTML = COLORS.map((c) => `<button type="button" class="swatch" data-color="${c}"
       style="background:var(--dot-${c})" aria-pressed="${app.colorFilter === c}" data-tip="${esc(t('colorNames')[c])}"
       aria-label="${esc(t('colorNames')[c])}"></button>`).join('');
+  renderSmartFilters();
   renderSideMetrics();
 }
+
+// Extended mode: quick filters and tags in the sidebar.
+const SMART_FILTERS = {
+  forms: (g) => !!formOf(g.name),
+  components: (g) => !!g.components?.length,
+  notes: (g) => !!g.note,
+  noExport: (g) => !!g.noExport,
+  stale: (g) => outOfSync(app.project, g).length > 0,
+};
+function renderSmartFilters() {
+  const el = $('smartFilters');
+  if (!el) return;
+  if (!app.extended) { el.innerHTML = ''; return; }
+  const glyphs = app.project.glyphs;
+  const items = Object.entries(SMART_FILTERS).map(([id, fn]) => ({ id, n: glyphs.filter(fn).length })).filter((x) => x.n || app.smartFilter === x.id);
+  const tags = [...new Set(glyphs.flatMap((g) => g.tags || []))].sort();
+  el.innerHTML = (items.length ? `<div class="sub-head">${esc(t('sfiTitle'))}</div><nav class="cat-list">${items.map((x) => `<button type="button" data-smart="${x.id}" aria-current="${app.smartFilter === x.id}">
+      <span>${esc(t('sfi_' + x.id))}</span><span class="count">${x.n}</span></button>`).join('')}</nav>` : '')
+    + (tags.length ? `<div class="sub-head">${esc(t('tagsTitle'))}</div><div class="tag-list">${tags.map((x) => `<button type="button" class="tag" data-tag="${esc(x)}" aria-pressed="${app.tagFilter === x}">${esc(x)}</button>`).join('')}</div>` : '');
+}
+$('smartFilters').addEventListener('click', (e) => {
+  const sm = e.target.closest('[data-smart]'), tg = e.target.closest('[data-tag]');
+  if (sm) app.smartFilter = app.smartFilter === sm.dataset.smart ? null : sm.dataset.smart;
+  else if (tg) app.tagFilter = app.tagFilter === tg.dataset.tag ? null : tg.dataset.tag;
+  else return;
+  renderSidebar();
+  renderGrid();
+  updateStatus();
+});
 
 $('catList').addEventListener('click', (e) => {
   const b = e.target.closest('[data-cat]');
@@ -568,7 +603,68 @@ function tileHTML(g) {
       ${body}<span class="label"><span>${esc(g.name)}</span><span class="code">${hex(g)}</span></span></button>`;
 }
 
+function setGridView(v) {
+  app.gridView = v;
+  store.set('spline.gridView', v);
+  renderGridOptions();
+  renderGrid();
+}
+
+// Extended mode: the glyph list as a table, editable in place.
+const TABLE_COLS = ['glyph', 'name', 'unicode', 'advance', 'lsb', 'rsb', 'tags', 'note', 'export'];
+function tableHTML(list) {
+  const [col, dir] = (app.tableSort || 'order:1').split(':');
+  const val = {
+    name: (g) => g.name, unicode: (g) => g.unicode || 1e9, advance: (g) => g.advance,
+    lsb: (g) => sides(g).lsb ?? -1e9, rsb: (g) => sides(g).rsb ?? -1e9, tags: (g) => (g.tags || []).join(','), note: (g) => g.note || '',
+    export: (g) => (g.noExport ? 1 : 0),
+  }[col];
+  const rows = val ? [...list].sort((a, b) => {
+    const x = val(a), y = val(b);
+    return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * Number(dir);
+  }) : list;
+  const head = TABLE_COLS.map((c) => c === 'glyph' ? '<th></th>' : `<th><button type="button" data-sort="${c}" aria-sort="${col === c ? (dir === '1' ? 'ascending' : 'descending') : 'none'}">${esc(t('tc_' + c))}${col === c ? (dir === '1' ? ' ▲' : ' ▼') : ''}</button></th>`).join('');
+  const num = (g, k, v) => `<input type="number" step="1" data-cell="${k}" value="${v === null ? '' : Math.round(v)}" ${v === null ? 'disabled' : ''}>`;
+  const body = rows.map((g) => {
+    const sd = sides(g);
+    return `<tr class="trow" data-name="${esc(g.name)}" aria-selected="${app.selected.has(g.name)}">
+      <td class="tg">${hasOutline(g) ? glyphSVG(g, 'tglyph') : `<span class="ghost">${esc(charOf(g))}</span>`}</td>
+      <td><input type="text" data-cell="name" value="${esc(g.name)}" spellcheck="false"></td>
+      <td><input type="text" data-cell="unicode" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></td>
+      <td>${num(g, 'advance', g.advance)}</td><td>${num(g, 'lsb', sd.lsb)}</td><td>${num(g, 'rsb', sd.rsb)}</td>
+      <td><input type="text" data-cell="tags" value="${esc((g.tags || []).join(', '))}" spellcheck="false"></td>
+      <td><input type="text" data-cell="note" value="${esc(g.note || '')}"></td>
+      <td><input type="checkbox" data-cell="export" ${g.noExport ? '' : 'checked'} aria-label="${esc(t('tc_export'))}"></td>
+    </tr>`;
+  }).join('');
+  return `<table class="glyph-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function onTableChange(e) {
+  const cell = e.target.dataset.cell;
+  const row = e.target.closest('.trow');
+  const g = row && findGlyph(row.dataset.name);
+  if (!cell || !g) return;
+  const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value.trim();
+  if (cell === 'name') { if (!renameGlyph(g, v)) e.target.value = g.name; return; }
+  if (cell === 'unicode') { if (!setUnicode(g, v)) e.target.value = g.unicode ? 'U+' + hex(g) : ''; return; }
+  app.history.push(g);
+  if (cell === 'tags') setTags(g, v);
+  if (cell === 'note') { if (v) g.note = v; else delete g.note; }
+  if (cell === 'export') { if (v) delete g.noExport; else g.noExport = true; }
+  if (['advance', 'lsb', 'rsb'].includes(cell) && Number.isFinite(Number(v)) && v !== '') setMetric(g, cell, Number(v));
+  markChanged();
+  renderSmartFilters();
+  if (['advance', 'lsb', 'rsb'].includes(cell)) renderGrid();
+}
+
 function renderGrid() {
+  if (app.extended && app.gridView === 'table') {
+    $('glyphGrid').classList.add('as-table');
+    $('glyphGrid').innerHTML = tableHTML(visibleGlyphs());
+    return;
+  }
+  $('glyphGrid').classList.remove('as-table');
   const list = visibleGlyphs();
   if (list.length && !list.some((g) => g.name === app.focusName)) app.focusName = list[0].name;
   if (!list.length) { $('glyphGrid').innerHTML = '<p class="grid-empty">—</p>'; return; }
@@ -601,7 +697,7 @@ function selectGlyph(name, e = {}) {
     app.anchor = name;
   }
   app.focusName = name;
-  $('glyphGrid').querySelectorAll('.tile').forEach((el) => {
+  $('glyphGrid').querySelectorAll('.tile, .trow').forEach((el) => {
     el.setAttribute('aria-selected', app.selected.has(el.dataset.name));
     el.tabIndex = el.dataset.name === name ? 0 : -1;
   });
@@ -612,14 +708,30 @@ function selectGlyph(name, e = {}) {
 }
 
 $('glyphGrid').addEventListener('click', (e) => {
-  const tile = e.target.closest('.tile');
+  const sort = e.target.closest('[data-sort]');
+  if (sort) {
+    const [col, dir] = (app.tableSort || 'order:1').split(':');
+    app.tableSort = `${sort.dataset.sort}:${col === sort.dataset.sort ? -Number(dir) : 1}`;
+    renderGrid();
+    return;
+  }
+  if (e.target.closest('input')) return;
+  const tile = e.target.closest('.tile, .trow');
   if (tile) selectGlyph(tile.dataset.name, e);
 });
+$('glyphGrid').addEventListener('change', onTableChange);
+// Editing a cell selects its row, so the side panel shows that glyph.
+$('glyphGrid').addEventListener('focusin', (e) => {
+  const row = e.target.closest('.trow');
+  if (row && e.target.matches('input') && !(app.selected.size === 1 && app.selected.has(row.dataset.name))) selectGlyph(row.dataset.name);
+});
 $('glyphGrid').addEventListener('dblclick', (e) => {
-  const tile = e.target.closest('.tile');
+  if (e.target.closest('input')) return;
+  const tile = e.target.closest('.tile, .trow');
   if (tile) openEditor(tile.dataset.name);
 });
 $('glyphGrid').addEventListener('keydown', (e) => {
+  if (e.target.closest('input, textarea')) return; // editing a table cell
   const list = visibleGlyphs();
   if (!list.length) return;
   let i = list.findIndex((g) => g.name === app.focusName);
@@ -650,6 +762,9 @@ function renderGridOptions() {
       <button class="btn" type="button" data-cmd="addGlyph">${icon('plus', 15)}<span>${esc(t('addGlyph'))}</span></button>
       <button class="btn" type="button" data-cmd="importSvg">${icon('open', 15)}<span>${esc(t('importSvg'))}</span></button>
     </div>
+    ${app.extended ? `<div class="sep"></div><div class="group"><div class="seg" role="radiogroup" aria-label="${esc(t('gvTitle'))}">
+      <button type="button" role="radio" data-cmd="gvTiles" aria-checked="${app.gridView !== 'table'}">${icon('grid', 14)} ${esc(t('gvTiles'))}</button>
+      <button type="button" role="radio" data-cmd="gvTable" aria-checked="${app.gridView === 'table'}">${icon('rows', 14)} ${esc(t('gvTable'))}</button></div></div>` : ''}
     <div class="glyph-nav"><label>${esc(t('tileSize'))}<input type="range" id="tileSize" min="56" max="200" value="${esc(size)}"></label></div>`;
   $('glyphGrid').style.setProperty('--tile', `${size}px`);
 }
@@ -758,6 +873,7 @@ function renderInspectorBody() {
       ${sel.length === 1 ? composeNoteHTML(g) : ''}
       <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(sel.every((x) => x.color === g.color) ? g.color : undefined)}</div>
       ${groupFields(sel)}`)
+    + (app.extended ? (sel.length === 1 ? infoSection(g) : '') + batchSection(sel) : '')
     + transformSection()
     + section('actions', t('actions'), `
       ${sel.length === 1 ? `<button class="btn btn-primary btn-block" type="button" data-cmd="draw">${icon('pen', 15)}<span>${esc(t('drawGlyph'))}</span></button>` : ''}
@@ -947,7 +1063,7 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['components', 'cmTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['info', 'inTitle'], ['batch', 'btTitleShort'], ['components', 'cmTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
 initPanels({
@@ -960,7 +1076,7 @@ initPanels({
   icons: { dock: icon('panelDock', 14), close: icon('close', 14), collapse: icon('chevronRight', 14) },
   panelIcons: {
     glyph: icon('pen', 18), selection: icon('select', 18), pathops: icon('opUnite', 18), align: icon('alignHCenter', 18),
-    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), components: icon('components', 18), anchors: icon('anchor', 18), actions: icon('spacing', 18), font: icon('type', 18),
+    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), components: icon('components', 18), anchors: icon('anchor', 18), info: icon('type', 18), batch: icon('check', 18), actions: icon('spacing', 18), font: icon('type', 18),
     kernPair: icon('kerning', 18), kernSpacing: icon('spacing', 18), kernSuggest: icon('check', 18), kernList: icon('search', 18),
   },
   onChange: () => renderMenus(),
@@ -981,6 +1097,16 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
   }, true);
   dock.addEventListener('change', (e) => {
     if (onVariantsChange(e)) return;
+    if (e.target.dataset.info && onInfoChange(e)) return;
+    if (e.target.dataset.batchTag !== undefined) {
+      const tag = e.target.value.trim();
+      if (!tag) return;
+      app.history.pushGroups(app.project);
+      for (const g of selectedGlyphs()) setTags(g, [...(g.tags || []), tag].join(','));
+      markChanged(); renderSidebar(); renderInspector();
+      toast(t('btTagged', { tag }));
+      return;
+    }
     if (e.target.dataset.cmpos) { moveComponent(e.target.dataset.cmpos, Number(e.target.value)); return; }
     if (e.target.dataset.anpos) { setAnchorValue(e.target.dataset.anpos, e.target.value); return; }
     if (e.target.dataset.ul) { setUnderlayValue(e.target.dataset.ul, Number(e.target.value), true); return; }
@@ -2957,12 +3083,156 @@ function applyHistory(name) {
 
 // ================================================================ extended mode
 
+// Glyph names: letters, digits, dot, underscore and hyphen, as in fonts.
+const NAME_RE = /^[A-Za-z_][A-Za-z0-9._-]{0,62}$/;
+
+// Renames a glyph and every place that refers to it: kerning, variants,
+// ligatures, components, metric keys.
+function renameGlyph(g, name) {
+  if (name === g.name) return true;
+  if (!NAME_RE.test(name)) { toast(t('rnBad'), 'error'); return false; }
+  if (findGlyph(name)) { toast(t('rnTaken', { name }), 'error'); return false; }
+  const p = app.project, old = g.name;
+  app.history.pushGroups(p);
+  app.history.push(g);
+  const swap = (x) => (x === old ? name : x);
+  const kern = {};
+  for (const [l, row] of Object.entries(p.kerning || {})) {
+    const r2 = (kern[swap(l)] ||= {});
+    for (const [r, v] of Object.entries(row)) r2[swap(r)] = v;
+  }
+  p.kerning = kern;
+  for (const r of p.contextual) { r.glyph = swap(r.glyph); r.use = swap(r.use); r.prev = r.prev.map(swap); r.next = r.next.map(swap); }
+  for (const l of p.ligatures) { l.glyphs = l.glyphs.map(swap); l.use = swap(l.use); }
+  const esc2 = old.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const keyRe = new RegExp('^=(\\|)?' + esc2 + '(?=$|[-+*/\\s])');
+  for (const x of p.glyphs) {
+    for (const k of x.components || []) k.glyph = swap(k.glyph);
+    for (const f of Object.values(KEY_FIELDS)) if (x[f]) x[f] = x[f].replace(keyRe, `=$1${name}`);
+    if (x.compose) x.compose = { base: swap(x.compose.base), marks: x.compose.marks.map(swap) };
+  }
+  g.name = name;
+  if (app.selected.delete(old)) app.selected.add(name);
+  if (app.focusName === old) app.focusName = name;
+  markChanged();
+  renderGrid();
+  renderInspector();
+  return true;
+}
+
+function setUnicode(g, text) {
+  if (!text) { app.history.push(g); delete g.unicode; markChanged(); renderGrid(); return true; }
+  const m = /^(?:U\+|0x)?([0-9a-f]{1,6})$/i.exec(text) || ([...text].length === 1 ? [null, text.codePointAt(0).toString(16)] : null);
+  const cp = m && parseInt(m[1], 16);
+  if (!cp || cp > 0x10ffff) { toast(t('ucBad'), 'error'); return false; }
+  const other = app.project.glyphs.find((x) => x !== g && x.unicode === cp);
+  if (other) { toast(t('ucTaken', { name: other.name }), 'error'); return false; }
+  app.history.push(g);
+  g.unicode = cp;
+  markChanged();
+  renderGrid();
+  return true;
+}
+
+function setTags(g, text) {
+  const tags = [...new Set(String(text).split(',').map((x) => x.trim()).filter(Boolean))].slice(0, 20);
+  if (tags.length) g.tags = tags; else delete g.tags;
+}
+
+function infoSection(g) {
+  return section('info', t('inTitle'), `
+    <label class="prop"><span>${esc(t('tc_name'))}</span><input type="text" data-info="name" value="${esc(g.name)}" spellcheck="false"></label>
+    <label class="prop"><span>Unicode</span><input type="text" data-info="unicode" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></label>
+    <label class="prop"><span>${esc(t('tc_tags'))}</span><input type="text" data-info="tags" value="${esc((g.tags || []).join(', '))}" placeholder="${esc(t('tagsPh'))}" spellcheck="false"></label>
+    <label class="field">${esc(t('tc_note'))}<textarea data-info="note" rows="2">${esc(g.note || '')}</textarea></label>
+    <label class="check" data-tip="${esc(t('exportTip'))}"><input type="checkbox" data-info="export" ${g.noExport ? '' : 'checked'}>${esc(t('exportIn'))}</label>
+    <button class="btn btn-block" type="button" data-cmd="duplicate">${icon('plus', 15)}<span>${esc(t('dupGlyph'))}</span></button>`, false);
+}
+
+function onInfoChange(e) {
+  const k = e.target.dataset.info;
+  const g = selectedGlyphs()[0];
+  if (!k || !g) return false;
+  const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value.trim();
+  if (k === 'name') { if (!renameGlyph(g, v)) e.target.value = g.name; return true; }
+  if (k === 'unicode') { if (!setUnicode(g, v)) e.target.value = g.unicode ? 'U+' + hex(g) : ''; return true; }
+  app.history.push(g);
+  if (k === 'tags') setTags(g, v);
+  if (k === 'note') { if (v) g.note = v; else delete g.note; }
+  if (k === 'export') { if (v) delete g.noExport; else g.noExport = true; }
+  markChanged();
+  renderSmartFilters();
+  updateTile(g);
+  return true;
+}
+
+// Copies the selected glyphs under new names (without Unicode).
+function duplicateGlyphs() {
+  const sel = selectedGlyphs();
+  if (!sel.length) return;
+  app.history.pushGroups(app.project);
+  const made = [];
+  for (const g of sel) {
+    const copy = structuredClone(g);
+    copy.name = uniqueGlyphName(`${g.name}.copy`);
+    delete copy.unicode;
+    delete copy.compose;
+    app.project.glyphs.splice(app.project.glyphs.indexOf(g) + 1, 0, copy);
+    made.push(copy.name);
+  }
+  app.selected = new Set(made);
+  markChanged();
+  renderAll();
+  toast(t('dupDone', { n: made.length }));
+}
+
+// Batch commands for the selected glyphs (extended mode).
+function batchSection(sel) {
+  const b = (cmd, label) => `<button class="btn" type="button" data-cmd="${cmd}" data-tip="${esc(t(label + 'Tip'))}">${esc(t(label))}</button>`;
+  return section('batch', t('btTitle', { n: sel.length }), `
+    <div class="btn-row">${b('btExtremes', 'btExtremes')}${b('btRound', 'btRound')}</div>
+    <div class="btn-row">${b('btMetrics', 'btMetrics')}${b('btDecompose', 'btDecompose')}</div>
+    ${sel.length > 1 ? `<label class="prop"><span>${esc(t('btTag'))}</span><input type="text" data-batch-tag placeholder="${esc(t('tagsPh'))}" spellcheck="false"></label>
+    <div class="btn-row">${b('btExportOff', 'btExportOff')}${b('btExportOn', 'btExportOn')}</div>
+    <button class="btn btn-block" type="button" data-cmd="duplicate">${icon('plus', 15)}<span>${esc(t('dupGlyphs'))}</span></button>` : ''}`, false);
+}
+
+function batch(op) {
+  const sel = selectedGlyphs();
+  let n = 0;
+  for (const g of sel) {
+    if (op === 'extremes') {
+      const copy = structuredClone(g.contours);
+      if (!addExtremesTo(copy)) continue;
+      app.history.push(g); g.contours = copy;
+    } else if (op === 'round') {
+      const copy = structuredClone(g.contours);
+      for (const c of copy) for (const nd of c.nodes) for (const q of [nd, nd.in, nd.out]) if (q) { q.x = Math.round(q.x); q.y = Math.round(q.y); }
+      if (JSON.stringify(copy) === JSON.stringify(g.contours)) continue;
+      app.history.push(g); g.contours = copy;
+    } else if (op === 'decompose') {
+      if (!g.components?.length) continue;
+      app.history.push(g); decompose(g);
+    } else if (op === 'exportOff' || op === 'exportOn') {
+      if (!!g.noExport === (op === 'exportOff')) continue;
+      app.history.push(g);
+      if (op === 'exportOff') g.noExport = true; else delete g.noExport;
+    }
+    n++;
+    updateTile(g);
+  }
+  if (op === 'metrics') n = updateMetrics(app.project, sel, (g) => app.history.push(g)).length;
+  if (n) { markChanged(); renderGrid(); renderSidebar(); renderInspector(); }
+  toast(t('btDone', { n }));
+}
+
 function setExtended(on) {
   app.extended = on;
   editor.extended = on;
   store.set('spline.extended', on ? '1' : '0');
   document.documentElement.dataset.mode = on ? 'extended' : 'simple';
   renderAll();
+  if (app.mode === 'grid') renderGridOptions();
   if (app.mode === 'editor') { renderToolbar(); renderEditorOptions(); renderGlyphPanel(); editor.render(); }
   if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
   renderPreviewText();
@@ -3833,7 +4103,9 @@ const COMMANDS = {
   ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
   ptBreak: breakContour, ptJoin: joinContours, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
   bgClear: () => backgroundOp('clear'),
-  ptEven: evenHandles, snapSave: saveSnapshot, cmAdd: addComponentDialog, cmDecompose: decomposeCurrent,
+  ptEven: evenHandles, snapSave: saveSnapshot, gvTiles: () => setGridView('tiles'), gvTable: () => setGridView('table'),
+  duplicate: duplicateGlyphs, btExtremes: () => batch('extremes'), btRound: () => batch('round'), btMetrics: () => batch('metrics'),
+  btDecompose: () => batch('decompose'), btExportOff: () => batch('exportOff'), btExportOn: () => batch('exportOn'), cmAdd: addComponentDialog, cmDecompose: decomposeCurrent,
   anAuto: autoAnchors,
   selRect: () => setSelectShape('rect'), selLasso: () => setSelectShape('lasso'),
   ulFitCap: () => fitUnderlay('cap'), ulFitX: () => fitUnderlay('x'), ulFitAll: () => fitUnderlay('all'),
