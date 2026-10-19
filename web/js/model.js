@@ -53,13 +53,16 @@ export function validateProject(p) {
   p.info = { ...base.info, ...(p.info || {}) };
   if (!Array.isArray(p.glyphs)) p.glyphs = [];
   // Kerning: { leftGlyph: { rightGlyph: value } }
-  const kern = {};
-  for (const [l, rights] of Object.entries(p.kerning && typeof p.kerning === 'object' ? p.kerning : {})) {
-    for (const [r, v] of Object.entries(rights || {})) {
-      if (Number.isFinite(v)) (kern[l] ||= {})[r] = Math.round(v); // 0 = exception
+  const cleanKerning = (k) => {
+    const out = {};
+    for (const [l, rights] of Object.entries(k && typeof k === 'object' ? k : {})) {
+      for (const [r, v] of Object.entries(rights || {})) {
+        if (Number.isFinite(v)) (out[l] ||= {})[r] = Math.round(v); // 0 = exception
+      }
     }
-  }
-  p.kerning = kern;
+    return out;
+  };
+  p.kerning = cleanKerning(p.kerning);
   // Substitutions: contextual alternates and ligatures (glyph names).
   const names = (a) => (Array.isArray(a) ? a.filter((n) => typeof n === 'string' && n) : []);
   p.contextual = (Array.isArray(p.contextual) ? p.contextual : [])
@@ -74,7 +77,11 @@ export function validateProject(p) {
   // place on the axis; the file always holds the default one in contours.
   if (!(Array.isArray(p.masters) && p.masters.length > 1 && p.masters.every((m) => m && typeof m.id === 'string' && Number.isFinite(m.loc)))) {
     delete p.masters; delete p.axis;
-  } else p.axis = { tag: 'wght', min: 100, max: 900, ...(p.axis || {}) };
+  } else {
+    p.axis = { tag: 'wght', min: 100, max: 900, ...(p.axis || {}) };
+    // Kerning of the other masters (none = the default's).
+    p.masters.forEach((m, i) => { if (i === 0 || !m.kerning) delete m.kerning; else m.kerning = cleanKerning(m.kerning); });
+  }
   if (!p.masters || !p.axis2 || typeof p.axis2 !== 'object') delete p.axis2;
   else for (const m of p.masters) if (!Number.isFinite(m.loc2)) m.loc2 = 100;
   delete p.activeMaster;
@@ -91,7 +98,11 @@ export function validateProject(p) {
     if (!Array.isArray(g.background) || !g.background.length) delete g.background;
     g.components = (Array.isArray(g.components) ? g.components : [])
       .filter((k) => k && typeof k.glyph === 'string' && k.glyph && k.glyph !== g.name)
-      .map((k) => ({ glyph: k.glyph, x: Number(k.x) || 0, y: Number(k.y) || 0 }));
+      .map((k) => {
+        // Slider values of a smart part: { property: number }.
+        const props = Object.fromEntries(Object.entries(k.props && typeof k.props === 'object' ? k.props : {}).filter(([, v]) => Number.isFinite(v)));
+        return { glyph: k.glyph, x: Number(k.x) || 0, y: Number(k.y) || 0, ...(Object.keys(props).length ? { props } : {}) };
+      });
     if (!g.components.length) delete g.components;
     if (!Array.isArray(g.refContours) || !g.refContours.length) delete g.refContours;
     g.anchors = (Array.isArray(g.anchors) ? g.anchors : [])
