@@ -491,6 +491,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   border: 2px solid var(--bg-panel); box-shadow: 0 0 0 1px var(--line-soft);
 }
 .swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--text); }
+.prop .color-filter { gap: 4px; }
+.prop .swatch { width: 16px; height: 16px; }
 .swatch.none { background: linear-gradient(135deg, transparent 45%, var(--danger) 45% 55%, transparent 55%), var(--bg-input); }
 
 .progress-bar { height: 4px; border-radius: 2px; background: var(--bg-input); overflow: hidden; }
@@ -541,6 +543,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .compose-note p { margin: 0; color: var(--text-2); font-size: var(--fs-s); line-height: 1.4; }
 .tile .ref { flex: 1; min-height: 0; width: 100%; object-fit: contain; opacity: 0.45; filter: grayscale(1); }
 .btn-row .btn, .btn-block { overflow: hidden; }
+.btn-row .btn { padding: 0 6px; gap: 5px; }
 .btn span { overflow: hidden; text-overflow: ellipsis; }
 .check { display: flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
@@ -601,8 +604,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 }
 .dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 .dialog h2 { margin: 0; padding: 0 14px; height: 34px; display: flex; align-items: center; font-size: var(--fs); font-weight: 600; background: var(--bg-panel-2); border-bottom: 1px solid var(--line); }
-.dialog form { display: flex; flex-direction: column; }
-.dialog .body { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
+.dialog .body { padding: 14px; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
+.dialog h2, .dialog .actions { flex: none; }
 .dialog .field { display: flex; flex-direction: column; gap: 4px; color: var(--text-2); }
 .dialog .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
 .dialog h3 { margin: 6px 0 0; font-size: var(--fs-s); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); }

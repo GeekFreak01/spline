@@ -114,6 +114,12 @@ function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', c
     const form = dlg.querySelector('form');
     let data = null;
     form.addEventListener('submit', (e) => { if (e.submitter?.value === 'ok') data = new FormData(form); });
+    // Enter in a field is OK (the browser would take the first button, Cancel).
+    form.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.defaultPrevented || e.isComposing || e.shiftKey || !e.target.matches('input:not([type=checkbox]):not([type=radio]), select')) return;
+      e.preventDefault();
+      form.querySelector('button[value=ok]').click();
+    });
     dlg.addEventListener('close', () => resolve(data), { once: true });
     dlg.showModal();
     onOpen?.(dlg);
@@ -311,7 +317,7 @@ function menuDefs() {
       '-',
       { label: 'wAnchors', run: () => openWindow('anchors'), enabled: inEditor, ext: true },
       { label: 'wPaint', run: () => openWindow('paint'), enabled: inEditor, ext: true },
-      { label: 'wSmart', run: () => openWindow('smart'), enabled: inEditor, ext: true },
+      { label: 'wSmart', run: () => openWindow('smart'), enabled: inEditor && canBeSmart(app.current), ext: true },
       { label: 'wBackground', run: () => openWindow('background'), enabled: inEditor, ext: true },
       { label: 'cmDecomposeMenu', run: decomposeCurrent, enabled: inEditor && !!app.current?.components?.length, ext: true },
       { label: 'updateMetrics', key: keyLabel('updateMetrics'), run: updateAllMetrics, ext: true },
@@ -1072,7 +1078,7 @@ function groupFields(glyphs) {
     let note = '';
     if (v) {
       const others = groupMembers(app.project, v, prop === 'kernLeft' ? 'left' : 'right').filter((g) => !glyphs.includes(g));
-      note = others.length ? t('kgMembers', { m: membersText(others, 10) }) : t('kgAlone');
+      if (others.length) note = t('kgMembers', { m: membersText(others, 10) });
     }
     return `<label><span>${esc(label)}</span><input type="text" data-kgroup="${prop}" list="${prop}List" spellcheck="false"
       value="${esc(v ?? '')}" placeholder="${v === null ? '—' : esc(t('kernNoGroup'))}">${note ? `<small class="kg-note">${esc(note)}</small>` : ''}</label>`;
@@ -2582,7 +2588,7 @@ function shapeGroupsDialog() {
   dlg.addEventListener('close', () => { if (!dlg.open) dlg.classList.remove('wide'); }, { once: true });
   dlg.querySelector('form').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.matches('input[type=text]')) { e.preventDefault(); e.target.blur(); }
-  });
+  }, true); // before showDialog's Enter = OK
   render();
   const body = dlg.querySelector('.kg-dialog');
   body.addEventListener('input', (e) => {
@@ -2739,7 +2745,7 @@ function groupsDialog(side, name) {
     if (e.key !== 'Enter' || !e.target.matches('input')) return;
     e.preventDefault();
     if (e.target.id === 'kgAddInput') addLettersToGroup(e.target.value); else e.target.blur();
-  });
+  }, true); // before showDialog's Enter = OK
   const body = $('kgBody');
   body.addEventListener('input', (e) => {
     if (e.target.id === 'kgSearch') { kg.search = e.target.value; refreshGroupsDialog(true); }
@@ -3957,9 +3963,14 @@ function setCompProp(spec, v, commit) {
   if (commit) { compPropSaved = false; markChanged(); updateMetricInputs(); }
 }
 
+// A glyph can become a smart part when it is a part: "_name", not exported or used by others.
+function canBeSmart(g) {
+  return !!g && (isSmart(g) || g.name.startsWith('_') || g.noExport || usedBy(app.project, g.name).length > 0);
+}
+
 function smartSection(g) {
   if (!isSmart(g)) {
-    if (!(g.name.startsWith('_') || g.noExport || usedBy(app.project, g.name).length)) return '';
+    if (!canBeSmart(g)) return '';
     return section('smart', t('smTitle'), `
       <button class="btn btn-block" type="button" data-cmd="smAdd">${icon('plus', 15)}<span>${esc(t('smAddProp'))}</span></button>`, false, t('smHint'));
   }
