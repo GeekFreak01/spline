@@ -130,22 +130,38 @@ func reverse(c project.Contour) project.Contour {
 // Partly overlapping shapes therefore always merge instead of cancelling.
 // When ccwOuter is false, all directions are flipped (TrueType convention).
 func normalize(cs []project.Contour, ccwOuter bool) []project.Contour {
+	keep, rev := normalizePlan(cs, ccwOuter)
+	out := make([]project.Contour, len(keep))
+	for i, k := range keep {
+		out[i] = cs[k]
+		if rev[i] {
+			out[i] = reverse(cs[k])
+		}
+	}
+	return out
+}
+
+// normalizePlan decides which contours stay (by index) and which of them
+// turn around; variable fonts apply the same plan to every master so the
+// points keep matching.
+func normalizePlan(cs []project.Contour, ccwOuter bool) (keep []int, rev []bool) {
 	var kept []project.Contour
 	var polys [][]vec
-	for _, c := range cs {
+	for i, c := range cs {
 		p := flatten(c)
 		if len(p) < 3 || math.Abs(signedArea(p)) < 1e-6 {
 			continue
 		}
 		kept = append(kept, c)
+		keep = append(keep, i)
 		polys = append(polys, p)
 	}
 	boxes := make([]box, len(polys))
 	for i, p := range polys {
 		boxes[i] = polyBox(p)
 	}
-	out := make([]project.Contour, len(kept))
-	for i, c := range kept {
+	rev = make([]bool, len(kept))
+	for i := range kept {
 		depth := 0
 		for j := range kept {
 			if i == j || !boxes[j].contains(boxes[i]) {
@@ -166,12 +182,9 @@ func normalize(cs []project.Contour, ccwOuter bool) []project.Contour {
 		if !ccwOuter {
 			wantCCW = !wantCCW
 		}
-		if (signedArea(polys[i]) > 0) != wantCCW {
-			c = reverse(c)
-		}
-		out[i] = c
+		rev[i] = (signedArea(polys[i]) > 0) != wantCCW
 	}
-	return out
+	return keep, rev
 }
 
 // splitCubic returns the part of the cubic between t0 and t1.

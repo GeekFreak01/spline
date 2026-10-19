@@ -91,6 +91,29 @@ type Glyph struct {
 	Tags     []string `json:"tags,omitempty"`
 	Note     string   `json:"note,omitempty"`
 	NoExport bool     `json:"noExport,omitempty"`
+	// Layers hold the glyph in the other masters (extended mode), by
+	// master id. The default master is the glyph itself.
+	Layers map[string]Layer `json:"layers,omitempty"`
+}
+
+// Layer is a glyph's outline and width in one master.
+type Layer struct {
+	Contours []Contour `json:"contours"`
+	Advance  float64   `json:"advance"`
+}
+
+// Axis is the design axis the masters sit on (weight for now).
+type Axis struct {
+	Tag string  `json:"tag"`
+	Min float64 `json:"min"`
+	Max float64 `json:"max"`
+}
+
+// Master is one drawn style; the first one is the default.
+type Master struct {
+	ID   string  `json:"id"`
+	Name string  `json:"name"`
+	Loc  float64 `json:"loc"`
 }
 
 // Anchor is a named point of a glyph.
@@ -188,6 +211,9 @@ type Project struct {
 	Contextual []Alternate `json:"contextual,omitempty"`
 	// Ligatures ('liga'): a sequence of glyphs drawn as one glyph.
 	Ligatures []Ligature `json:"ligatures,omitempty"`
+	// Masters along one axis (extended mode): a variable font.
+	Axis    *Axis    `json:"axis,omitempty"`
+	Masters []Master `json:"masters,omitempty"`
 }
 
 // Alternate replaces Glyph with Use when the glyph before it is one of

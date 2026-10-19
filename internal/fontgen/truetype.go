@@ -47,12 +47,17 @@ func ttContour(c project.Contour) []ttPoint {
 func buildGlyf(fd *fontData) (glyf, loca []byte, maxPoints, maxContours int) {
 	gw := &writer{}
 	lw := &writer{}
-	for _, g := range fd.glyphs {
+	for gi, g := range fd.glyphs {
 		lw.u32(uint32(len(gw.buf)))
 		var contours [][]ttPoint
-		for _, c := range g.contours {
-			if pts := ttContour(c); pts != nil {
-				contours = append(contours, pts)
+		if fd.vf != nil && fd.vf.glyphs[gi].masters != nil {
+			// A varying glyph: the same points as in 'gvar'.
+			contours = varPoints(fd.vf.glyphs[gi])[0]
+		} else {
+			for _, c := range g.contours {
+				if pts := ttContour(c); pts != nil {
+					contours = append(contours, pts)
+				}
 			}
 		}
 		if len(contours) == 0 {

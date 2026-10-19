@@ -7,7 +7,7 @@ import {
 } from './model.js';
 import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
-import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt } from './masters.js';
+import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour } from './masters.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
@@ -241,6 +241,7 @@ function menuDefs() {
       { label: 'exportOTF', key: keyLabel('exportOTF'), run: () => exportFont('otf') },
       { label: 'exportWOFF', key: keyLabel('exportWOFF'), run: () => exportFont('woff'), ext: true },
       { label: 'msExport', run: exportInstances, enabled: hasMasters(app.project || {}), ext: true },
+      { label: 'vfExport', run: exportVariable, enabled: hasMasters(app.project || {}), ext: true },
       ...(app.platform?.canInstall ? [{ label: 'installFont', run: installFont }] : []),
       ...(app.platform?.canAssociate ? ['-', { label: 'associate', check: app.platform.associated, run: associateFiles }] : []),
     ] },
@@ -3482,6 +3483,44 @@ async function mastersDialog() {
   if (app.mode === 'editor') { renderEditorOptions(); renderGlyphPanel(); }
   if (app.mode === 'grid') renderGridOptions();
   renderPreviewText();
+}
+
+// The project for a variable font: every master's full outline (with
+// components and composed letters) in glyph.layers, its contours in the
+// default's point order.
+function variableJSON() {
+  const p = app.project;
+  const q = saveForm(p);
+  refreshComponents(q); recompose(q);
+  const full = (g) => [...g.contours.filter((c) => !c.brush), ...(g.refContours || [])];
+  const def = new Map(q.glyphs.map((g) => [g.name, full(g)]));
+  const out = { ...q, glyphs: q.glyphs.map((g) => ({ ...g, layers: {} })) };
+  const byName = new Map(out.glyphs.map((g) => [g.name, g]));
+  for (const m of p.masters.slice(1)) {
+    const inst = instanceAt(p, m.loc);
+    refreshComponents(inst); recompose(inst);
+    for (const g of inst.glyphs) {
+      const base = def.get(g.name) || [];
+      const cs = full(g).map((c, i) => (base[i] && matchContour(base[i], c)) || c);
+      byName.get(g.name).layers[m.id] = { contours: cs, advance: g.advance };
+    }
+  }
+  return serialize(out);
+}
+
+async function exportVariable() {
+  if (!hasMasters(app.project)) return;
+  try {
+    const r = await fetch('/api/export?format=variable', {
+      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: variableJSON(),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const name = safeFileName('-VF.ttf');
+    download(await r.blob(), name);
+    toast(t('exported', { name }));
+  } catch (err) {
+    toast(`${t('previewError')}: ${err.message}`, 'error');
+  }
 }
 
 // Instances: every master plus the steps between them, each a font file.

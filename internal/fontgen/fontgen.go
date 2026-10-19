@@ -24,7 +24,8 @@ type Format int
 const (
 	TTF Format = iota
 	OTF
-	WOFF // TrueType packed for the web (WOFF 1.0)
+	WOFF   // TrueType packed for the web (WOFF 1.0)
+	VarTTF // variable TrueType from the masters (extended mode)
 )
 
 // ParseFormat converts "ttf" / "otf" to a Format.
@@ -36,6 +37,8 @@ func ParseFormat(s string) (Format, error) {
 		return OTF, nil
 	case "woff":
 		return WOFF, nil
+	case "variable", "ttf-var", "vf":
+		return VarTTF, nil
 	}
 	return 0, fmt.Errorf("unknown font format %q", s)
 }
@@ -61,6 +64,8 @@ type fontData struct {
 	anchors map[int]glyphAnchors
 	// forms: alternate glyphs named by suffix (a.sc, one.onum, ...).
 	forms []formFeature
+	src   []project.Glyph // the exported glyphs, by glyph id
+	vf    *varData        // variable font data, nil for static fonts
 	names names
 	bbox  box
 	now   time.Time
@@ -78,9 +83,22 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 		}
 		return toWOFF(ttf)
 	}
+	variable := f == VarTTF
+	if variable {
+		f = TTF
+		if len(p.Masters) > 1 {
+			p.Info.Weight = int(math.Round(p.Masters[0].Loc))
+		}
+	}
 	fd := prepare(p, f)
 	if len(fd.glyphs) < 2 {
 		return nil, errors.New("the font has no glyphs")
+	}
+	if variable {
+		if err := prepareVar(p, fd, fd.src); err != nil {
+			return nil, err
+		}
+		fd.names = makeNames(p.Info)
 	}
 
 	tables := map[string][]byte{
@@ -127,6 +145,11 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 	if gsub != nil {
 		tables["GSUB"] = gsub
 	}
+	if fd.vf != nil {
+		tables["fvar"] = buildFvar(fd)
+		tables["gvar"] = buildGvar(fd)
+		tables["STAT"] = buildSTAT(fd)
+	}
 	tables["head"] = buildHead(fd)
 	tables["hhea"] = buildHhea(fd)
 	return assemble(sfntVersion, tables), nil
@@ -160,6 +183,7 @@ func prepare(p *project.Project, f Format) *fontData {
 			src = append(src, g)
 		}
 	}
+	fd.src = src
 	usedNames := map[string]bool{}
 	for i, g := range src {
 		gd := glyphData{
@@ -377,6 +401,12 @@ func buildName(fd *fontData) []byte {
 	opt(14, in.LicenseURL)
 	if n.typoFamily != "" {
 		recs = append(recs, rec{16, n.typoFamily}, rec{17, n.typoStyle})
+	}
+	if vf := fd.vf; vf != nil {
+		recs = append(recs, rec{25, n.ps[:strings.IndexByte(n.ps+"-", '-')]}, rec{256, axisName(vf.axis.Tag)})
+		for i, name := range vf.names {
+			recs = append(recs, rec{uint16(257 + i), name})
+		}
 	}
 	sort.Slice(recs, func(i, j int) bool { return recs[i].id < recs[j].id })
 

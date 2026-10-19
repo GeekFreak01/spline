@@ -91,7 +91,7 @@ const sameCurves = (x, y) => x.nodes.every((n, k) => !!n.in === !!y.nodes[k].in 
 
 // Contour y in the point order of x: as it is, or turned around (the
 // editor may have reversed it), or null when they do not match.
-function matchContour(x, y) {
+export function matchContour(x, y) {
   if (x.nodes.length !== y.nodes.length || !!x.closed !== !!y.closed) return null;
   if (sameCurves(x, y)) return y;
   const r = clone(y);
