@@ -63,6 +63,8 @@ export class History {
     if (s.anchors) g.anchors = structuredClone(s.anchors); else delete g.anchors;
     if (s.components) g.components = structuredClone(s.components); else delete g.components;
     if (s.background) g.background = structuredClone(s.background); else delete g.background;
+    // Other masters' outlines: "edit all masters" changes them too.
+    if (s.layers) g.layers = structuredClone(s.layers); else delete g.layers;
     return g.name;
   }
 }
@@ -79,4 +81,5 @@ const snap = (g) => ({
   background: g.background && structuredClone(g.background),
   components: g.components && structuredClone(g.components),
   anchors: g.anchors && structuredClone(g.anchors),
+  layers: g.layers && structuredClone(g.layers),
 });

@@ -5,6 +5,7 @@ import {
 } from './model.js';
 import { applyStroke } from './trace.js';
 import { openCorner, reconnect, deleteSegment } from './corners.js';
+import { matchContour } from './masters.js';
 import { addExtremesTo } from './simplify.js';
 import { unite, subtract, removeOverlap, shapesOf, pathOperation, knifeCut } from './boolean.js';
 import { t } from './i18n.js';
@@ -35,6 +36,12 @@ function pointInQuad(p, q) {
     if ((q[i].y > p.y) !== (q[j].y > p.y) && p.x < ((q[j].x - q[i].x) * (p.y - q[i].y)) / (q[j].y - q[i].y) + q[i].x) inside = !inside;
   }
   return inside;
+}
+
+// Integer coordinates for a new point and its handles.
+function roundNode(n) {
+  n.x = Math.round(n.x); n.y = Math.round(n.y);
+  for (const h of ['in', 'out']) if (n[h]) n[h] = { x: Math.round(n[h].x), y: Math.round(n[h].y) };
 }
 
 export class Editor {
@@ -1242,6 +1249,13 @@ export class Editor {
     if (seg) {
       this.app.history.push(this.glyph);
       const c = this.glyph.contours[seg.ci];
+      this.sync((cs) => {
+        const s = cs[seg.ci] && segments(cs[seg.ci])[seg.s.i];
+        if (!s) return;
+        const node = insertNode(cs[seg.ci], s, seg.t);
+        roundNode(node);
+        for (const q of cs[seg.ci].nodes) for (const h of ['in', 'out']) if (q[h]) q[h] = { x: Math.round(q[h].x), y: Math.round(q[h].y) };
+      });
       insertNode(c, seg.s, seg.t);
       this.sel = new Set([`${seg.ci}:${seg.s.i + 1}`]);
       this.roundSelection();
@@ -1364,13 +1378,15 @@ export class Editor {
       if (!byContour.has(ci)) byContour.set(ci, new Set());
       byContour.get(ci).add(ni);
     }
-    this.glyph.contours = this.glyph.contours
+    const drop = (cs) => cs
       .map((c, ci) => {
         const del = byContour.get(ci);
         if (!del) return c;
         return { ...c, nodes: c.nodes.filter((_, ni) => !del.has(ni)) };
       })
       .filter((c) => c.nodes.length >= (c.closed ? 3 : 1));
+    this.sync((cs) => cs.splice(0, cs.length, ...drop(cs)));
+    this.glyph.contours = drop(this.glyph.contours);
     this.sel.clear();
     this.penContour = null;
     this.afterEdit();
@@ -1438,6 +1454,7 @@ export class Editor {
     const c = this.glyph.contours[ci];
     if (!c?.closed || ni === 0) return false;
     this.app.history.push(this.glyph);
+    this.sync((cs) => { const o = cs[ci]; if (o?.closed) o.nodes = [...o.nodes.slice(ni), ...o.nodes.slice(0, ni)]; });
     c.nodes = [...c.nodes.slice(ni), ...c.nodes.slice(0, ni)];
     this.sel = new Set([`${ci}:0`]);
     this.afterEdit(false);
@@ -1479,14 +1496,18 @@ export class Editor {
     const c = this.glyph.contours[ci];
     if (!c?.closed || c.nodes.length < 2) return false;
     this.app.history.push(this.glyph);
-    const nodes = [...c.nodes.slice(ni), ...c.nodes.slice(0, ni)];
-    const end = structuredClone(nodes[0]);
-    delete nodes[0].in;
-    delete end.out;
-    nodes[0].smooth = false;
-    end.smooth = false;
-    c.nodes = [...nodes, end];
-    c.closed = false;
+    const open = (o) => {
+      const nodes = [...o.nodes.slice(ni), ...o.nodes.slice(0, ni)];
+      const end = structuredClone(nodes[0]);
+      delete nodes[0].in;
+      delete end.out;
+      nodes[0].smooth = false;
+      end.smooth = false;
+      o.nodes = [...nodes, end];
+      o.closed = false;
+    };
+    this.sync((cs) => { if (cs[ci]?.closed) open(cs[ci]); });
+    open(c);
     this.sel = new Set([`${ci}:0`, `${ci}:${c.nodes.length - 1}`]);
     this.afterEdit(false);
     return true;
@@ -1503,8 +1524,14 @@ export class Editor {
       if (c.nodes.length < 3) return false;
       this.app.history.push(this.glyph);
       const a = c.nodes[0], b = c.nodes[c.nodes.length - 1];
-      if (Math.hypot(a.x - b.x, a.y - b.y) < 1) { if (b.in) a.in = b.in; c.nodes.pop(); a.smooth = lined(a); }
-      c.closed = true;
+      const merge = Math.hypot(a.x - b.x, a.y - b.y) < 1;
+      const close = (o) => {
+        const x = o.nodes[0], y = o.nodes[o.nodes.length - 1];
+        if (merge) { if (y.in) x.in = y.in; o.nodes.pop(); x.smooth = lined(x); }
+        o.closed = true;
+      };
+      this.sync((cs) => { const o = cs[open[0]]; if (o && !o.closed) close(o); });
+      close(c);
       this.sel.clear();
       this.afterEdit();
       return true;
@@ -1518,18 +1545,24 @@ export class Editor {
     const e1 = endOf(i1), e2 = endOf(i2);
     if (!e1 || !e2) return false;
     this.app.history.push(this.glyph);
-    const A = structuredClone(cs[i1]), B = structuredClone(cs[i2]);
-    if (e1 === 'start') reverseContour(A); // A must end at the joined point
-    if (e2 === 'end') reverseContour(B); // B must start there
-    const a = A.nodes[A.nodes.length - 1], b = B.nodes[0];
-    let nodes;
-    if (Math.hypot(a.x - b.x, a.y - b.y) < 1) {
-      if (b.out) a.out = b.out;
-      a.smooth = lined(a);
-      nodes = [...A.nodes, ...B.nodes.slice(1)];
-    } else nodes = [...A.nodes, ...B.nodes];
-    this.glyph.contours = cs.filter((_, i) => i !== i1 && i !== i2);
-    this.glyph.contours.push({ closed: false, nodes });
+    let merge = null; // decided on this master, the others follow
+    const join = (list) => {
+      const A = structuredClone(list[i1]), B = structuredClone(list[i2]);
+      if (e1 === 'start') reverseContour(A); // A must end at the joined point
+      if (e2 === 'end') reverseContour(B); // B must start there
+      const a = A.nodes[A.nodes.length - 1], b = B.nodes[0];
+      merge ??= Math.hypot(a.x - b.x, a.y - b.y) < 1;
+      let nodes;
+      if (merge) {
+        if (b.out) a.out = b.out;
+        a.smooth = lined(a);
+        nodes = [...A.nodes, ...B.nodes.slice(1)];
+      } else nodes = [...A.nodes, ...B.nodes];
+      return [...list.filter((_, i) => i !== i1 && i !== i2), { closed: false, nodes }];
+    };
+    const mine = join(cs);
+    this.sync((other) => { if (other[i1] && other[i2] && !other[i1].closed && !other[i2].closed) other.splice(0, other.length, ...join(other)); });
+    this.glyph.contours = mine;
     this.sel.clear();
     this.afterEdit(false);
     return true;
@@ -1579,13 +1612,16 @@ export class Editor {
   openCorners(d = 30) {
     const keys = [...this.sel].map((k) => k.split(':').map(Number)).sort((a, b) => a[0] - b[0] || b[1] - a[1]);
     const copy = structuredClone(this.glyph.contours);
-    let n = 0;
+    const done = [];
     for (const [ci, ni] of keys) {
       const node = copy[ci]?.nodes[ni];
-      if (node && !node.smooth && openCorner(copy[ci], ni, d)) n++;
+      if (node && !node.smooth && openCorner(copy[ci], ni, d)) done.push([ci, ni]);
     }
+    const n = done.length;
     if (!n) return 0;
     this.app.history.push(this.glyph);
+    // The other masters get the same points (from the end, like here).
+    this.sync((cs) => { for (const [ci, ni] of done) if (cs[ci]) openCorner(cs[ci], ni, d, true); });
     this.glyph.contours = copy;
     this.sel.clear();
     this.afterEdit(false);
@@ -1602,7 +1638,7 @@ export class Editor {
       byContour.get(ci).push(ni);
     }
     const copy = structuredClone(this.glyph.contours);
-    let n = 0;
+    const done = [];
     for (const [ci, list] of byContour) {
       const c = copy[ci];
       const set = new Set(list);
@@ -1610,11 +1646,13 @@ export class Editor {
       for (const i of [...set].sort((a, b) => b - a)) {
         const j = i + 1 < c.nodes.length ? i + 1 : c.closed ? 0 : -1;
         if (j < 0 || !set.has(j) || !set.has(i)) continue;
-        if (reconnect(c, i)) { n++; set.delete(i); set.delete(j); }
+        if (reconnect(c, i)) { done.push([ci, i]); set.delete(i); set.delete(j); }
       }
     }
+    const n = done.length;
     if (!n) return 0;
     this.app.history.push(this.glyph);
+    this.sync((cs) => { for (const [ci, i] of done) if (cs[ci]) reconnect(cs[ci], i, true); });
     this.glyph.contours = copy;
     this.sel.clear();
     this.afterEdit(false);
@@ -1630,6 +1668,7 @@ export class Editor {
     const parts = deleteSegment(this.glyph.contours[c1], i, j);
     if (!parts) return false;
     this.app.history.push(this.glyph);
+    this.sync((cs) => { const ps = cs[c1] && deleteSegment(cs[c1], i, j); if (ps) cs.splice(c1, 1, ...ps); });
     this.glyph.contours.splice(c1, 1, ...parts);
     this.sel.clear();
     this.afterEdit(false);
@@ -1754,7 +1793,7 @@ export class Editor {
       guide: css('--canvas-guide'), handle: css('--canvas-handle'), bg: css('--canvas-bg'),
       grid: css('--canvas-grid'), gridMajor: css('--canvas-grid-major'), nodeFill: css('--canvas-node-fill'),
       userGuide: css('--canvas-user-guide'), rulerBg: css('--ruler-bg'), rulerLine: css('--ruler-line'), rulerText: css('--ruler-text'),
-      zone: css('--canvas-zone'), ok: css('--ok'),
+      zone: css('--canvas-zone'), ok: css('--ok'), danger: css('--danger'),
     };
     const info = this.app.project.info;
     const S = (p) => this.toScreen(p);
@@ -1865,6 +1904,8 @@ export class Editor {
       ctx.stroke();
       ctx.setLineDash([]);
     }
+
+    this.drawOtherMasters(colors, dpr);
 
     // Outline.
     ctx.save();
@@ -1984,6 +2025,60 @@ export class Editor {
       this.capRatio = (m.actualBoundingBoxAscent || 70) / 100;
     }
     return capPx / this.capRatio;
+  }
+
+  // Runs a change of the points' structure on the other masters too, when
+  // "edit all masters" is on (see app.syncMasters): fn(contours) gets each
+  // master's contours in this master's point order.
+  sync(fn) {
+    this.app.syncMasters?.(this.glyph, fn);
+  }
+
+  // "Show all masters": the other masters' outlines in their colours, thin
+  // lines from each point to the same point there, a red outline where a
+  // contour does not match.
+  drawOtherMasters(colors, dpr) {
+    const others = this.extended ? this.app.otherMasters?.(this.glyph) : null;
+    if (!others?.length) return;
+    const ctx = this.ctx, v = this.view;
+    const hues = [colors.accent, colors.ok, colors.userGuide, '#9B6BDF', '#D9B62B'];
+    others.forEach((m, k) => {
+      const hue = hues[k % hues.length];
+      m.contours.forEach((c, ci) => {
+        const mine = this.glyph.contours[ci];
+        const same = mine && matchContour(mine, c);
+        ctx.save();
+        ctx.setTransform(dpr * v.scale, 0, 0, -dpr * v.scale, dpr * v.ox, dpr * v.oy);
+        ctx.beginPath();
+        tracePath(ctx, { contours: [c] });
+        ctx.restore();
+        ctx.strokeStyle = same ? hue : colors.danger;
+        ctx.lineWidth = same ? 1.25 : 2;
+        ctx.globalAlpha = 0.85;
+        ctx.stroke();
+        if (same) {
+          ctx.beginPath();
+          same.nodes.forEach((n, ni) => {
+            const a = this.toScreen(mine.nodes[ni]), b = this.toScreen(n);
+            ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+          });
+          ctx.setLineDash([2, 3]);
+          ctx.lineWidth = 1;
+          ctx.globalAlpha = 0.5;
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        ctx.globalAlpha = 1;
+      });
+      // The master's name at its first point.
+      const first = m.contours.find((c) => c.nodes.length)?.nodes[0];
+      if (first) {
+        const s = this.toScreen(first);
+        ctx.fillStyle = hue;
+        ctx.font = `600 11px ${getComputedStyle(document.documentElement).getPropertyValue('--font-ui') || 'sans-serif'}`;
+        ctx.fillText(m.name, s.x + 8, s.y - 8);
+      }
+    });
   }
 
   // Alignment zones [bottom, top] from the font's overshoot: above the

@@ -33,8 +33,9 @@ const prevIndex = (c, i) => (i > 0 ? i - 1 : c.closed ? c.nodes.length - 1 : -1)
 const nextIndex = (c, i) => (i < c.nodes.length - 1 ? i + 1 : c.closed ? 0 : -1);
 
 // Opens the sharp point i of contour c into ears `d` units long. Returns
-// false when the point has no segment on one side.
-export function openCorner(c, i, d = 30) {
+// false when the point has no segment on one side. `force` (the other
+// masters, which must get the same points) skips the corner check.
+export function openCorner(c, i, d = 30, force = false) {
   const ip = prevIndex(c, i), inx = nextIndex(c, i);
   if (ip < 0 || inx < 0 || c.nodes.length < 3) return false;
   const prev = c.nodes[ip], P = c.nodes[i], next = c.nodes[inx];
@@ -43,7 +44,7 @@ export function openCorner(c, i, d = 30) {
   const apart = (...qs) => qs.find((q) => len(sub(q, P)) > 1e-6) || P;
   const tIn = sub(P, apart(sIn.c2, sIn.c1, prev));
   const tOut = sub(apart(sOut.c1, sOut.c2, next), P);
-  if (Math.abs(tIn.x * tOut.y - tIn.y * tOut.x) / ((len(tIn) * len(tOut)) || 1) < 0.1) return false;
+  if (!force && Math.abs(tIn.x * tOut.y - tIn.y * tOut.x) / ((len(tIn) * len(tOut)) || 1) < 0.1) return false;
   // The end of the incoming segment, moved d past P.
   let P1;
   if (sIn.line) {
@@ -115,8 +116,9 @@ function crossing(a, b) {
 
 // Reconnects the ears at points i and i+1 of c: cuts the segment before
 // them and the one after at their crossing. Returns false when they do
-// not cross.
-export function reconnect(c, i) {
+// not cross; with `force` (the other masters) the two points then simply
+// become one in the middle.
+export function reconnect(c, i, force = false) {
   const j = nextIndex(c, i);
   if (j < 0) return false;
   const ip = prevIndex(c, i), jn = nextIndex(c, j);
@@ -124,7 +126,14 @@ export function reconnect(c, i) {
   const prev = c.nodes[ip], next = c.nodes[jn];
   const sIn = cubic(prev, c.nodes[i]), sOut = cubic(c.nodes[j], next);
   const hit = crossing(sIn, sOut);
-  if (!hit) return false;
+  if (!hit) {
+    if (!force) return false;
+    const a = c.nodes[i], b = c.nodes[j];
+    const X = { ...round(lerp(a, b, 0.5)), smooth: false, ...(a.in ? { in: a.in } : {}), ...(b.out ? { out: b.out } : {}) };
+    if (j > i) c.nodes.splice(i, 2, X);
+    else { c.nodes.splice(i, 1, X); c.nodes.splice(0, 1); }
+    return true;
+  }
   const [ta, tb] = hit;
   const X = { smooth: false };
   if (sIn.line) Object.assign(X, round(lerp(sIn.p0, sIn.p3, ta)));

@@ -8,7 +8,7 @@ import {
 import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { isSmart, editingState, editState, saveSmart, addProp, removeProp, smartProblems } from './smart.js';
-import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis } from './masters.js';
+import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis, layerOf } from './masters.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
@@ -231,6 +231,7 @@ function autosave() {
 
 // Editor callbacks.
 app.commitGlyph = (g) => {
+  if (g) syncNewContours(g);
   markChanged();
   if (app.extended && hasMasters(app.project) && g) queueMicrotask(() => { if (app.current === g) renderGlyphPanel(); });
   if (editor.preview) queueMicrotask(previewFilter);
@@ -3584,9 +3585,57 @@ function masterBarHTML() {
     return `<div class="group"><button class="btn" type="button" data-cmd="mastersDialog" data-tip="${esc(t('msAddTip'))}">${icon('layers', 14)}<span>${esc(t('msMasters'))}</span></button></div><div class="sep"></div>`;
   }
   const act = activeId(p);
+  // In the editor: show the other masters, and edit them all at once.
+  const toggles = app.mode === 'editor' ? `
+    <button class="btn btn-icon ms-toggle" type="button" data-cmd="msShowAll" aria-pressed="${app.showAllMasters}" aria-label="${esc(t('msShowAll'))}" data-tip="${esc(t('msShowAllTip'))}">${icon('layers', 14)}</button>
+    <button class="btn btn-icon ms-toggle" type="button" data-cmd="msEditAll" aria-pressed="${app.editAllMasters}" aria-label="${esc(t('msEditAll'))}" data-tip="${esc(t('msEditAllTip'))}">${icon('link', 14)}</button>` : '';
   return `<div class="group"><div class="seg" role="radiogroup" aria-label="${esc(t('msMasters'))}">
     ${p.masters.map((m) => `<button type="button" role="radio" data-master="${esc(m.id)}" aria-checked="${m.id === act}" data-tip="${esc(p.axis.tag)} ${m.loc}${p.axis2 ? ` · ${esc(p.axis2.tag)} ${m.loc2}` : ''}">${esc(m.name)}</button>`).join('')}
-    </div><button class="btn btn-icon" type="button" data-cmd="mastersDialog" aria-label="${esc(t('msMenu'))}" data-tip="${esc(t('msMenu'))}">${icon('settings', 14)}</button></div><div class="sep"></div>`;
+    </div>${toggles}<button class="btn btn-icon" type="button" data-cmd="mastersDialog" aria-label="${esc(t('msMenu'))}" data-tip="${esc(t('msMenu'))}">${icon('settings', 14)}</button></div><div class="sep"></div>`;
+}
+
+// The other masters of a glyph (extended mode): [{ id, name, layer }],
+// only those that have their own drawing of it.
+function otherLayers(g) {
+  const p = app.project;
+  if (!app.extended || !hasMasters(p) || !g) return [];
+  return p.masters.filter((m) => m.id !== activeId(p) && g.layers?.[m.id]).map((m) => ({ id: m.id, name: m.name, layer: g.layers[m.id] }));
+}
+
+app.showAllMasters = store.get('spline.showAllMasters') === '1';
+app.editAllMasters = store.get('spline.editAllMasters') === '1';
+app.otherMasters = (g) => (app.showAllMasters ? otherLayers(g).map((m) => ({ name: m.name, contours: m.layer.contours })) : null);
+
+// "Edit all masters": a structural change (a new point, deleted points,
+// a cut, ears...) runs on every master, each brought to this master's
+// point order first, so they stay compatible.
+app.syncMasters = (g, fn) => {
+  if (!app.editAllMasters) return;
+  for (const { layer } of otherLayers(g)) {
+    layer.contours.forEach((c, i) => {
+      const same = g.contours[i] && matchContour(g.contours[i], c);
+      if (same && same !== c) layer.contours[i] = same;
+    });
+    fn(layer.contours);
+  }
+};
+
+// New shapes drawn while editing all masters go into every master.
+function syncNewContours(g) {
+  if (!app.editAllMasters) return;
+  for (const { layer } of otherLayers(g)) {
+    const n = layer.contours.length;
+    if (n >= g.contours.length) continue;
+    if (!layer.contours.every((c, i) => matchContour(g.contours[i], c))) continue;
+    layer.contours.push(...structuredClone(g.contours.slice(n)));
+  }
+}
+
+function toggleMastersView(key, prop) {
+  app[prop] = !app[prop];
+  store.set(key, app[prop] ? '1' : '0');
+  renderEditorOptions();
+  editor.render();
 }
 
 function selectMaster(id) {
@@ -4857,6 +4906,8 @@ const COMMANDS = {
   ulLoad: () => pickFiles('image'), ulRemove: removeUnderlay,
   ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
   ptBreak: breakContour, ptJoin: joinContours,
+  msShowAll: () => toggleMastersView('spline.showAllMasters', 'showAllMasters'),
+  msEditAll: () => toggleMastersView('spline.editAllMasters', 'editAllMasters'),
   ptOpenCorner: () => { if (!editor.openCorners()) toast(t('openCornerNone'), 'error'); },
   ptReconnect: () => { if (!editor.reconnectEars()) toast(t('reconnectNone'), 'error'); }, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
   bgClear: () => backgroundOp('clear'),

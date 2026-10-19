@@ -783,6 +783,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .dialog .ms-row.two { grid-template-columns: minmax(0, 1fr) 110px 110px 80px; }
 
 .snap-pop { position: relative; }
+.ms-toggle[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
 .snap-pop [aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
 .snap-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 1000; display: grid; gap: 6px; padding: 8px 10px; min-width: 180px;
   background: var(--bg-panel-2, var(--bg-panel)); border: 1px solid var(--line-soft); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
