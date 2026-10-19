@@ -198,3 +198,16 @@ func TestKerningGroups(t *testing.T) {
 		}
 	}
 }
+
+func TestPSNameCyrillic(t *testing.T) {
+	for in, want := range map[string]string{
+		"Мой Шрифт": "MoyShrift",
+		"Ёлка":      "Yolka",
+		"Café":      "Cafe",
+		"日本":        "SplineFont",
+	} {
+		if got := psName(in); got != want {
+			t.Errorf("psName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

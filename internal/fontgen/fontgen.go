@@ -277,10 +277,19 @@ func makeNames(in project.Info) names {
 	return n
 }
 
-// psName keeps only characters allowed in PostScript names.
+// psName keeps only characters allowed in PostScript names. Cyrillic and
+// Latin letters with accents are spelled in plain Latin, so "Мой шрифт"
+// becomes "Moyshrift" rather than nothing.
 func psName(s string) string {
 	var b strings.Builder
 	for _, r := range s {
+		if t, ok := translit[unicode.ToLower(r)]; ok {
+			if unicode.IsUpper(r) && t != "" {
+				t = strings.ToUpper(t[:1]) + t[1:]
+			}
+			b.WriteString(t)
+			continue
+		}
 		if r > 32 && r < 127 && !strings.ContainsRune("[](){}<>/% ", r) {
 			b.WriteRune(r)
 		}
@@ -294,6 +303,25 @@ func psName(s string) string {
 	}
 	return out
 }
+
+// FullName is the name the system shows for the font, e.g. in the list of
+// installed fonts.
+func FullName(in project.Info) string { return makeNames(in).full }
+
+// PostScriptName is the font's ASCII name, also usable as a file name.
+func PostScriptName(in project.Info) string { return makeNames(in).ps }
+
+var translit = func() map[rune]string {
+	m := map[rune]string{}
+	cyr := "а:a б:b в:v г:g д:d е:e ё:yo ж:zh з:z и:i й:y к:k л:l м:m н:n о:o п:p р:r с:s т:t у:u ф:f х:kh ц:ts ч:ch ш:sh щ:shch ъ: ы:y ь: э:e ю:yu я:ya " +
+		"і:i ї:yi є:ye ґ:g ў:u ә:a ғ:gh қ:q ң:ng ө:o ұ:u ү:u һ:h " +
+		"à:a á:a â:a ã:a ä:a å:a æ:ae ç:c è:e é:e ê:e ë:e ì:i í:i î:i ï:i ñ:n ò:o ó:o ô:o õ:o ö:o ø:o ù:u ú:u û:u ü:u ý:y ÿ:y ß:ss ğ:g ı:i ş:s"
+	for _, pair := range strings.Fields(cyr) {
+		k, v, _ := strings.Cut(pair, ":")
+		m[[]rune(k)[0]] = v
+	}
+	return m
+}()
 
 func buildName(fd *fontData) []byte {
 	n := fd.names

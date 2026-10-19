@@ -148,7 +148,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>🧰 Drawing</h3>
-      Select · Pen (Bézier curves) · Brush with a stabilizer · Eraser · Rectangle · Ellipse · Knife · Hand · free transform <code>Ctrl+T</code> (scale, rotate, move, snapping) · path operations (unite, subtract, intersect, exclude, divide, remove overlap) · align and distribute relative to the selection, a key object or the glyph frame · exact coordinates of points and shapes.
+      Select · Pen (Bézier curves) · Brush with a stabilizer · Eraser · Rectangle · Ellipse · Knife · Hand · free transform <code>Ctrl+T</code> (scale, rotate, move, snapping) · path operations (unite, subtract, intersect, exclude, divide, remove overlap) · align and distribute relative to the selection, a key object or the glyph frame · exact coordinates of points and shapes · Simplify Outline removes extra points after the brush · underlay: drop a scan or photo of a letter and trace it · letters with diacritics (Й, Ё, À, é…) build themselves from the base letter and the mark.
     </td>
     <td width="50%" valign="top">
       <h3>📐 Grid, rulers, transformations</h3>
@@ -158,11 +158,11 @@
   <tr>
     <td width="50%" valign="top">
       <h3>🔁 Import and export</h3>
-      SVG from Illustrator, Figma, Inkscape: as a file, by drag and drop or by pasting code (<code>Ctrl+V</code>); files named <code>A.svg</code>, <code>uni0416.svg</code>, <code>Ж.svg</code> go to their glyphs · glyphs from another <code>.sp</code> · copying glyphs between projects · export to <code>.ttf</code> (TrueType) and <code>.otf</code> (CFF) with kerning, alternates and ligatures.
+      SVG from Illustrator, Figma, Inkscape: as a file, by drag and drop or by pasting code (<code>Ctrl+V</code>); files named <code>A.svg</code>, <code>uni0416.svg</code>, <code>Ж.svg</code> go to their glyphs · glyphs from another <code>.sp</code> · a ready <code>.ttf</code>/<code>.otf</code> opens as a project · copying glyphs between projects · export to <code>.ttf</code> (TrueType) and <code>.otf</code> (CFF) with kerning, alternates and ligatures.
     </td>
     <td width="50%" valign="top">
       <h3>🪄 Comfort</h3>
-      Autosave · undo and redo · its own window on Windows, no browser · dark and light themes · English and Russian · an icon and double-click for <code>.sp</code> files · an installer with a folder choice · a notice when a new version is out · also works as a website.
+      Autosave · undo and redo · its own window on Windows, no browser · dark and light themes · English and Russian · an icon and double-click for <code>.sp</code> files · font install into the system with one click · Cyrillic font names · an installer with a folder choice · a notice when a new version is out · also works as a website.
     </td>
   </tr>
 </table>
@@ -251,6 +251,8 @@ Example: [examples/hello.sp](examples/hello.sp). Your work is saved automaticall
 - Contour direction does not matter: Spline decides itself what is filled and what is a hole.
 - `kernLeft` / `kernRight` of a glyph are its left and right side kerning groups.
   In `kerning`, a key `@name` means a group: `"kerning": { "@A": { "@V": -70 }, "T": { "@o": -80 } }`.
+- `compose` marks a letter built from parts (`{ "base": "uni0418", "marks": ["breve"] }`), `composeOff` one drawn by hand;
+  `image` is an underlay picture (not exported).
 - `contextual` holds alternates: `{ "glyph": "o", "use": "o.alt", "prev": [], "next": ["b", "l"] }`;
   `ligatures` holds ligatures: `{ "glyphs": ["f", "i"], "use": "f_i" }`.
 </details>

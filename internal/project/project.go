@@ -65,6 +65,31 @@ type Glyph struct {
 	// "@name" means such a group.
 	KernLeft  string `json:"kernLeft,omitempty"`
 	KernRight string `json:"kernRight,omitempty"`
+	// Compose marks a letter with a diacritic that Spline builds from its
+	// parts (e.g. Й = И + ˘); the contours are kept up to date by the
+	// editor. ComposeOff means the user draws the letter by hand.
+	Compose    *Compose `json:"compose,omitempty"`
+	ComposeOff bool     `json:"composeOff,omitempty"`
+	// Image is a reference picture (scan, photo) shown under the outline
+	// for tracing. It is not part of the exported font.
+	Image *Image `json:"image,omitempty"`
+}
+
+// Compose lists the glyphs a composed letter is made of.
+type Compose struct {
+	Base  string   `json:"base"`
+	Marks []string `json:"marks"`
+}
+
+// Image is a picture placed in glyph coordinates: (X, Y) is its bottom
+// left corner, W and H its size in font units.
+type Image struct {
+	Data    string  `json:"data"` // data: URL (PNG or JPEG)
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	W       float64 `json:"w"`
+	H       float64 `json:"h"`
+	Opacity float64 `json:"opacity,omitempty"`
 }
 
 // Info holds font-wide settings.
@@ -224,6 +249,9 @@ func (p *Project) Validate() error {
 		}
 		if !finite(g.Advance) || g.Advance < 0 || g.Advance > maxCoord {
 			return fmt.Errorf("glyph %q has invalid width", g.Name)
+		}
+		if im := g.Image; im != nil && (!strings.HasPrefix(im.Data, "data:image/") || !okCoord(im.X) || !okCoord(im.Y) || !okCoord(im.W) || !okCoord(im.H)) {
+			g.Image = nil // a broken picture is dropped, not an error
 		}
 		if len(g.Contours) > maxContours {
 			return fmt.Errorf("glyph %q has too many contours", g.Name)

@@ -97,4 +97,18 @@ export function fitCubic(pts, t1, t2, tol, out = [], depth = 0) {
   return out;
 }
 
+// One cubic through all of pts (no splitting): returns [curve, max error].
+export function fitOne(pts, t1, t2, iterations = 30) {
+  let u = chordParams(pts);
+  let c = generate(pts, u, t1, t2);
+  let best = c, [err] = maxError(c, pts, u);
+  for (let k = 0; k < iterations; k++) {
+    u = reparam(c, pts, u);
+    c = generate(pts, u, t1, t2);
+    const [e] = maxError(c, pts, u);
+    if (e < err) { best = c; err = e; }
+  }
+  return [best, err];
+}
+
 export const vec = { sub, add, mul, dot, len, norm, dist };

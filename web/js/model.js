@@ -65,6 +65,11 @@ export function validateProject(p) {
   for (const g of p.glyphs) {
     g.contours = Array.isArray(g.contours) ? g.contours : [];
     g.advance = Number.isFinite(g.advance) ? g.advance : 600;
+    if (!(g.compose && typeof g.compose.base === 'string' && Array.isArray(g.compose.marks))) delete g.compose;
+    if (g.composeOff !== true) delete g.composeOff;
+    const im = g.image;
+    if (!(im && typeof im.data === 'string' && im.data.startsWith('data:image/')
+      && ['x', 'y', 'w', 'h'].every((k) => Number.isFinite(im[k])) && im.w > 0 && im.h > 0)) delete g.image;
     for (const c of g.contours) {
       c.nodes = Array.isArray(c.nodes) ? c.nodes : [];
       if (c.closed === undefined) c.closed = true;

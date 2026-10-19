@@ -96,6 +96,14 @@ func (ws *webServer) routes() http.Handler {
 		writeJSON(w, map[string]any{"version": version, "web": true, "privacy": ws.siteFileExists("privacy.html")})
 	})
 	mux.HandleFunc("/api/export", ws.handleExport)
+	mux.HandleFunc("/api/import-font", func(w http.ResponseWriter, r *http.Request) {
+		if !ws.limiter.allow(ws.clientIP(r)) {
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "too many requests, try again in a minute", http.StatusTooManyRequests)
+			return
+		}
+		handleImportFont(w, r)
+	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	return ws.guard(mux)
 }

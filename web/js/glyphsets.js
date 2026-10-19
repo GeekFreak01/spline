@@ -8,9 +8,13 @@ const range = (a, b) => {
 
 export const SETS = {
   latin: [...range('A', 'Z'), ...range('a', 'z')],
-  cyrillic: [...range('А', 'Е'), 'Ё', ...range('Ж', 'Я'), ...range('а', 'е'), 'ё', ...range('ж', 'я')],
+  // ¨ and ˘ are the marks of Ё and Й: drawn once, they build those letters.
+  cyrillic: [...range('А', 'Е'), 'Ё', ...range('Ж', 'Я'), ...range('а', 'е'), 'ё', ...range('ж', 'я'), '¨', '˘'],
   digits: range('0', '9'),
   punct: [' ', ...'.,:;!?-–—\'"«»()[]/&@#%*+=_<>€$№'],
+  // Western European letters with accents; they build themselves from the
+  // base letter and the mark.
+  accents: [...'`´ˆ˜¨˚¸ı', ...'ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝàáâãäåçèéêëìíîïñòóôõöùúûüýÿ'],
 };
 
 // Readable names for common symbols; letters and digits use themselves.
@@ -20,6 +24,8 @@ const NAMES = {
   '»': 'guillemetright', '(': 'parenleft', ')': 'parenright', '[': 'bracketleft', ']': 'bracketright',
   '/': 'slash', '&': 'ampersand', '@': 'at', '#': 'numbersign', '%': 'percent', '*': 'asterisk', '+': 'plus',
   '=': 'equal', '_': 'underscore', '<': 'less', '>': 'greater', '€': 'Euro', '$': 'dollar', '№': 'numero',
+  '`': 'grave', '´': 'acute', 'ˆ': 'circumflex', '˜': 'tilde', '¨': 'dieresis', '˚': 'ring', '¸': 'cedilla',
+  '˘': 'breve', 'ˇ': 'caron', '˙': 'dotaccent', '¯': 'macron', '˝': 'hungarumlaut', '˛': 'ogonek', 'ı': 'dotlessi',
   '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four', '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
 };
 
@@ -32,6 +38,7 @@ export function glyphNameFor(ch) {
 
 export function defaultAdvance(ch) {
   if (ch === ' ') return 250;
+  if (/[`´ˆ˜¨˚¸˘ˇ˙¯˝˛]/.test(ch)) return 300;
   if (/[.,:;!'|]/.test(ch)) return 260;
   if (/[a-zа-яё]/.test(ch)) return 520;
   if (/[0-9]/.test(ch)) return 560;

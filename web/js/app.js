@@ -12,6 +12,8 @@ import { importSVG, looksLikeSVG } from './svg.js';
 import { proposeGroups, letterKind, pairGap } from './shape.js';
 import { setDefaults, keyLabel, comboOf, comboLabel, actionFor, assign, resetAll, bindings, isCustom, BROWSER_RESERVED, TAKEN } from './keys.js';
 import { initPanels, layoutPanels, setHidden, isHidden, resetPanels, recordOrder, watchResize } from './panels.js';
+import { recompose, composeInfo } from './compose.js';
+import { simplifyContours } from './simplify.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -25,7 +27,7 @@ const MOD = isMac ? '⌘' : 'Ctrl+';
 
 // Default shortcuts; the user can change them in Help → Keyboard Shortcuts.
 setDefaults({
-  new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [],
+  simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [],
   undo: ['Ctrl+Z'], redo: ['Ctrl+Shift+Z', 'Ctrl+Y'], selectAll: ['Ctrl+A'], freeTransform: ['Ctrl+T'],
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
@@ -122,6 +124,7 @@ const selectedGlyphs = () => [...app.selected].map(findGlyph).filter(Boolean);
 // ================================================================ project state
 
 function setProject(p, { fileName = null, fileHandle = null, serverFile = null } = {}) {
+  recompose(p);
   app.project = p;
   app.fileName = fileName;
   app.fileHandle = fileHandle;
@@ -151,6 +154,7 @@ function updateTitle() {
 
 let autosaveTimer;
 function markChanged() {
+  for (const g of recompose(app.project)) if (app.mode === 'grid') updateTile(g);
   setDirty(true);
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(autosave, 700);
@@ -162,7 +166,11 @@ function autosave() {
 }
 
 // Editor callbacks.
-app.commitGlyph = () => { markChanged(); updateMetricInputs(); };
+app.commitGlyph = (g) => {
+  markChanged();
+  updateMetricInputs();
+  if (g && composeState(g) !== $('glyphPanel').querySelector('[data-compose]')?.dataset.compose) renderGlyphPanel();
+};
 app.onGlyphMetricsChanged = () => updateMetricInputs();
 app.onCursor = (p) => { $('statusPos').textContent = p ? `X ${Math.round(p.x)}   Y ${Math.round(p.y)}` : ''; };
 app.onZoom = (s) => { $('statusZoom').textContent = `${Math.round(s * 100)}%`; };
@@ -199,6 +207,7 @@ function menuDefs() {
     { id: 'menuFile', items: [
       { label: 'new', key: keyLabel('new'), run: newFontDialog },
       { label: 'open', key: keyLabel('open'), run: openDialog },
+      { label: 'openFont', run: () => pickFiles('font') },
       '-',
       { label: 'importSvg', key: keyLabel('importSvg'), run: () => pickFiles('svg') },
       { label: 'importSp', run: () => pickFiles('import') },
@@ -208,6 +217,7 @@ function menuDefs() {
       '-',
       { label: 'exportTTF', key: keyLabel('exportTTF'), run: () => exportFont('ttf') },
       { label: 'exportOTF', key: keyLabel('exportOTF'), run: () => exportFont('otf') },
+      ...(app.platform?.canInstall ? [{ label: 'installFont', run: installFont }] : []),
       ...(app.platform?.canAssociate ? ['-', { label: 'associate', check: app.platform.associated, run: associateFiles }] : []),
     ] },
     { id: 'menuEdit', items: [
@@ -250,9 +260,11 @@ function menuDefs() {
       { label: 'deleteGlyph', run: deleteSelectedGlyphs, enabled: !inEditor && app.selected.size > 0 },
       '-',
       { label: 'autoSpacing', key: keyLabel('autoSpacing'), run: () => glyphAction('spacing'), enabled: inEditor || app.selected.size > 0 },
+      { label: 'simplify', key: keyLabel('simplify'), run: simplifyGlyphs, enabled: inEditor || app.selected.size > 0 },
       { label: 'flipH', key: keyLabel('flipH'), run: () => applyTransform('flipH'), enabled: inEditor || app.selected.size > 0 },
       { label: 'flipV', key: keyLabel('flipV'), run: () => applyTransform('flipV'), enabled: inEditor || app.selected.size > 0 },
       { label: 'clear', run: () => glyphAction('clear'), enabled: inEditor },
+      { label: 'ulMenu', run: () => pickFiles('image'), enabled: inEditor || app.selected.size === 1 },
       '-',
       ...PATH_OPS.map((op) => ({ label: op.label, key: keyLabel(`op.${op.id}`), run: () => runPathOp(op.id), enabled: inEditor })),
       '-',
@@ -480,7 +492,9 @@ $('sideMetrics').addEventListener('change', onMetricChange);
 function tileHTML(g) {
   const ch = charOf(g);
   const drawn = g.contours.length > 0;
-  const body = drawn || g.unicode === 32 ? glyphSVG(g) : `<span class="ghost" aria-hidden="true">${esc(ch)}</span>`;
+  const body = drawn || g.unicode === 32 ? glyphSVG(g)
+    : g.image ? `<img class="ref" src="${esc(g.image.data)}" alt="" aria-hidden="true">`
+      : `<span class="ghost" aria-hidden="true">${esc(ch)}</span>`;
   const label = ch && ch.trim() ? `${ch} ${g.name} ${hex(g)}` : `${g.name} ${hex(g)}`;
   return `<button type="button" class="tile${drawn ? ' drawn' : ''}" role="option" data-name="${esc(g.name)}"
       ${g.color ? `data-color="${g.color}"` : ''} aria-selected="${app.selected.has(g.name)}"
@@ -674,6 +688,7 @@ function renderInspectorBody() {
        <div class="title-row"><b>${esc(charOf(g).trim() || g.name)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>`
     : `<div class="title-row"><b>${sel.length}</b><small>${esc(t('glyphs'))}: ${esc(sel.slice(0, 24).map((x) => charOf(x) || x.name).join(' '))}</small></div>`;
   el.innerHTML = section('glyph', t('dimensions'), `${head}
+      ${sel.length === 1 ? composeNoteHTML(g) : ''}
       <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(sel.every((x) => x.color === g.color) ? g.color : undefined)}</div>
       ${groupFields(sel)}`)
     + transformSection()
@@ -681,6 +696,7 @@ function renderInspectorBody() {
       ${sel.length === 1 ? `<button class="btn btn-primary btn-block" type="button" data-cmd="draw">${icon('pen', 15)}<span>${esc(t('drawGlyph'))}</span></button>` : ''}
       <button class="btn btn-block" type="button" data-cmd="importSvg">${icon('open', 15)}<span>${esc(t('importSvg'))}</span></button>
       <button class="btn btn-block" type="button" data-cmd="spacing">${icon('spacing', 15)}<span>${esc(t('autoSpacing'))}</span></button>
+      <button class="btn btn-block" type="button" data-cmd="simplify">${icon('simplify', 15)}<span>${esc(t('simplify'))}</span></button>
       <button class="btn btn-block btn-danger" type="button" data-cmd="deleteGlyph">${icon('trash', 15)}<span>${esc(t('deleteGlyph'))}</span></button>`)
     + fontSection();
 }
@@ -696,6 +712,7 @@ function renderGlyphPanelBody() {
   if (!g) return;
   $('glyphPanel').innerHTML = section('glyph', t('glyph'), `
       <div class="title-row"><b>${esc(charOf(g).trim() || '␣')}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>
+      ${composeNoteHTML(g)}
       ${metricInputs(g)}
       <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(g.color)}</div>
       ${groupFields([g])}`)
@@ -706,8 +723,10 @@ function renderGlyphPanelBody() {
     + alignSection()
     + transformSection()
     + variantsSection(g)
+    + underlaySection(g)
     + section('actions', t('actions'), `
       <button class="btn btn-block" type="button" data-cmd="spacing">${icon('spacing', 15)}<span>${esc(t('autoSpacing'))}</span></button>
+      <button class="btn btn-block" type="button" data-cmd="simplify" data-tip="${esc(t('simplifyTip'))}">${icon('simplify', 15)}<span>${esc(t('simplify'))}</span></button>
       <button class="btn btn-block" type="button" data-cmd="importSvg">${icon('open', 15)}<span>${esc(t('importSvg'))}</span></button>
       <button class="btn btn-block btn-danger" type="button" data-cmd="clear">${icon('eraseAll', 15)}<span>${esc(t('clear'))}</span></button>`)
     + fontSection();
@@ -860,7 +879,7 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['variants', 'varTitle'], ['actions', 'actions'], ['font', 'fontSection'],
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
 initPanels({
@@ -873,7 +892,7 @@ initPanels({
   icons: { dock: icon('panelDock', 14), close: icon('close', 14), collapse: icon('chevronRight', 14) },
   panelIcons: {
     glyph: icon('pen', 18), selection: icon('select', 18), pathops: icon('opUnite', 18), align: icon('alignHCenter', 18),
-    transform: icon('transform', 18), variants: icon('variants', 18), actions: icon('spacing', 18), font: icon('type', 18),
+    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), actions: icon('spacing', 18), font: icon('type', 18),
     kernPair: icon('kerning', 18), kernSpacing: icon('spacing', 18), kernSuggest: icon('check', 18), kernList: icon('search', 18),
   },
   onChange: () => renderMenus(),
@@ -894,6 +913,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
   }, true);
   dock.addEventListener('change', (e) => {
     if (onVariantsChange(e)) return;
+    if (e.target.dataset.ul) { setUnderlayValue(e.target.dataset.ul, Number(e.target.value), true); return; }
     if (e.target.dataset.kgroup) {
       const prop = e.target.dataset.kgroup;
       const v = cleanGroupName(e.target.value);
@@ -916,7 +936,10 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
     if (e.target.dataset.tf) { liveTransform(true); return; }
     onMetricChange(e);
   });
-  dock.addEventListener('input', (e) => { if (e.target.dataset.tf) liveTransform(false); });
+  dock.addEventListener('input', (e) => {
+    if (e.target.dataset.tf) liveTransform(false);
+    if (e.target.dataset.ul === 'opacity') setUnderlayValue('opacity', Number(e.target.value), false);
+  });
   dock.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.dataset.tf) { e.preventDefault(); liveTransform(true); }
   });
@@ -928,6 +951,8 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
     if (al) { runAlign(al.dataset.align); return; }
     const po = e.target.closest('[data-pathop]');
     if (po) { runPathOp(po.dataset.pathop); return; }
+    const mk = e.target.closest('[data-make-glyph]');
+    if (mk) { makeGlyph(mk.dataset.makeGlyph); return; }
     const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
     if (cmd) COMMANDS[cmd]?.();
   });
@@ -1194,12 +1219,12 @@ async function editFontInfo() {
 
 async function newFontDialog() {
   if (app.dirty && !(await confirmDialog(t('confirmNew'), t('ok'), false))) return;
-  const sets = [['latin', 'setLatin'], ['cyrillic', 'setCyrillic'], ['digits', 'setDigits'], ['punct', 'setPunct']];
+  const sets = [['latin', 'setLatin'], ['cyrillic', 'setCyrillic'], ['digits', 'setDigits'], ['punct', 'setPunct'], ['accents', 'setAccents']];
   const data = await showDialog({
     title: t('newTitle'),
     body: `<label class="field">${esc(t('family'))}<input type="text" name="family" value="${esc(getLang() === 'ru' ? 'Мой шрифт' : 'My Font')}" required maxlength="60"></label>
       <h3>${esc(t('newSets'))}</h3><div class="checks">
-      ${sets.map(([id, label]) => `<label class="check"><input type="checkbox" name="sets" value="${id}" checked>${esc(t(label))}</label>`).join('')}
+      ${sets.map(([id, label]) => `<label class="check"><input type="checkbox" name="sets" value="${id}" ${id === 'accents' ? '' : 'checked'}>${esc(t(label))}</label>`).join('')}
       </div>`,
     okLabel: t('create'),
   });
@@ -1215,7 +1240,7 @@ const KEY_GROUPS = [
   ['keysTools', TOOLS.map((tl) => `tool.${tl.id}`)],
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
-  ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups', 'fontInfo']],
+  ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'simplify', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups', 'fontInfo']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -2681,6 +2706,239 @@ function applyHistory(name) {
   }
 }
 
+// ================================================================ letters from parts
+
+const glyphByChar = (ch) => app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
+const composeState = (g) => (g.compose ? 'auto' : g.composeOff ? 'manual' : 'none');
+
+// Й = И + ˘: tells how the letter is made and offers the other way.
+function composeNoteHTML(g) {
+  const info = composeInfo(app.project, g);
+  if (!info) return '';
+  const parts = [info.baseChar, ...info.markChars].join(' + ');
+  const note = (text, buttons = '') => `<div class="compose-note" data-compose="${composeState(g)}">
+    <p>${esc(text)}</p>${buttons}</div>`;
+  if (g.compose) {
+    return note(t('cmpAuto', { parts }),
+      `<button class="btn btn-block" type="button" data-cmd="composeOff">${icon('pen', 15)}<span>${esc(t('cmpManual'))}</span></button>`);
+  }
+  if (g.composeOff || g.contours.length) {
+    if (info.missing.length) return '';
+    return note(t('cmpCan', { parts }),
+      `<button class="btn btn-block" type="button" data-cmd="composeOn">${icon('check', 15)}<span>${esc(t('cmpOn'))}</span></button>`);
+  }
+  return note(t('cmpWait', { parts }), info.missing.map((ch) => `<button class="btn btn-block" type="button" data-make-glyph="${esc(ch)}">
+    ${icon(glyphByChar(ch) ? 'pen' : 'plus', 15)}<span>${esc(t(glyphByChar(ch) ? 'cmpDraw' : 'cmpCreate', { ch }))}</span></button>`).join(''));
+}
+
+function setComposed(on) {
+  const g = app.mode === 'editor' ? app.current : selectedGlyphs()[0];
+  if (!g) return;
+  app.history.push(g); // a composed letter becomes a hand-drawn one here
+  if (on) { delete g.composeOff; g.contours = []; }
+  if (app.mode === 'editor') editor.sel.clear();
+  markChanged(); // builds the letter again when it is composed
+  afterGlyphChange(g);
+}
+
+// Opens a letter, adding it to the font first when needed.
+function makeGlyph(ch) {
+  let g = glyphByChar(ch);
+  if (!g) { g = addGlyphForChar(app.project, ch); markChanged(); }
+  if (g) openEditor(g.name);
+}
+
+function afterGlyphChange(g) {
+  if (app.mode === 'editor') {
+    renderGlyphPanel();
+    updateMetricInputs();
+    editor.render();
+  } else {
+    updateTile(g);
+    renderInspector();
+    renderSideMetrics();
+  }
+}
+
+// ================================================================ simplify
+
+// Removes points that do not change the shape: in the editor from the
+// contours with selected points (or the whole letter), in the grid from
+// every selected letter.
+function simplifyGlyphs() {
+  endTransform();
+  const tol = Math.max(1, app.project.info.unitsPerEm * 0.0015);
+  let removed = 0;
+  if (app.mode === 'editor') {
+    const g = app.current;
+    const picked = new Set([...editor.sel].map((k) => Number(k.split(':')[0])));
+    const contours = picked.size ? g.contours.filter((_, i) => picked.has(i)) : g.contours;
+    const copy = structuredClone(contours);
+    removed = simplifyContours(copy, tol);
+    if (removed) {
+      app.history.push(g);
+      const idx = contours.map((c) => g.contours.indexOf(c));
+      idx.forEach((ci, k) => { g.contours[ci] = copy[k]; });
+      editor.sel.clear();
+      editor.afterEdit();
+    }
+  } else {
+    for (const g of selectedGlyphs()) {
+      const copy = structuredClone(g.contours);
+      const n = simplifyContours(copy, tol);
+      if (!n) continue;
+      app.history.push(g);
+      g.contours = copy;
+      removed += n;
+      updateTile(g);
+    }
+    if (removed) { markChanged(); renderInspector(); }
+  }
+  toast(removed ? t('simplified', { n: removed }) : t('simplifyNothing'));
+}
+
+// ================================================================ underlay
+
+// A scan or photo under the outline to trace over. Kept in the project,
+// never exported. Large pictures are scaled down so the file stays small.
+const UL_MAX = 1600;
+
+function underlayTarget() {
+  if (app.mode === 'editor') return app.current;
+  return app.selected.size === 1 ? findGlyph([...app.selected][0]) : null;
+}
+
+async function loadPicture(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise((ok, fail) => { img.onload = ok; img.onerror = fail; img.src = url; });
+    const k = Math.min(1, UL_MAX / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    let data;
+    if (file.type === 'image/png' || file.type === 'image/gif') {
+      ctx.drawImage(img, 0, 0, w, h);
+      data = cv.toDataURL('image/png');
+    }
+    if (!data || data.length > 2e6) {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      data = cv.toDataURL('image/jpeg', 0.85);
+    }
+    return { data, w, h };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Fits the picture between two metric lines, keeping its horizontal centre.
+function placeUnderlay(g, kind, cx = g.image.x + g.image.w / 2) {
+  const fi = app.project.info, im = g.image;
+  const [bottom, top] = { x: [0, fi.xHeight], all: [fi.descender, fi.ascender] }[kind] || [0, fi.capHeight];
+  const ratio = im.w / im.h;
+  im.h = top - bottom;
+  im.w = Math.round(im.h * ratio);
+  im.y = bottom;
+  im.x = Math.round(cx - im.w / 2);
+}
+
+async function setUnderlay(g, file) {
+  if (!g) { toast(t('ulPickGlyph'), 'error'); return; }
+  let pic;
+  try { pic = await loadPicture(file); } catch { toast(t('ulError'), 'error'); return; }
+  g.image = { data: pic.data, x: 0, y: 0, w: pic.w, h: pic.h, opacity: g.image?.opacity ?? 0.4 };
+  const ch = charOf(g);
+  placeUnderlay(g, ch && ch === ch.toLowerCase() && ch !== ch.toUpperCase() ? 'x' : 'cap', g.advance / 2);
+  markChanged();
+  afterGlyphChange(g);
+  if (app.mode !== 'editor') toast(t('ulAdded', { ch: ch || g.name }));
+}
+
+function setUnderlayValue(key, v, commit) {
+  const g = underlayTarget(), im = g?.image;
+  if (!im || !Number.isFinite(v)) return;
+  if (key === 'opacity') im.opacity = Math.min(1, Math.max(0.05, v / 100));
+  if (key === 'x' || key === 'y') im[key] = Math.round(v);
+  if (key === 'h' && v >= 1) { const r = im.w / im.h; im.h = Math.round(v); im.w = Math.round(im.h * r); }
+  editor.render();
+  if (commit) markChanged();
+}
+
+function fitUnderlay(kind) {
+  const g = underlayTarget();
+  if (!g?.image) return;
+  placeUnderlay(g, kind);
+  markChanged();
+  afterGlyphChange(g);
+}
+
+function removeUnderlay() {
+  const g = underlayTarget();
+  if (!g?.image) return;
+  delete g.image;
+  markChanged();
+  afterGlyphChange(g);
+}
+
+function underlaySection(g) {
+  const im = g.image;
+  const num = (k, label, v) => `<label><span>${esc(label)}</span><input type="number" step="1" data-ul="${k}" value="${Math.round(v)}"></label>`;
+  return section('underlay', t('ulTitle'), im ? `
+    <label class="prop"><span>${esc(t('ulOpacity'))}</span><input type="range" min="5" max="100" step="5" data-ul="opacity" value="${Math.round((im.opacity ?? 0.4) * 100)}"></label>
+    <div class="xy-grid">${num('x', 'X', im.x)}${num('y', 'Y', im.y)}${num('h', t('h'), im.h)}</div>
+    <div class="sub-head">${esc(t('ulFit'))}</div>
+    <div class="btn-row">
+      <button class="btn" type="button" data-cmd="ulFitCap">${esc(t('ulFitCap'))}</button>
+      <button class="btn" type="button" data-cmd="ulFitX">${esc(t('ulFitX'))}</button>
+    </div>
+    <button class="btn btn-block" type="button" data-cmd="ulFitAll">${esc(t('ulFitAll'))}</button>
+    <button class="btn btn-block" type="button" data-cmd="ulLoad">${icon('image', 15)}<span>${esc(t('ulReplace'))}</span></button>
+    <button class="btn btn-block btn-danger" type="button" data-cmd="ulRemove">${icon('trash', 15)}<span>${esc(t('ulRemove'))}</span></button>`
+    : `<p class="hint">${esc(t('ulHint'))}</p>
+    <button class="btn btn-block" type="button" data-cmd="ulLoad">${icon('image', 15)}<span>${esc(t('ulLoad'))}</span></button>`, !!im);
+}
+
+// ================================================================ fonts: open TTF/OTF, install
+
+const isFontFile = (f) => /\.(ttf|otf)$/i.test(f?.name || '');
+
+// A ready font opens as a new project (not saved yet).
+async function openFontFile(file, ask = false) {
+  if (ask && app.dirty && !(await confirmDialog(t('confirmNew'), t('ok'), false))) return;
+  try {
+    const r = await fetch('/api/import-font', {
+      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/octet-stream' }, body: file,
+    });
+    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+    const { project, skipped } = await r.json();
+    const p = validateProject(project);
+    setProject(p);
+    autosave();
+    toast(t('fontOpened', { name: p.info.familyName, n: p.glyphs.length }) + (skipped ? ` ${t('fontSkipped', { n: skipped })}` : ''));
+  } catch (err) {
+    toast(t('openError', { err: err.message }), 'error');
+  }
+}
+
+// Builds the font and installs it for the current user, so it shows up in
+// Word, Photoshop and other programs.
+async function installFont() {
+  try {
+    const r = await fetch('/api/install-font', {
+      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(app.project),
+    });
+    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+    const { name } = await r.json();
+    toast(t('installed', { name }));
+  } catch (err) {
+    toast(t('installError', { err: err.message }), 'error');
+  }
+}
+
 // ================================================================ files
 
 function projectBlob() { return new Blob([serialize(app.project)], { type: 'application/json' }); }
@@ -2757,9 +3015,13 @@ async function openDialog() {
   if (window.showOpenFilePicker) {
     try {
       const [handle] = await window.showOpenFilePicker({
-        types: [{ description: 'Spline project', accept: { 'application/json': ['.sp', '.json'] } }],
+        types: [
+          { description: 'Spline project', accept: { 'application/json': ['.sp', '.json'] } },
+          { description: 'TrueType / OpenType', accept: { 'font/ttf': ['.ttf', '.otf'] } },
+        ],
       });
-      await openFile(await handle.getFile(), handle);
+      const file = await handle.getFile();
+      if (isFontFile(file)) await openFontFile(file); else await openFile(file, handle);
     } catch (err) {
       if (err.name !== 'AbortError') toast(err.message, 'error');
     }
@@ -2771,7 +3033,8 @@ async function openDialog() {
 function pickFiles(mode) {
   const input = $('fileInput');
   input.dataset.mode = mode;
-  input.accept = mode === 'svg' ? '.svg,image/svg+xml' : '.sp,.json,application/json';
+  input.accept = { svg: '.svg,image/svg+xml', image: 'image/png,image/jpeg,image/webp,image/gif', font: '.ttf,.otf' }[mode]
+    || '.sp,.json,.ttf,.otf,application/json';
   input.multiple = mode === 'svg';
   input.click();
 }
@@ -2782,6 +3045,8 @@ $('fileInput').addEventListener('change', async (e) => {
   if (!files.length) return;
   const mode = e.target.dataset.mode;
   if (mode === 'svg') importSvgFiles(files);
+  else if (mode === 'image') setUnderlay(underlayTarget(), files[0]);
+  else if (isFontFile(files[0])) openFontFile(files[0], mode === 'font');
   else if (mode === 'import') {
     try { mergeGlyphs((await readProjectFile(files[0])).glyphs); } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
   } else openFile(files[0]);
@@ -2912,6 +3177,14 @@ window.addEventListener('drop', async (e) => {
     importSvgFiles(svgs);
     return;
   }
+  const pic = files.find((f) => /^image\/(png|jpeg|webp|gif)$/.test(f.type));
+  if (pic) {
+    const tile = e.target.closest?.('.tile');
+    setUnderlay(tile ? findGlyph(tile.dataset.name) : underlayTarget(), pic);
+    return;
+  }
+  const font = files.find(isFontFile);
+  if (font) { openFontFile(font, true); return; }
   const sp = files.find((f) => /\.(sp|json)$/i.test(f.name));
   if (!sp) return;
   if (app.dirty && !(await confirmDialog(t('confirmNew'), t('ok'), false))) return;
@@ -2992,6 +3265,9 @@ const COMMANDS = {
   prev: () => stepGlyph(-1), next: () => stepGlyph(1),
   autoGroups, groups: () => groupsDialog(), newVariant, newLigature,
   xfReset, xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
+  simplify: simplifyGlyphs, composeOff: () => setComposed(false), composeOn: () => setComposed(true),
+  ulLoad: () => pickFiles('image'), ulRemove: removeUnderlay,
+  ulFitCap: () => fitUnderlay('cap'), ulFitX: () => fitUnderlay('x'), ulFitAll: () => fitUnderlay('all'),
 };
 
 // Letters come from the physical key (e.code), so shortcuts work with any
@@ -3005,6 +3281,7 @@ const ACTIONS = {
   new: { run: newFontDialog }, open: { run: openDialog },
   save: { run: () => save(), always: true }, saveAs: { run: () => save(true), always: true },
   importSvg: { run: () => pickFiles('svg') },
+  simplify: { run: simplifyGlyphs, when: () => app.mode === 'editor' || app.selected.size > 0 },
   exportTTF: { run: () => exportFont('ttf') }, exportOTF: { run: () => exportFont('otf') },
   undo: { run: undo }, redo: { run: redo }, selectAll: { run: selectAll },
   freeTransform: { run: startTransform, when: inEditorMode },
@@ -3198,7 +3475,7 @@ async function start() {
   let session = null;
   try { session = await (await fetch('/api/session')).json(); } catch { /* opened without the Go server */ }
   app.platform = {
-    canAssociate: !!session?.canAssociate, associated: !!session?.associated,
+    canAssociate: !!session?.canAssociate, associated: !!session?.associated, canInstall: !!session?.canInstall,
     web: !!session?.web, privacy: !!session?.privacy, // hosted website (spline --web)
     version: session?.version || '',
   };

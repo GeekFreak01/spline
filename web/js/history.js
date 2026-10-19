@@ -8,8 +8,12 @@ export class History {
 
   clear() { this.undoStack = []; this.redoStack = []; }
 
-  // Call right before changing a glyph.
-  push(glyph) { this.#add(snap(glyph)); }
+  // Call right before changing a glyph. A letter built from parts (see
+  // compose.js) that is edited by hand stops following its parts.
+  push(glyph) {
+    this.#add(snap(glyph));
+    if (glyph.compose) { delete glyph.compose; glyph.composeOff = true; }
+  }
 
   // Call right before changing kerning values.
   pushKerning(project) { this.#add({ kerning: structuredClone(project.kerning || {}) }); }
@@ -54,6 +58,8 @@ export class History {
     to.push(snap(g));
     g.contours = structuredClone(s.contours);
     g.advance = s.advance;
+    if (s.compose) g.compose = structuredClone(s.compose); else delete g.compose;
+    if (s.composeOff) g.composeOff = true; else delete g.composeOff;
     return g.name;
   }
 }
@@ -64,4 +70,7 @@ const groupsSnap = (p) => ({
   contextual: structuredClone(p.contextual || []),
   ligatures: structuredClone(p.ligatures || []),
 });
-const snap = (g) => ({ name: g.name, advance: g.advance, contours: structuredClone(g.contours) });
+const snap = (g) => ({
+  name: g.name, advance: g.advance, contours: structuredClone(g.contours),
+  compose: g.compose && structuredClone(g.compose), composeOff: !!g.composeOff,
+});

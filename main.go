@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/GeekFreak01/spline/internal/fontgen"
+	"github.com/GeekFreak01/spline/internal/fontimport"
 	"github.com/GeekFreak01/spline/internal/project"
 )
 
@@ -164,6 +165,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/associate", s.handleAssociate)
 	mux.HandleFunc("/api/update", s.handleUpdate)
 	mux.HandleFunc("/api/open-page", s.handleOpenPage)
+	mux.HandleFunc("/api/import-font", handleImportFont)
+	mux.HandleFunc("/api/install-font", s.handleInstallFont)
 	return s.guard(mux)
 }
 
@@ -193,6 +196,7 @@ type sessionInfo struct {
 	// CanAssociate is true on Windows, where Spline can register itself
 	// for .sp files; Associated tells whether that is already done.
 	CanAssociate bool            `json:"canAssociate"`
+	CanInstall   bool            `json:"canInstall"`
 	Associated   bool            `json:"associated"`
 	FilePath     string          `json:"filePath,omitempty"`
 	FileName     string          `json:"fileName,omitempty"`
@@ -204,7 +208,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	path := s.filePath
 	s.mu.Unlock()
-	info := sessionInfo{Version: version, CanAssociate: canAssociate, Associated: associated()}
+	info := sessionInfo{Version: version, CanAssociate: canAssociate, CanInstall: canInstallFonts, Associated: associated()}
 	if path != "" {
 		info.FilePath = path
 		info.FileName = filepath.Base(path)
@@ -246,6 +250,60 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeFont(w, format, data)
+}
+
+// maxFontFile limits fonts opened as projects.
+const maxFontFile = 16 << 20
+
+// handleImportFont turns a posted .ttf/.otf file into a project.
+func handleImportFont(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFontFile)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "font file is too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	res, err := fontimport.Import(data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	writeJSON(w, map[string]any{"project": res.Project, "skipped": res.Skipped})
+}
+
+// handleInstallFont builds the posted project as TrueType and installs it
+// into the system for the current user.
+func (s *server) handleInstallFont(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	p, err := project.Parse(body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	data, err := fontgen.Build(p, fontgen.TTF)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	name := fontgen.FullName(p.Info)
+	path, err := installFont(data, name, fontgen.PostScriptName(p.Info))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"name": name, "path": path})
 }
 
 // buildFont parses a .sp document and compiles it; status is the HTTP code

@@ -17,79 +17,11 @@ import (
 	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 
+	"github.com/GeekFreak01/spline/internal/fontimport"
 	"github.com/GeekFreak01/spline/internal/project"
 )
 
 const upm = 1000
-
-func r1(v float64) float64 { return math.Round(v*10) / 10 }
-
-type pt struct{ x, y float64 }
-
-func conv(p fixed.Point26_6) pt { return pt{float64(p.X) / 64, -float64(p.Y) / 64} }
-
-func glyphContours(f *sfnt.Font, buf *sfnt.Buffer, gi sfnt.GlyphIndex) []project.Contour {
-	segs, err := f.LoadGlyph(buf, gi, fixed.I(upm), nil)
-	if err != nil {
-		return nil
-	}
-	var out []project.Contour
-	var cur *project.Contour
-	var last pt
-	flush := func() {
-		if cur == nil || len(cur.Nodes) < 2 {
-			return
-		}
-		n := cur.Nodes
-		// The closing point repeats the start: merge them.
-		if a, b := n[0], n[len(n)-1]; math.Abs(a.X-b.X) < 0.05 && math.Abs(a.Y-b.Y) < 0.05 {
-			n[0].In = b.In
-			n = n[:len(n)-1]
-		}
-		for i := range n {
-			if n[i].In != nil && n[i].Out != nil {
-				a := math.Atan2(n[i].Y-n[i].In.Y, n[i].X-n[i].In.X)
-				b := math.Atan2(n[i].Out.Y-n[i].Y, n[i].Out.X-n[i].X)
-				d := math.Abs(math.Atan2(math.Sin(a-b), math.Cos(a-b)))
-				n[i].Smooth = d < 0.05
-			}
-		}
-		cur.Nodes = n
-		out = append(out, *cur)
-	}
-	node := func(p pt) project.Node { return project.Node{X: r1(p.x), Y: r1(p.y)} }
-	for _, s := range segs {
-		switch s.Op {
-		case sfnt.SegmentOpMoveTo:
-			flush()
-			last = conv(s.Args[0])
-			cur = &project.Contour{Closed: true, Nodes: []project.Node{node(last)}}
-		case sfnt.SegmentOpLineTo:
-			last = conv(s.Args[0])
-			cur.Nodes = append(cur.Nodes, node(last))
-		case sfnt.SegmentOpQuadTo:
-			q, p := conv(s.Args[0]), conv(s.Args[1])
-			c1 := pt{last.x + 2.0/3*(q.x-last.x), last.y + 2.0/3*(q.y-last.y)}
-			c2 := pt{p.x + 2.0/3*(q.x-p.x), p.y + 2.0/3*(q.y-p.y)}
-			prev := &cur.Nodes[len(cur.Nodes)-1]
-			prev.Out = &project.Point{X: r1(c1.x), Y: r1(c1.y)}
-			nd := node(p)
-			nd.In = &project.Point{X: r1(c2.x), Y: r1(c2.y)}
-			cur.Nodes = append(cur.Nodes, nd)
-			last = p
-		case sfnt.SegmentOpCubeTo:
-			c1, c2, p := conv(s.Args[0]), conv(s.Args[1]), conv(s.Args[2])
-			prev := &cur.Nodes[len(cur.Nodes)-1]
-			prev.Out = &project.Point{X: r1(c1.x), Y: r1(c1.y)}
-			nd := node(p)
-			nd.In = &project.Point{X: r1(c2.x), Y: r1(c2.y)}
-			cur.Nodes = append(cur.Nodes, nd)
-			last = p
-		}
-	}
-	flush()
-	return out
-}
 
 func main() {
 	f, err := sfnt.Parse(goregular.TTF)
@@ -142,7 +74,7 @@ func main() {
 		}
 		p.Glyphs = append(p.Glyphs, project.Glyph{
 			Name: name, Unicode: int(r), Advance: math.Round(float64(adv) / 64),
-			Color: colors[r], Contours: glyphContours(f, &buf, gi),
+			Color: colors[r], Contours: fontimport.Contours(f, &buf, gi, upm),
 		})
 	}
 	// Kerning groups: every glyph gets a group named after its letter, and
