@@ -98,10 +98,41 @@ function toast(msg, kind = 'ok') {
   setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 200); }, kind === 'error' ? 6000 : 2500);
 }
 
+// Where dialogs of a kind (cls) were dragged to: they open there again.
+const dialogPos = new Map();
+
+function placeDialog(dlg, x, y) {
+  const r = dlg.getBoundingClientRect();
+  x = Math.max(0, Math.min(innerWidth - r.width, x));
+  y = Math.max(0, Math.min(innerHeight - 40, y));
+  Object.assign(dlg.style, { margin: '0', left: `${x}px`, top: `${y}px` });
+  return { x, y };
+}
+
+// Dialogs move by their title, like windows.
+function dragDialog(dlg, cls) {
+  const head = dlg.querySelector('h2');
+  head.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const r = dlg.getBoundingClientRect();
+    const dx = e.clientX - r.left, dy = e.clientY - r.top;
+    head.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const at = placeDialog(dlg, ev.clientX - dx, ev.clientY - dy);
+      if (cls) dialogPos.set(cls, at);
+    };
+    const up = () => { head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); };
+    head.addEventListener('pointermove', move);
+    head.addEventListener('pointerup', up);
+  });
+}
+
 // Modal dialog. Resolves with FormData (OK) or null (cancel).
 function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true, onOpen = null, cls = '' }) {
   const dlg = $('dialog');
   dlg.className = `dialog ${cls}`.trim();
+  dlg.removeAttribute('style');
   dlg.innerHTML = `<form method="dialog">
     <h2>${esc(title)}</h2>
     <div class="body">${body}</div>
@@ -122,6 +153,9 @@ function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', c
     });
     dlg.addEventListener('close', () => resolve(data), { once: true });
     dlg.showModal();
+    dragDialog(dlg, cls);
+    const pos = cls && dialogPos.get(cls);
+    if (pos) placeDialog(dlg, pos.x, pos.y);
     onOpen?.(dlg);
     const first = dlg.querySelector('input:not([type=checkbox])');
     if (first) { first.focus(); first.select?.(); }
