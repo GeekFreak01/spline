@@ -1381,15 +1381,6 @@ export class Editor {
     const yAsc = S({ x: 0, y: info.ascender }).y, yDesc = S({ x: 0, y: info.descender }).y;
     ctx.fillRect(x0, yAsc, xa - x0, yDesc - yAsc);
 
-    // Reference picture to trace over (not part of the font).
-    const im = g.image && imageOf(g.image.data, () => this.render());
-    if (im) {
-      const tl = S({ x: g.image.x, y: g.image.y + g.image.h });
-      ctx.globalAlpha = g.image.opacity ?? 0.4;
-      ctx.drawImage(im, tl.x, tl.y, g.image.w * this.view.scale, g.image.h * this.view.scale);
-      ctx.globalAlpha = 1;
-    }
-
     // Measurement grid (AutoCAD-style): minor lines every step, major lines
     // every 5 steps. Minor lines are hidden when they would be too dense.
     if (this.showGrid) {
@@ -1411,6 +1402,15 @@ export class Editor {
         }
         ctx.stroke();
       }
+    }
+
+    // Reference picture to trace over (not part of the font).
+    const im = g.image && imageOf(g.image.data, () => this.render());
+    if (im) {
+      const tl = S({ x: g.image.x, y: g.image.y + g.image.h });
+      ctx.globalAlpha = g.image.opacity ?? 0.4;
+      ctx.drawImage(im, tl.x, tl.y, g.image.w * this.view.scale, g.image.h * this.view.scale);
+      ctx.globalAlpha = 1;
     }
 
     // Metric lines with labels.

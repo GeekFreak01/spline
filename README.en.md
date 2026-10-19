@@ -122,6 +122,26 @@
   </tr>
   <tr>
     <td width="50%" valign="top">
+      <img src="docs/screenshots/en/diacritics.png" alt="The letter Й in the editor, built from И and a breve; the Glyph panel says “Built automatically: И + ˘” with a Draw It Myself button; the preview shows “Café, Über, Ñoño, À la — Ёлка, йод”" width="100%">
+      <br>
+      <sub>Й is built from И and ˘: fix И and Й follows.</sub>
+      <h3>Letters with diacritics build themselves</h3>
+      Draw the base letter and the mark once, and Й, Ё, À, é, ñ, ü and others are built from them. The mark is centred, raised for capitals and never touches the letter. Redraw И or ˘ and every letter made from them is updated.
+      <br><br>
+      Need a custom shape? Draw It Myself turns the letter into a normal one, and Build Automatically brings it back.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/en/underlay.png" alt="The editor with the letter R: a scan of a letter R on paper under the outline, half traced with the pen; on the right the Underlay panel with opacity, position and fit to height" width="100%">
+      <br>
+      <sub>A scanned letter under the outline, traced with the pen.</sub>
+      <h3>Underlay from a scan or photo</h3>
+      Drop a picture on the canvas or on a glyph tile and it is fitted to the capital or lowercase height. Opacity, position and fitting to the font lines are in the Underlay panel. The picture is not part of the font.
+      <br><br>
+      After the brush or tracing, <b>Simplify Outline</b> removes extra points without changing the shape. A ready <code>.ttf</code>/<code>.otf</code> opens as a project, and Install Font in System puts it into Word and Photoshop right away.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
       <img src="docs/screenshots/en/keys.png" alt="The Keyboard Shortcuts window: commands grouped by File, Edit, Tools with their shortcuts; Free Transform has its own Alt+T" width="100%">
       <br>
       <sub>Keyboard shortcuts (F1): click a shortcut and press a new one.</sub>

@@ -11,6 +11,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"strings"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/goregular"
@@ -47,14 +48,19 @@ func main() {
 	}
 	chars := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" +
 		"АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя" +
-		"0123456789 .,:;!?-–—'\"«»()[]/&@#%*+=_<>€$№"
+		"0123456789 .,:;!?-–—'\"«»()[]/&@#%*+=_<>€$№" +
+		"¨˘`´ˆ˜" + "ÀÁÂÄÉÈÊËÑÖÜàáâäéèêëñöü"
 	names := map[rune]string{' ': "space", '.': "period", ',': "comma", ':': "colon", ';': "semicolon", '!': "exclam",
 		'?': "question", '-': "hyphen", '–': "endash", '—': "emdash", '\'': "quotesingle", '"': "quotedbl",
 		'«': "guillemetleft", '»': "guillemetright", '(': "parenleft", ')': "parenright", '[': "bracketleft",
 		']': "bracketright", '/': "slash", '&': "ampersand", '@': "at", '#': "numbersign", '%': "percent",
 		'*': "asterisk", '+': "plus", '=': "equal", '_': "underscore", '<': "less", '>': "greater", '€': "Euro",
 		'$': "dollar", '№': "numero", '0': "zero", '1': "one", '2': "two", '3': "three", '4': "four", '5': "five",
-		'6': "six", '7': "seven", '8': "eight", '9': "nine"}
+		'6': "six", '7': "seven", '8': "eight", '9': "nine",
+		'¨': "dieresis", '˘': "breve", '`': "grave", '´': "acute", 'ˆ': "circumflex", '˜': "tilde"}
+	// Letters with diacritics are left empty: Spline builds them from the
+	// base letter and the mark when the project is opened.
+	composed := "ЁЙёйÀÁÂÄÉÈÊËÑÖÜàáâäéèêëñöü"
 	// A few colour labels, like a designer marking their progress.
 	colors := map[rune]string{'A': "green", 'B': "green", 'C': "green", 'R': "blue", 'S': "orange", 'Q': "purple",
 		'g': "yellow", 'Ж': "red", 'Ф': "blue", 'Щ': "purple", '&': "orange", '@': "green"}
@@ -72,9 +78,13 @@ func main() {
 				name = fmt.Sprintf("uni%04X", r)
 			}
 		}
+		contours := fontimport.Contours(f, &buf, gi, upm)
+		if strings.ContainsRune(composed, r) {
+			contours = []project.Contour{}
+		}
 		p.Glyphs = append(p.Glyphs, project.Glyph{
 			Name: name, Unicode: int(r), Advance: math.Round(float64(adv) / 64),
-			Color: colors[r], Contours: fontimport.Contours(f, &buf, gi, upm),
+			Color: colors[r], Contours: contours,
 		})
 	}
 	// Kerning groups: every glyph gets a group named after its letter, and
