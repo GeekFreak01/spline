@@ -1,7 +1,6 @@
 package fontgen
 
 import (
-	"errors"
 	"sort"
 	"strings"
 
@@ -209,11 +208,12 @@ func ligatureLookup(ligs []ligRule) []byte {
 }
 
 // buildGSUB writes the GSUB table, or nil when there are no rules.
-func buildGSUB(calt []caltRule, ligs []ligRule) ([]byte, error) {
-	if len(calt) == 0 && len(ligs) == 0 {
+func buildGSUB(calt []caltRule, ligs []ligRule, forms []formFeature) ([]byte, error) {
+	if len(calt) == 0 && len(ligs) == 0 && len(forms) == 0 {
 		return nil, nil
 	}
 	var lookups [][]byte
+	var features []layoutFeature
 	n := len(calt)
 	for i, r := range calt {
 		lookups = append(lookups, chainLookup(r, n+i))
@@ -221,89 +221,20 @@ func buildGSUB(calt []caltRule, ligs []ligRule) ([]byte, error) {
 	for _, r := range calt {
 		lookups = append(lookups, singleLookup(r))
 	}
-	type feature struct {
-		tag     string
-		lookups []int
-	}
-	var features []feature // sorted by tag
 	if n > 0 {
-		f := feature{tag: "calt"}
+		f := layoutFeature{tag: "calt"}
 		for i := 0; i < n; i++ {
 			f.lookups = append(f.lookups, i)
 		}
 		features = append(features, f)
 	}
 	if len(ligs) > 0 {
-		features = append(features, feature{tag: "liga", lookups: []int{len(lookups)}})
+		features = append(features, layoutFeature{tag: "liga", lookups: []int{len(lookups)}})
 		lookups = append(lookups, ligatureLookup(ligs))
 	}
-
-	lookupList := &writer{}
-	lookupList.u16(uint16(len(lookups)))
-	off := 2 + 2*len(lookups)
-	for _, l := range lookups {
-		if off > 0xFFFF {
-			return nil, errors.New("too many substitution rules")
-		}
-		lookupList.u16(uint16(off))
-		off += len(l)
+	for _, f := range forms {
+		features = append(features, layoutFeature{tag: f.tag, lang: f.lang, lookups: []int{len(lookups)}})
+		lookups = append(lookups, singleMapLookup(f.subst))
 	}
-	for _, l := range lookups {
-		lookupList.bytes(l)
-	}
-
-	featureList := &writer{}
-	featureList.u16(uint16(len(features)))
-	off = 2 + 6*len(features)
-	for _, f := range features {
-		featureList.bytes([]byte(f.tag))
-		featureList.u16(uint16(off))
-		off += 4 + 2*len(f.lookups)
-	}
-	for _, f := range features {
-		featureList.u16(0) // featureParams
-		featureList.u16(uint16(len(f.lookups)))
-		for _, l := range f.lookups {
-			featureList.u16(uint16(l))
-		}
-	}
-
-	// Script list: every script uses the default language system with all
-	// features.
-	tags := []string{"DFLT", "cyrl", "latn"}
-	scriptList := &writer{}
-	scriptList.u16(uint16(len(tags)))
-	base := 2 + 6*len(tags)
-	scriptLen := 4 + 6 + 2*len(features)
-	for i, tag := range tags {
-		scriptList.bytes([]byte(tag))
-		scriptList.u16(uint16(base + i*scriptLen))
-	}
-	for range tags {
-		scriptList.u16(4)      // defaultLangSys right after the script header
-		scriptList.u16(0)      // no other languages
-		scriptList.u16(0)      // lookupOrder
-		scriptList.u16(0xFFFF) // no required feature
-		scriptList.u16(uint16(len(features)))
-		for i := range features {
-			scriptList.u16(uint16(i))
-		}
-	}
-
-	w := &writer{}
-	w.u16(1)
-	w.u16(0)
-	o := 10
-	w.u16(uint16(o))
-	o += len(scriptList.buf)
-	w.u16(uint16(o))
-	o += len(featureList.buf)
-	if o > 0xFFFF {
-		return nil, errors.New("too many substitution rules")
-	}
-	w.u16(uint16(o))
-	w.bytes(scriptList.buf)
-	w.bytes(featureList.buf)
-	w.bytes(lookupList.buf)
-	return w.buf, nil
+	return buildLayout(features, lookups)
 }

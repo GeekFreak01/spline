@@ -135,6 +135,20 @@ type Info struct {
 	Descender  int    `json:"descender"`
 	XHeight    int    `json:"xHeight"`
 	CapHeight  int    `json:"capHeight"`
+
+	// Extended mode: rights, style and vertical metrics. All optional.
+	Copyright    string  `json:"copyright,omitempty"`
+	Trademark    string  `json:"trademark,omitempty"`
+	Manufacturer string  `json:"manufacturer,omitempty"`
+	Description  string  `json:"description,omitempty"`
+	VendorURL    string  `json:"vendorURL,omitempty"`
+	License      string  `json:"license,omitempty"`
+	LicenseURL   string  `json:"licenseURL,omitempty"`
+	Weight       int     `json:"weight,omitempty"`      // 100..900, 400 when empty
+	ItalicAngle  float64 `json:"italicAngle,omitempty"` // degrees, negative leans right
+	LineGap      int     `json:"lineGap,omitempty"`
+	UnderlinePos int     `json:"underlinePosition,omitempty"`
+	UnderlineW   int     `json:"underlineThickness,omitempty"`
 }
 
 // Guide is a ruler guide shared by all glyphs: a horizontal line at
@@ -226,6 +240,21 @@ func (p *Project) Validate() error {
 	}
 	if in.CapHeight <= 0 {
 		in.CapHeight = 700
+	}
+	if in.Weight != 0 && (in.Weight < 1 || in.Weight > 1000) {
+		in.Weight = 400
+	}
+	if !finite(in.ItalicAngle) || math.Abs(in.ItalicAngle) > 45 {
+		in.ItalicAngle = 0
+	}
+	if in.LineGap < 0 || in.LineGap > 5*in.UnitsPerEm {
+		in.LineGap = 0
+	}
+	for _, s := range []*string{&in.Copyright, &in.Trademark, &in.Manufacturer, &in.Description, &in.VendorURL, &in.License, &in.LicenseURL} {
+		*s = strings.TrimSpace(*s)
+		if len(*s) > 5000 {
+			*s = (*s)[:5000]
+		}
 	}
 
 	for left, rights := range p.Kerning {

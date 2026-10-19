@@ -30,7 +30,7 @@ const MOD = isMac ? '⌘' : 'Ctrl+';
 
 // Default shortcuts; the user can change them in Help → Keyboard Shortcuts.
 setDefaults({
-  simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [],
+  simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [], exportWOFF: [], specialForm: [],
   undo: ['Ctrl+Z'], redo: ['Ctrl+Shift+Z', 'Ctrl+Y'], selectAll: ['Ctrl+A'], freeTransform: ['Ctrl+T'],
   invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
@@ -230,6 +230,7 @@ function menuDefs() {
       '-',
       { label: 'exportTTF', key: keyLabel('exportTTF'), run: () => exportFont('ttf') },
       { label: 'exportOTF', key: keyLabel('exportOTF'), run: () => exportFont('otf') },
+      { label: 'exportWOFF', key: keyLabel('exportWOFF'), run: () => exportFont('woff'), ext: true },
       ...(app.platform?.canInstall ? [{ label: 'installFont', run: installFont }] : []),
       ...(app.platform?.canAssociate ? ['-', { label: 'associate', check: app.platform.associated, run: associateFiles }] : []),
     ] },
@@ -296,6 +297,7 @@ function menuDefs() {
       ...PATH_OPS.map((op) => ({ label: op.label, key: keyLabel(`op.${op.id}`), run: () => runPathOp(op.id), enabled: inEditor })),
       '-',
       { label: 'varNewMenu', key: keyLabel('newVariant'), run: newVariant, enabled: inEditor || app.selected.size === 1 },
+      { label: 'sfMenu', key: keyLabel('specialForm'), run: () => specialFormDialog(), enabled: inEditor || app.selected.size === 1, ext: true },
       { label: 'ligNewMenu', key: keyLabel('newLigature'), run: newLigature },
       { label: 'kgTitleMenu', key: keyLabel('groups'), run: () => groupsDialog() },
       { label: 'sgMenu', key: keyLabel('shapeGroups'), run: shapeGroupsDialog },
@@ -1311,7 +1313,8 @@ async function editFontInfo() {
       </div>
       <h3>${esc(t('metrics'))}</h3>
       <div class="field-row">${num('ascender', i.ascender)}${num('capHeight', i.capHeight)}</div>
-      <div class="field-row">${num('xHeight', i.xHeight)}${num('descender', i.descender)}</div>`,
+      <div class="field-row">${num('xHeight', i.xHeight)}${num('descender', i.descender)}</div>
+      ${app.extended ? fontInfoExtended(i) : ''}`,
   });
   if (!data) return;
   i.familyName = String(data.get('familyName')).trim() || i.familyName;
@@ -1322,9 +1325,50 @@ async function editFontInfo() {
     if (Number.isFinite(v)) i[k] = v;
   }
   if (i.descender > 0) i.descender = -i.descender;
+  if (app.extended) readFontInfoExtended(i, data);
   markChanged();
   renderAll();
   if (app.mode === 'editor') { renderGlyphPanel(); editor.render(); }
+}
+
+// Extended mode: rights, style and line metrics of the font.
+const FI_TEXT = ['copyright', 'trademark', 'manufacturer', 'vendorURL', 'license', 'licenseURL', 'description'];
+const FI_NUM = ['italicAngle', 'lineGap', 'underlinePosition', 'underlineThickness'];
+const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900];
+
+function fontInfoExtended(i) {
+  const text = (k, long) => `<label class="field">${esc(t('fi_' + k))}${long
+    ? `<textarea name="${k}" rows="2" maxlength="5000">${esc(i[k] || '')}</textarea>`
+    : `<input type="text" name="${k}" value="${esc(i[k] || '')}" maxlength="500">`}</label>`;
+  const num = (k) => `<label class="field" data-tip="${esc(t('fi_' + k + 'Tip'))}">${esc(t('fi_' + k))}<input type="number" name="${k}" value="${i[k] ?? ''}" step="${k === 'italicAngle' ? '0.5' : '1'}" placeholder="${k === 'italicAngle' ? '0' : t('fiAuto')}"></label>`;
+  return `<h3>${esc(t('fiStyle'))}</h3>
+    <div class="field-row">
+      <label class="field">${esc(t('fi_weight'))}<select name="weight">${WEIGHTS.map((w) => `<option value="${w}" ${(i.weight || 400) === w ? 'selected' : ''}>${w} · ${esc(t('weightNames')[w])}</option>`).join('')}</select></label>
+      ${num('italicAngle')}
+    </div>
+    <div class="field-row">${num('lineGap')}${num('underlinePosition')}</div>
+    <div class="field-row">${num('underlineThickness')}<span></span></div>
+    <h3>${esc(t('fiRights'))}</h3>
+    ${text('copyright')}
+    <div class="field-row">${text('manufacturer')}${text('trademark')}</div>
+    <div class="field-row">${text('license')}${text('licenseURL')}</div>
+    ${text('vendorURL')}
+    ${text('description', true)}`;
+}
+
+function readFontInfoExtended(i, data) {
+  for (const k of FI_TEXT) {
+    const v = String(data.get(k) || '').trim();
+    if (v) i[k] = v; else delete i[k];
+  }
+  const w = Number(data.get('weight'));
+  if (w && w !== 400) i.weight = w; else delete i.weight;
+  for (const k of FI_NUM) {
+    const raw = String(data.get(k) ?? '').trim();
+    const v = Number(raw);
+    if (raw !== '' && Number.isFinite(v) && v !== 0) i[k] = k === 'italicAngle' ? Math.max(-45, Math.min(45, v)) : Math.round(v);
+    else delete i[k];
+  }
 }
 
 async function newFontDialog() {
@@ -1345,7 +1389,7 @@ async function newFontDialog() {
 
 // Keyboard shortcuts: click a shortcut and press a new one.
 const KEY_GROUPS = [
-  ['menuFile', ['new', 'open', 'save', 'saveAs', 'importSvg', 'exportTTF', 'exportOTF']],
+  ['menuFile', ['new', 'open', 'save', 'saveAs', 'importSvg', 'exportTTF', 'exportOTF', 'exportWOFF']],
   ['menuEdit', ['undo', 'redo', 'selectAll', 'freeTransform']],
   ['keysTools', TOOLS.map((tl) => `tool.${tl.id}`)],
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
@@ -1693,6 +1737,11 @@ function previewAroundCurrent() {
   renderPreviewText();
 }
 $('previewCurrent').addEventListener('click', previewAroundCurrent);
+$('previewFeats').addEventListener('change', (e) => {
+  if (e.target.dataset.pf) { if (e.target.checked) previewFeats.add(e.target.dataset.pf); else previewFeats.delete(e.target.dataset.pf); }
+  if (e.target.dataset.pfLang !== undefined) previewLang = e.target.value;
+  applyPreviewFeatures();
+});
 
 // Puts a sample in the line: one of KERN_SAMPLES or "letter" (for the
 // letter after the cursor).
@@ -2010,6 +2059,57 @@ function newVariant() {
   openEditor(g.name);
 }
 
+// Extended mode: special forms. A copy of the glyph named "base.suffix",
+// switched on by an OpenType feature (small caps, old-style figures, a
+// stylistic set, the Bulgarian form...). See internal/fontgen/forms.go.
+const SPECIAL_FORMS = [
+  ['sc', 'smcp'], ['case', 'case'], ['onum', 'onum'], ['lnum', 'lnum'], ['tnum', 'tnum'], ['pnum', 'pnum'],
+  ['sups', 'sups'], ['subs', 'subs'], ['numr', 'numr'], ['dnom', 'dnom'], ['zero', 'zero'], ['ordn', 'ordn'],
+  ['swsh', 'swsh'], ['salt', 'salt'], ['ss01', 'ss'], ['cv01', 'cv'], ['loclBGR', 'loclBGR'], ['loclSRB', 'loclSRB'],
+];
+
+// What a glyph name's suffix switches on: { tag, label } or null.
+function formOf(name) {
+  const i = name.lastIndexOf('.');
+  if (i <= 0) return null;
+  const suf = name.slice(i + 1);
+  let m;
+  if ((m = /^ss(0[1-9]|1\d|20)$/.exec(suf))) return { tag: suf, label: t('sf_ss', { n: Number(m[1]) }) };
+  if ((m = /^cv(\d\d)$/.exec(suf)) && m[1] !== '00') return { tag: suf, label: t('sf_cv', { n: Number(m[1]) }) };
+  if (/^locl[A-Z]{3}$/.test(suf)) return { tag: 'locl', lang: suf.slice(4), label: t('sf_' + suf, {}) === 'sf_' + suf ? t('sf_locl', { l: suf.slice(4) }) : t('sf_' + suf) };
+  const f = SPECIAL_FORMS.find(([s]) => s === suf);
+  return f ? { tag: f[1], label: t('sf_' + suf) } : null;
+}
+
+async function specialFormDialog() {
+  const base = app.mode === 'editor' ? (variantBase(app.current) || app.current) : selectedGlyphs()[0];
+  if (!base) return;
+  const cards = SPECIAL_FORMS.map(([suf], k) => `<label class="sf-card"><input type="radio" name="suf" value="${suf}" ${k === 0 ? 'checked' : ''}>
+      <b>${esc(t('sf_' + suf, { n: 1 }))}</b><small>${esc(t('sf_' + suf + 'Tip'))}</small></label>`).join('');
+  const data = await showDialog({
+    title: t('sfTitle', { c: glyphLabel(base) }),
+    body: `<p class="hint">${esc(t('sfHint'))}</p><div class="sf-grid">${cards}</div>
+      <label class="field sf-num">${esc(t('sfSet'))}<input type="number" name="n" min="1" max="20" value="1"></label>`,
+    okLabel: t('create'),
+  });
+  if (!data) return;
+  let suf = String(data.get('suf'));
+  const n = Math.max(1, Math.min(20, Number(data.get('n')) || 1));
+  if (suf === 'ss01') suf = `ss${String(n).padStart(2, '0')}`;
+  if (suf === 'cv01') suf = `cv${String(n).padStart(2, '0')}`;
+  const name = `${base.name}.${suf}`;
+  if (findGlyph(name)) { openEditor(name); return; }
+  const g = {
+    name, advance: base.advance, contours: structuredClone(base.contours),
+    ...(base.kernLeft ? { kernLeft: base.kernLeft } : {}), ...(base.kernRight ? { kernRight: base.kernRight } : {}),
+  };
+  app.history.pushGroups(app.project);
+  app.project.glyphs.splice(app.project.glyphs.indexOf(base) + 1, 0, g);
+  markChanged();
+  toast(t('sfCreated', { name, what: formOf(name).label }));
+  openEditor(g.name);
+}
+
 // Asks for a sequence of letters and makes a ligature glyph for it, drawn
 // first as the letters side by side.
 async function newLigature() {
@@ -2064,6 +2164,10 @@ function variantsSection(g) {
       <label class="prop"><span>${esc(t('ligLetters'))}</span><input type="text" data-lig-seq value="${esc(glyphListText(lig.glyphs))}" spellcheck="false"></label>
       <p class="hint">${esc(t('ligHint'))}</p>
       <button class="btn btn-block btn-danger" type="button" data-lig-del>${icon('close', 15)}<span>${esc(t('ligDelete'))}</span></button>`;
+  } else if (base && app.extended && formOf(g.name) && !p.contextual.some((r) => r.use === g.name)) {
+    body = `<div class="var-base">${glyphSVG(base, 'var-mini')}<span>${esc(t('varOf', { c: glyphLabel(base) }))}</span>
+        <button class="btn" type="button" data-open-glyph="${esc(base.name)}">${esc(t('varOpenBase'))}</button></div>
+      <p class="hint">${esc(t('sfIs', { what: formOf(g.name).label, tag: formOf(g.name).tag }))}</p>`;
   } else if (base) {
     const rules = p.contextual.map((r, i) => ({ r, i })).filter(({ r }) => r.use === g.name);
     body = `<div class="var-base">${glyphSVG(base, 'var-mini')}<span>${esc(t('varOf', { c: glyphLabel(base) }))}</span>
@@ -3748,6 +3852,8 @@ const ACTIONS = {
   importSvg: { run: () => pickFiles('svg') },
   simplify: { run: simplifyGlyphs, when: () => app.mode === 'editor' || app.selected.size > 0 },
   exportTTF: { run: () => exportFont('ttf') }, exportOTF: { run: () => exportFont('otf') },
+  exportWOFF: { run: () => exportFont('woff'), when: () => app.extended },
+  specialForm: { run: () => specialFormDialog(), when: () => app.extended && (app.mode === 'editor' || app.selected.size === 1) },
   undo: { run: undo }, redo: { run: redo }, selectAll: { run: selectAll },
   freeTransform: { run: startTransform, when: inEditorMode },
   zoomIn: { run: () => editor.zoomBy(1.25), when: inEditorMode },
@@ -3907,12 +4013,38 @@ async function updatePreview() {
 function previewText() {
   const text = $('previewInput').value;
   const g = app.mode === 'editor' ? app.current : app.selected.size === 1 ? findGlyph([...app.selected][0]) : null;
-  const cur = app.extended && g ? charOf(g) : '';
+  const cur = app.extended && g ? charOf(g) || charOf(variantBase(g) || g) : '';
   return cur ? text.replaceAll('*', cur) : text;
+}
+
+// Extended mode: switches for the features the font has (from special
+// forms), applied to the preview with font-feature-settings.
+const previewFeats = new Set();
+let previewLang = '';
+function renderPreviewFeatures() {
+  const bar = $('previewFeats');
+  if (!bar) return;
+  const found = new Map();
+  if (app.extended) for (const g of app.project.glyphs) { const f = formOf(g.name); if (f && !found.has(f.tag + (f.lang || ''))) found.set(f.tag + (f.lang || ''), f); }
+  if (!found.size) { bar.innerHTML = ''; bar.hidden = true; return; }
+  bar.hidden = false;
+  const tags = [...found.values()].filter((f) => f.tag !== 'locl');
+  const langs = [...found.values()].filter((f) => f.tag === 'locl');
+  bar.innerHTML = `<span class="opt-label">${esc(t('pfTitle'))}</span>`
+    + tags.map((f) => `<label class="check" data-tip="${esc(f.tag)}"><input type="checkbox" data-pf="${f.tag}" ${previewFeats.has(f.tag) ? 'checked' : ''}>${esc(f.label)}</label>`).join('')
+    + (langs.length ? `<label>${esc(t('pfLang'))}<select data-pf-lang><option value="">—</option>${langs.map((f) => `<option value="${f.lang}" ${previewLang === f.lang ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}</select></label>` : '');
+}
+
+function applyPreviewFeatures() {
+  const out = $('previewOut');
+  out.style.fontFeatureSettings = [...previewFeats].map((f) => `"${f}" 1`).join(', ');
+  out.lang = { BGR: 'bg', SRB: 'sr', MKD: 'mk', UKR: 'uk' }[previewLang] || '';
 }
 
 function renderPreviewText() {
   if (!app.project) return;
+  renderPreviewFeatures();
+  applyPreviewFeatures();
   const drawn = new Set(app.project.glyphs.filter((g) => hasOutline(g) || g.unicode === 32).map((g) => g.unicode));
   const out = $('previewOut');
   out.textContent = '';

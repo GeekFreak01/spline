@@ -24,6 +24,7 @@ type Format int
 const (
 	TTF Format = iota
 	OTF
+	WOFF // TrueType packed for the web (WOFF 1.0)
 )
 
 // ParseFormat converts "ttf" / "otf" to a Format.
@@ -33,6 +34,8 @@ func ParseFormat(s string) (Format, error) {
 		return TTF, nil
 	case "otf", "cff", "opentype":
 		return OTF, nil
+	case "woff":
+		return WOFF, nil
 	}
 	return 0, fmt.Errorf("unknown font format %q", s)
 }
@@ -56,6 +59,8 @@ type fontData struct {
 	ligs   []ligRule
 	// anchors by glyph id (extended mode): mark, mkmk and curs.
 	anchors map[int]glyphAnchors
+	// forms: alternate glyphs named by suffix (a.sc, one.onum, ...).
+	forms []formFeature
 	names  names
 	bbox   box
 	now    time.Time
@@ -65,6 +70,13 @@ type fontData struct {
 func Build(p *project.Project, f Format) ([]byte, error) {
 	if err := p.Validate(); err != nil {
 		return nil, err
+	}
+	if f == WOFF {
+		ttf, err := Build(p, TTF)
+		if err != nil {
+			return nil, err
+		}
+		return toWOFF(ttf)
 	}
 	fd := prepare(p, f)
 	if len(fd.glyphs) < 2 {
@@ -78,7 +90,7 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 		"hmtx": buildHmtx(fd),
 		"name": buildName(fd),
 		"OS/2": buildOS2(fd),
-		"post": buildPost(),
+		"post": buildPost(p.Info),
 	}
 	var sfntVersion uint32
 	switch f {
@@ -108,7 +120,7 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 			tables["kern"] = k
 		}
 	}
-	gsub, err := buildGSUB(fd.calt, fd.ligs)
+	gsub, err := buildGSUB(fd.calt, fd.ligs, fd.forms)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +199,7 @@ func prepare(p *project.Project, f Format) *fontData {
 	fd.kern = collectKerning(p, fd.gid)
 	fd.calt, fd.ligs = collectSubst(p, fd.gid)
 	fd.anchors = collectAnchors(p, fd.gid)
+	fd.forms = collectForms(p, fd.gid)
 	return fd
 }
 
@@ -341,10 +354,24 @@ func buildName(fd *fontData) []byte {
 		{1, n.family}, {2, n.style}, {3, n.unique}, {4, n.full},
 		{5, n.version}, {6, n.ps},
 	}
-	if fd.info.Designer != "" {
-		recs = append(recs, rec{9, fd.info.Designer})
+	in := fd.info
+	opt := func(id uint16, v string) {
+		if v != "" {
+			recs = append(recs, rec{id, v})
+		}
 	}
-	recs = append(recs, rec{11, "https://github.com/GeekFreak01/spline"})
+	opt(0, in.Copyright)
+	opt(7, in.Trademark)
+	opt(8, in.Manufacturer)
+	opt(9, in.Designer)
+	opt(10, in.Description)
+	if in.VendorURL != "" {
+		recs = append(recs, rec{11, in.VendorURL})
+	} else {
+		recs = append(recs, rec{11, "https://github.com/GeekFreak01/spline"})
+	}
+	opt(13, in.License)
+	opt(14, in.LicenseURL)
 	if n.typoFamily != "" {
 		recs = append(recs, rec{16, n.typoFamily}, rec{17, n.typoStyle})
 	}
@@ -506,13 +533,18 @@ func buildHhea(fd *fontData) []byte {
 	w.u32(0x00010000)
 	w.i16(int16(fd.info.Ascender))
 	w.i16(int16(fd.info.Descender))
-	w.i16(0) // lineGap
+	w.i16(int16(fd.info.LineGap))
 	w.u16(uint16(advMax))
 	w.i16(int16(minLSB))
 	w.i16(int16(minRSB))
 	w.i16(int16(maxExt))
-	w.i16(1) // caretSlopeRise
-	w.i16(0)
+	// The caret leans with italics: rise / run.
+	rise, run := 1000, 0
+	if a := fd.info.ItalicAngle; a != 0 {
+		run = int(math.Round(-1000 * math.Tan(a*math.Pi/180)))
+	}
+	w.i16(int16(rise))
+	w.i16(int16(run))
 	w.i16(0)
 	for i := 0; i < 5; i++ {
 		w.i16(0)
@@ -538,7 +570,7 @@ func buildHead(fd *fontData) []byte {
 	w.i16(int16(fd.bbox.minY))
 	w.i16(int16(fd.bbox.maxX))
 	w.i16(int16(fd.bbox.maxY))
-	w.u16(0) // macStyle
+	w.u16(macStyle(fd.info)) // macStyle
 	w.u16(8) // lowestRecPPEM
 	w.i16(2) // fontDirectionHint
 	w.i16(1) // long loca
@@ -578,12 +610,19 @@ func buildMaxpCFF(numGlyphs int) []byte {
 	return w.buf
 }
 
-func buildPost() []byte {
+func buildPost(in project.Info) []byte {
 	w := &writer{}
 	w.u32(0x00030000)
-	w.u32(0)    // italicAngle
-	w.i16(-100) // underlinePosition
-	w.i16(50)   // underlineThickness
+	w.u32(uint32(int32(math.Round(in.ItalicAngle * 65536))))
+	pos, th := in.UnderlinePos, in.UnderlineW
+	if pos == 0 {
+		pos = -in.UnitsPerEm / 10
+	}
+	if th <= 0 {
+		th = in.UnitsPerEm / 20
+	}
+	w.i16(int16(pos))
+	w.i16(int16(th))
 	for i := 0; i < 5; i++ {
 		w.u32(0)
 	}
@@ -647,7 +686,7 @@ func buildOS2(fd *fontData) []byte {
 	w := &writer{}
 	w.u16(4)
 	w.i16(int16(avg))
-	w.u16(400) // weight
+	w.u16(uint16(weightOf(in))) // weight
 	w.u16(5)   // width
 	w.u16(0)   // fsType: installable
 	w.i16(int16(upm * 65 / 100))
@@ -666,12 +705,12 @@ func buildOS2(fd *fontData) []byte {
 		w.u32(r)
 	}
 	w.bytes([]byte("SPLN"))
-	w.u16(0x40 | 0x80) // REGULAR | USE_TYPO_METRICS
+	w.u16(fsSelection(in))
 	w.u16(uint16(first))
 	w.u16(uint16(last))
 	w.i16(int16(in.Ascender))
 	w.i16(int16(in.Descender))
-	w.i16(0)
+	w.i16(int16(in.LineGap))
 	w.u16(uint16(winAscent))
 	w.u16(uint16(winDescent))
 	w.u32(cp[0])
@@ -682,4 +721,45 @@ func buildOS2(fd *fontData) []byte {
 	w.u16(32)
 	w.u16(0)
 	return w.buf
+}
+
+func weightOf(in project.Info) int {
+	if in.Weight == 0 {
+		if strings.Contains(strings.ToLower(in.StyleName), "bold") {
+			return 700
+		}
+		return 400
+	}
+	return in.Weight
+}
+
+func isItalic(in project.Info) bool {
+	st := strings.ToLower(in.StyleName)
+	return in.ItalicAngle != 0 || strings.Contains(st, "italic") || strings.Contains(st, "oblique")
+}
+
+// fsSelection: ITALIC, BOLD or REGULAR, and USE_TYPO_METRICS.
+func fsSelection(in project.Info) uint16 {
+	var v uint16 = 0x80
+	if isItalic(in) {
+		v |= 0x01
+	}
+	if weightOf(in) >= 700 {
+		v |= 0x20
+	}
+	if v&0x21 == 0 {
+		v |= 0x40
+	}
+	return v
+}
+
+func macStyle(in project.Info) uint16 {
+	var v uint16
+	if weightOf(in) >= 700 {
+		v |= 1
+	}
+	if isItalic(in) {
+		v |= 2
+	}
+	return v
 }

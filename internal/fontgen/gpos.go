@@ -131,19 +131,22 @@ func cursiveLookup(ids []int, all map[int]glyphAnchors) []byte {
 
 type layoutFeature struct {
 	tag     string
+	lang    string // only in this language system ("" = all)
 	lookups []int
 }
 
-// buildLayout writes a GPOS/GSUB-style table: every script (DFLT, cyrl,
-// latn) uses the default language system with all features.
+// buildLayout writes a GPOS/GSUB-style table. Every script (DFLT, cyrl,
+// latn) uses the default language system with all general features; a
+// feature tied to a language (locl for Bulgarian, Serbian...) is added to
+// that language's system, which also has all the general features.
 func buildLayout(features []layoutFeature, lookups [][]byte) ([]byte, error) {
-	sort.Slice(features, func(i, j int) bool { return features[i].tag < features[j].tag })
+	sort.SliceStable(features, func(i, j int) bool { return features[i].tag < features[j].tag })
 	lookupList := &writer{}
 	lookupList.u16(uint16(len(lookups)))
 	off := 2 + 2*len(lookups)
 	for _, l := range lookups {
 		if off > 0xFFFF {
-			return nil, errors.New("too many positioning rules")
+			return nil, errors.New("too many layout rules")
 		}
 		lookupList.u16(uint16(off))
 		off += len(l)
@@ -166,35 +169,77 @@ func buildLayout(features []layoutFeature, lookups [][]byte) ([]byte, error) {
 			featureList.u16(uint16(l))
 		}
 	}
+
+	var general []int
+	langFeats := map[string][]int{}
+	var langs []string
+	for i, f := range features {
+		if f.lang == "" {
+			general = append(general, i)
+			continue
+		}
+		if langFeats[f.lang] == nil {
+			langs = append(langs, f.lang)
+		}
+		langFeats[f.lang] = append(langFeats[f.lang], i)
+	}
+	sort.Strings(langs)
+	langSys := func(extra []int) []byte {
+		ids := append(append([]int{}, general...), extra...)
+		sort.Ints(ids)
+		w := &writer{}
+		w.u16(0)
+		w.u16(0xFFFF)
+		w.u16(uint16(len(ids)))
+		for _, i := range ids {
+			w.u16(uint16(i))
+		}
+		return w.buf
+	}
+	scriptTable := func(withLangs bool) []byte {
+		def := langSys(nil)
+		var ls []string
+		if withLangs {
+			ls = langs
+		}
+		w := &writer{}
+		head := 4 + 6*len(ls)
+		w.u16(uint16(head))
+		w.u16(uint16(len(ls)))
+		var bodies []byte
+		bodies = append(bodies, def...)
+		for _, l := range ls {
+			w.bytes([]byte(l))
+			w.u16(uint16(head + len(bodies)))
+			bodies = append(bodies, langSys(langFeats[l])...)
+		}
+		w.bytes(bodies)
+		return w.buf
+	}
 	tags := []string{"DFLT", "cyrl", "latn"}
+	scripts := [][]byte{scriptTable(false), scriptTable(true), scriptTable(true)}
 	scriptList := &writer{}
 	scriptList.u16(uint16(len(tags)))
-	base := 2 + 6*len(tags)
-	scriptLen := 4 + 6 + 2*len(features)
+	o := 2 + 6*len(tags)
 	for i, tag := range tags {
 		scriptList.bytes([]byte(tag))
-		scriptList.u16(uint16(base + i*scriptLen))
+		scriptList.u16(uint16(o))
+		o += len(scripts[i])
 	}
-	for range tags {
-		scriptList.u16(4)
-		scriptList.u16(0)
-		scriptList.u16(0)
-		scriptList.u16(0xFFFF)
-		scriptList.u16(uint16(len(features)))
-		for i := range features {
-			scriptList.u16(uint16(i))
-		}
+	for _, sc := range scripts {
+		scriptList.bytes(sc)
 	}
+
 	w := &writer{}
 	w.u16(1)
 	w.u16(0)
-	o := 10
+	o = 10
 	w.u16(uint16(o))
 	o += len(scriptList.buf)
 	w.u16(uint16(o))
 	o += len(featureList.buf)
 	if o > 0xFFFF {
-		return nil, errors.New("too many positioning rules")
+		return nil, errors.New("too many layout rules")
 	}
 	w.u16(uint16(o))
 	w.bytes(scriptList.buf)
@@ -216,7 +261,7 @@ func buildGPOS(fd *fontData) ([]byte, error) {
 				return
 			}
 		}
-		features = append(features, layoutFeature{tag, []int{len(lookups)}})
+		features = append(features, layoutFeature{tag: tag, lookups: []int{len(lookups)}})
 		lookups = append(lookups, l)
 	}
 	if len(fd.kern) > 0 {

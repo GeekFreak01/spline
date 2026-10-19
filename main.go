@@ -321,9 +321,12 @@ func buildFont(body []byte, format fontgen.Format) ([]byte, int, error) {
 }
 
 func writeFont(w http.ResponseWriter, format fontgen.Format, data []byte) {
-	if format == fontgen.OTF {
+	switch format {
+	case fontgen.OTF:
 		w.Header().Set("Content-Type", "font/otf")
-	} else {
+	case fontgen.WOFF:
+		w.Header().Set("Content-Type", "font/woff")
+	default:
 		w.Header().Set("Content-Type", "font/ttf")
 	}
 	w.Write(data)
