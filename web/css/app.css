@@ -726,3 +726,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .tag { padding: 2px 8px; border: 1px solid var(--line-soft); border-radius: 999px; background: var(--bg-input); color: var(--text-2); font-size: var(--fs-s); cursor: pointer; }
 .tag[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 .seg button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+.seg.seg-wrap { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; }
+.seg.seg-wrap button { padding: 0 4px; }
+.dialog .tm-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) 90px; align-items: center; gap: 8px; margin-bottom: 6px; }

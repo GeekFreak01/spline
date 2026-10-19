@@ -1713,6 +1713,25 @@ export class Editor {
     ctx.globalAlpha = points ? 0.22 : 0.92;
     ctx.fill('nonzero');
     ctx.globalAlpha = 1;
+    // A filter's result before it is applied: a dashed outline.
+    if (this.preview?.length) {
+      ctx.save();
+      ctx.setTransform(dpr * v.scale, 0, 0, -dpr * v.scale, dpr * v.ox, dpr * v.oy);
+      const pv = new Path2D();
+      tracePath(pv, { contours: this.preview });
+      ctx.restore();
+      ctx.save();
+      ctx.setTransform(dpr * v.scale, 0, 0, -dpr * v.scale, dpr * v.ox, dpr * v.oy);
+      ctx.fillStyle = colors.accent;
+      ctx.globalAlpha = 0.12;
+      ctx.fill(pv, 'nonzero');
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = colors.accent;
+      ctx.lineWidth = 2 / v.scale;
+      ctx.setLineDash([6 / v.scale, 4 / v.scale]);
+      ctx.stroke(pv);
+      ctx.restore();
+    }
     // Components: drawn like the rest, outlined dashed (not editable here).
     if (g.refContours?.length) {
       ctx.save();
