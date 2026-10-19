@@ -266,16 +266,24 @@ export function instanceAt(p, loc, styleName, loc2) {
 }
 
 // Kerning at a location: every entry of every master, blended like the
-// outlines (an entry a master lacks counts as 0 there).
+// outlines. Where a master has no such entry, the pair gets what that
+// master gives it through its groups (glyph+group, group+glyph,
+// group+group, as in the font), else 0.
 function blendKerning(src, order, scal) {
   const def = src.masters[0];
   const kernOf = (m) => (m.id === def.id ? src.kerning : m.kerning ?? src.kerning) || {};
+  const byName = new Map(src.glyphs.map((g) => [g.name, g]));
+  const sides = (key, prop) => (key.startsWith('@') || !byName.get(key)?.[prop] ? [key] : [key, `@${byName.get(key)[prop]}`]);
+  const effective = (k, a, b) => {
+    for (const x of sides(a, 'kernRight')) for (const y of sides(b, 'kernLeft')) if (k[x]?.[y] !== undefined) return k[x][y];
+    return 0;
+  };
   const keys = new Set();
   for (const m of src.masters) for (const [a, row] of Object.entries(kernOf(m))) for (const b of Object.keys(row)) keys.add(`${a}\u0000${b}`);
   const out = {};
   for (const key of keys) {
     const [a, b] = key.split('\u0000');
-    const val = (m) => kernOf(m)[a]?.[b] ?? 0;
+    const val = (m) => effective(kernOf(m), a, b);
     const base = val(def);
     // order holds { id, i, nl, region }: the master itself is src.masters[i].
     const deltas = [];
