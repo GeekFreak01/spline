@@ -746,3 +746,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .pn-sw input[type="color"] { position: absolute; right: -4px; bottom: -4px; width: 14px; height: 14px; padding: 0; border: 1px solid var(--line); border-radius: 50%; overflow: hidden; cursor: pointer; opacity: 0.9; }
 .pn-sw input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 .pn-sw input[type="color"]::-webkit-color-swatch { border: 0; }
+
+.sm-slider input[type="range"] { flex: 1; min-width: 0; }
+.sm-slider .with-unit { display: flex; align-items: center; gap: 6px; }
+.seg.sm-states { grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); }

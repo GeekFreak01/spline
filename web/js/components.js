@@ -7,6 +7,7 @@
 // rebuilt here whenever the project changes.
 import { clone } from './model.js';
 import { partsOutline } from './parts.js';
+import { isSmart, smartOutline } from './smart.js';
 
 const MAX_DEPTH = 6; // components inside components, but no endless loops
 
@@ -15,7 +16,9 @@ function build(project, g, byName, depth, seen) {
   for (const k of g.components || []) {
     const src = byName.get(k.glyph);
     if (!src || seen.has(src.name) || depth > MAX_DEPTH) continue;
-    const parts = [...src.contours, ...build(project, src, byName, depth + 1, new Set([...seen, src.name]))];
+    // A smart part takes the shape its sliders ask for.
+    const own = isSmart(src) ? smartOutline(src, k.props) : src.contours;
+    const parts = [...own, ...build(project, src, byName, depth + 1, new Set([...seen, src.name]))];
     for (const c of clone(parts)) {
       for (const n of c.nodes) {
         for (const p of [n, n.in, n.out]) if (p) { p.x = Math.round(p.x + k.x); p.y = Math.round(p.y + k.y); }

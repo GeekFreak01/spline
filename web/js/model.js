@@ -80,6 +80,8 @@ export function validateProject(p) {
   if (!p.palette.length) delete p.palette;
   for (const g of p.glyphs) {
     if (!p.masters || !g.layers || typeof g.layers !== 'object') delete g.layers;
+    if (g.smart && !(Array.isArray(g.smart.props) && g.smart.props.length && g.smart.states && typeof g.smart.states === 'object')) delete g.smart;
+    if (g.smart) { delete g.smart.editing; delete g.smart.base; }
     g.contours = Array.isArray(g.contours) ? g.contours : [];
     g.advance = Number.isFinite(g.advance) ? g.advance : 600;
     if (!(g.compose && typeof g.compose.base === 'string' && Array.isArray(g.compose.marks))) delete g.compose;

@@ -7,6 +7,7 @@ import {
 } from './model.js';
 import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
+import { isSmart, editingState, editState, saveSmart, addProp, removeProp, smartProblems } from './smart.js';
 import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour } from './masters.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
@@ -927,7 +928,7 @@ function renderGlyphPanelBody() {
         data-pathop="${op.id}" data-tip="${esc(t(op.label))}" data-key="${esc(keyLabel(`op.${op.id}`))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
 `)
     // Extended mode: everyday point tools first, then parts, then the rest.
-    + (app.extended ? pointsSection() + componentsSection(g) + anchorsSection(g) + paintSection(g) + filtersSection() + backgroundSection(g) : '')
+    + (app.extended ? pointsSection() + componentsSection(g) + smartSection(g) + anchorsSection(g) + paintSection(g) + filtersSection() + backgroundSection(g) : '')
     + alignSection()
     + transformSection()
     + variantsSection(g)
@@ -1100,7 +1101,7 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['info', 'inTitle'], ['batch', 'btTitleShort'], ['paint', 'pnTitle'], ['filters', 'flTitle'], ['components', 'cmTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['info', 'inTitle'], ['batch', 'btTitleShort'], ['paint', 'pnTitle'], ['filters', 'flTitle'], ['components', 'cmTitle'], ['smart', 'smTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
 initPanels({
@@ -1113,7 +1114,7 @@ initPanels({
   icons: { dock: icon('panelDock', 14), close: icon('close', 14), collapse: icon('chevronRight', 14) },
   panelIcons: {
     glyph: icon('pen', 18), selection: icon('select', 18), pathops: icon('opUnite', 18), align: icon('alignHCenter', 18),
-    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), components: icon('components', 18), anchors: icon('anchor', 18), info: icon('type', 18), batch: icon('check', 18), filters: icon('filter', 18), paint: icon('palette', 18), actions: icon('spacing', 18), font: icon('type', 18),
+    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), components: icon('components', 18), smart: icon('sliders', 18), anchors: icon('anchor', 18), info: icon('type', 18), batch: icon('check', 18), filters: icon('filter', 18), paint: icon('palette', 18), actions: icon('spacing', 18), font: icon('type', 18),
     kernPair: icon('kerning', 18), kernSpacing: icon('spacing', 18), kernSuggest: icon('check', 18), kernList: icon('search', 18),
   },
   onChange: () => renderMenus(),
@@ -1154,6 +1155,8 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
       renderGlyphPanel();
       return;
     }
+    if (e.target.dataset.cmprop) { setCompProp(e.target.dataset.cmprop, Number(e.target.value), true); return; }
+    if (e.target.dataset.smRange) { setPropRange(e.target.dataset.smRange, e.target.value); return; }
     if (e.target.dataset.cmpos) { moveComponent(e.target.dataset.cmpos, Number(e.target.value)); return; }
     if (e.target.dataset.anpos) { setAnchorValue(e.target.dataset.anpos, e.target.value); return; }
     if (e.target.dataset.ul) { setUnderlayValue(e.target.dataset.ul, Number(e.target.value), true); return; }
@@ -1181,6 +1184,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
     onMetricChange(e);
   });
   dock.addEventListener('input', (e) => {
+    if (e.target.dataset.cmprop) setCompProp(e.target.dataset.cmprop, Number(e.target.value), false);
     if (e.target.dataset.fl !== undefined) onFilterInput(e.target);
     if (e.target.dataset.tf) liveTransform(false);
     if (e.target.dataset.ul === 'opacity') setUnderlayValue('opacity', Number(e.target.value), false);
@@ -1194,6 +1198,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
     if (componentClick(e)) return;
     if (anchorClick(e)) return;
     if (paintClick(e)) return;
+    if (smartClick(e)) return;
     const sw = e.target.closest('[data-role="colorPick"] [data-color]');
     if (sw) { setColor(sw.dataset.color); return; }
     const al = e.target.closest('[data-align]');
@@ -3499,7 +3504,13 @@ async function mastersDialog() {
 // The project for a variable font: every master's full outline (with
 // components and composed letters) in glyph.layers, its contours in the
 // default's point order.
+// Smart parts back to their base drawing (before blending masters).
+function settleSmart() {
+  for (const g of app.project.glyphs) if (editingState(g)) editState(g, null);
+}
+
 function variableJSON() {
+  settleSmart();
   const p = app.project;
   const q = saveForm(p);
   refreshComponents(q); recompose(q);
@@ -3536,6 +3547,7 @@ async function exportVariable() {
 
 // Instances: every master plus the steps between them, each a font file.
 async function exportInstances() {
+  settleSmart();
   const p = app.project;
   if (!hasMasters(p)) return;
   const ms = [...p.masters].sort((a, b) => a.loc - b.loc);
@@ -3755,7 +3767,7 @@ function componentsSection(g) {
       <label><span>X</span><input type="number" step="1" data-cmpos="${i}:x" value="${Math.round(k.x)}"></label>
       <label><span>Y</span><input type="number" step="1" data-cmpos="${i}:y" value="${Math.round(k.y)}"></label>
       <button class="btn btn-icon" type="button" data-cm-remove="${i}" aria-label="${esc(t('cmRemove'))}" data-tip="${esc(t('cmRemove'))}">${icon('close', 14)}</button>
-    </div>`).join('');
+    </div>${smartSliders(k, i)}`).join('');
   const users = usedBy(app.project, g.name);
   return section('components', t('cmTitle'), `
     ${rows}
@@ -3843,6 +3855,107 @@ function decomposeCurrent() {
   editor.afterEdit();
   renderGlyphPanel();
   toast(t('cmDecomposed'));
+}
+
+// ================================================================ smart parts
+
+function smartSliders(k, i) {
+  const src = findGlyph(k.glyph);
+  if (!isSmart(src)) return '';
+  return src.smart.props.map((pr) => {
+    const v = k.props?.[pr.name] ?? pr.min;
+    return `<label class="prop sm-slider"><span>${esc(pr.name)}</span><span class="with-unit">
+      <input type="range" data-cmprop="${i}:${esc(pr.name)}" min="${pr.min}" max="${pr.max}" step="1" value="${v}"><output class="mono">${v}</output></span></label>`;
+  }).join('');
+}
+
+// Dragging a slider shows the change live; the release makes one undo step.
+let compPropSaved = false;
+function setCompProp(spec, v, commit) {
+  const g = app.current;
+  const [i, name] = [spec.slice(0, spec.indexOf(':')), spec.slice(spec.indexOf(':') + 1)];
+  const k = g?.components?.[Number(i)];
+  if (!k || !Number.isFinite(v)) return;
+  if (!compPropSaved) { app.history.push(g); compPropSaved = true; }
+  (k.props ||= {})[name] = v;
+  refreshComponents(app.project);
+  editor.render();
+  const out = panelQuery(`[data-cmprop="${CSS.escape(spec)}"]`)?.nextElementSibling;
+  if (out) out.textContent = v;
+  if (commit) { compPropSaved = false; markChanged(); updateMetricInputs(); }
+}
+
+function smartSection(g) {
+  if (!isSmart(g)) {
+    if (!(g.name.startsWith('_') || g.noExport || usedBy(app.project, g.name).length)) return '';
+    return section('smart', t('smTitle'), `
+      <button class="btn btn-block" type="button" data-cmd="smAdd">${icon('plus', 15)}<span>${esc(t('smAddProp'))}</span></button>`, false, t('smHint'));
+  }
+  const ed = editingState(g);
+  const bad = smartProblems(g);
+  const st = (name, label) => `<button type="button" role="radio" data-sm-state="${esc(name)}" aria-checked="${(ed || '') === name}">${esc(label)}</button>`;
+  return section('smart', t('smTitle'), `
+    <div class="sub-head">${esc(t('smDrawing'))}</div>
+    <div class="seg seg-wrap sm-states" role="radiogroup">${st('', t('smBase'))}${g.smart.props.map((pr) => st(pr.name, pr.name)).join('')}</div>
+    ${bad.length ? `<div class="compose-note warn"><p>${esc(t('smIncompat', { list: bad.map((b) => b.name).join(', ') }))}</p></div>` : ''}
+    ${g.smart.props.map((pr) => `<div class="cm-row sm-row">
+      <span class="an-name">${esc(pr.name)}</span>
+      <label><span>↓</span><input type="number" data-sm-range="${esc(pr.name)}:min" value="${pr.min}" aria-label="${esc(t('smMin'))}"></label>
+      <label><span>↑</span><input type="number" data-sm-range="${esc(pr.name)}:max" value="${pr.max}" aria-label="${esc(t('smMax'))}"></label>
+      <button class="btn btn-icon" type="button" data-sm-remove="${esc(pr.name)}" aria-label="${esc(t('smRemove'))}" data-tip="${esc(t('smRemove'))}">${icon('close', 14)}</button>
+    </div>`).join('')}
+    <button class="btn btn-block" type="button" data-cmd="smAdd">${icon('plus', 15)}<span>${esc(t('smAddProp'))}</span></button>`, true, t('smHint'));
+}
+
+function afterSmartChange(g) {
+  app.history.clear(); // undo steps hold the drawing of one state
+  refreshComponents(app.project);
+  markChanged();
+  editor.sel.clear();
+  editor.render();
+  renderGlyphPanel();
+}
+
+function smartClick(e) {
+  const g = app.current;
+  const st = e.target.closest('[data-sm-state]'), rm = e.target.closest('[data-sm-remove]');
+  if (!g || (!st && !rm)) return false;
+  endTransform();
+  if (st) { if (editState(g, st.dataset.smState || null)) afterSmartChange(g); }
+  else { removeProp(g, rm.dataset.smRemove); afterSmartChange(g); }
+  return true;
+}
+
+function setPropRange(spec, value) {
+  const g = app.current;
+  const [name, end] = [spec.slice(0, spec.lastIndexOf(':')), spec.slice(spec.lastIndexOf(':') + 1)];
+  const pr = g?.smart?.props.find((x) => x.name === name);
+  const v = Number(value);
+  if (!pr || !Number.isFinite(v)) return;
+  pr[end] = Math.round(v);
+  refreshComponents(app.project);
+  markChanged();
+}
+
+async function addPropDialog() {
+  const g = app.current;
+  if (!g) return;
+  const data = await showDialog({
+    title: t('smAddProp'),
+    body: `<label class="field">${esc(t('smName'))}<input type="text" name="name" required maxlength="24" placeholder="${esc(t('smNamePh'))}"></label>
+      <div class="field-row"><label class="field">${esc(t('smMin'))}<input type="number" name="min" value="0"></label>
+      <label class="field">${esc(t('smMax'))}<input type="number" name="max" value="100"></label></div>`,
+    okLabel: t('add'),
+  });
+  if (!data) return;
+  const name = String(data.get('name')).trim();
+  const min = Math.round(Number(data.get('min')) || 0), max = Math.round(Number(data.get('max')) || 100);
+  if (!name || max === min) return;
+  endTransform();
+  if (!addProp(g, name, min, max)) { toast(t('smTaken', { name }), 'error'); return; }
+  editState(g, name); // draw the new state right away
+  afterSmartChange(g);
+  toast(t('smDrawNow', { name }));
 }
 
 // ================================================================ anchors
@@ -4236,7 +4349,7 @@ async function installFont() {
 // The project as JSON for saving and export: the default master in place,
 // components and composed letters rebuilt for it.
 function projectJSON(p = app.project) {
-  const q = saveForm(p);
+  const q = saveForm(saveSmart(p));
   if (q !== p) { refreshComponents(q); recompose(q); }
   return serialize(q);
 }
@@ -4574,7 +4687,7 @@ const COMMANDS = {
   flOffset: () => setFilter('offset'), flRound: () => setFilter('round'), flStroke: () => setFilter('stroke'), flFit: () => setFilter('fit'), gvTiles: () => setGridView('tiles'), gvTable: () => setGridView('table'),
   duplicate: duplicateGlyphs, tmOpen: transformMetricsDialog, btExtremes: () => batch('extremes'), btRound: () => batch('round'), btMetrics: () => batch('metrics'),
   btDecompose: () => batch('decompose'), btExportOff: () => batch('exportOff'), btExportOn: () => batch('exportOn'), cmAdd: addComponentDialog, cmDecompose: decomposeCurrent,
-  anAuto: autoAnchors,
+  anAuto: autoAnchors, smAdd: addPropDialog,
   selRect: () => setSelectShape('rect'), selLasso: () => setSelectShape('lasso'),
   pxDraw: () => { editor.pixelErase = false; renderEditorOptions(); }, pxErase: () => { editor.pixelErase = true; renderEditorOptions(); },
   newCorner: () => newPartGlyph('corner'), newBrush: () => newPartGlyph('brush'),
