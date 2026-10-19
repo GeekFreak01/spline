@@ -5,7 +5,7 @@
 // A composed glyph keeps compose: { base, marks } and ordinary contours (a
 // copy of the parts), so export and every other tool see a normal glyph.
 // Editing it by hand turns it into a normal glyph (composeOff).
-import { glyphBox, clone } from './model.js';
+import { glyphBox, clone, outline, hasOutline } from './model.js';
 
 // Combining mark (from Unicode decomposition) -> the spacing mark glyph
 // that is drawn for it.
@@ -32,7 +32,7 @@ export function partsOf(ch) {
   return { base: String.fromCodePoint(cps[0]), marks };
 }
 
-const drawn = (g) => g && g.contours.length > 0 && !g.compose;
+const drawn = (g) => g && hasOutline(g) && !g.compose;
 const isUpper = (ch) => ch !== ch.toLowerCase() && ch === ch.toUpperCase();
 
 // What a glyph could be built from in this project:
@@ -58,7 +58,7 @@ function build(project, g, info) {
   if (info.missing.length) return false;
   const { info: fi } = project;
   const bbox = glyphBox(info.base);
-  const contours = clone(info.base.contours);
+  const contours = clone(outline(info.base));
   let above = bbox.maxY;
   for (let i = 0; i < info.marks.length; i++) {
     const m = info.marks[i];
@@ -72,7 +72,7 @@ function build(project, g, info) {
     if (!BELOW.has(cp) && mb.minY + dy < above + GAP) dy = above + GAP - mb.minY;
     const dx = cp === 0x2db ? bbox.maxX - mb.maxX // ogonek: at the right foot
       : (bbox.minX + bbox.maxX) / 2 - (mb.minX + mb.maxX) / 2;
-    for (const c of clone(m.contours)) {
+    for (const c of clone(outline(m))) {
       for (const n of c.nodes) {
         for (const p of [n, n.in, n.out]) if (p) { p.x = Math.round(p.x + dx); p.y = Math.round(p.y + dy); }
       }
@@ -90,7 +90,7 @@ function build(project, g, info) {
 export function recompose(project) {
   const changed = [];
   for (const g of project.glyphs) {
-    if (g.composeOff || (!g.compose && g.contours.length)) continue;
+    if (g.composeOff || g.components?.length || (!g.compose && hasOutline(g))) continue;
     const info = composeInfo(project, g);
     if (!info) { delete g.compose; continue; }
     const before = g.compose ? JSON.stringify([g.contours, g.advance]) : null;

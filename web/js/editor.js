@@ -1705,6 +1705,21 @@ export class Editor {
     ctx.globalAlpha = points ? 0.22 : 0.92;
     ctx.fill('nonzero');
     ctx.globalAlpha = 1;
+    // Components: drawn like the rest, outlined dashed (not editable here).
+    if (g.refContours?.length) {
+      ctx.save();
+      ctx.setTransform(dpr * v.scale, 0, 0, -dpr * v.scale, dpr * v.ox, dpr * v.oy);
+      const p2 = new Path2D();
+      tracePath(p2, { contours: g.refContours }, true);
+      ctx.restore();
+      ctx.save();
+      ctx.setTransform(dpr * v.scale, 0, 0, -dpr * v.scale, dpr * v.ox, dpr * v.oy);
+      ctx.strokeStyle = colors.primary;
+      ctx.lineWidth = 1.5 / v.scale;
+      ctx.setLineDash([6 / v.scale, 4 / v.scale]);
+      ctx.stroke(p2);
+      ctx.restore();
+    }
     if (points) {
       ctx.save();
       ctx.setTransform(dpr * v.scale, 0, 0, -dpr * v.scale, dpr * v.ox, dpr * v.oy);

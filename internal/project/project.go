@@ -73,6 +73,28 @@ type Glyph struct {
 	// Image is a reference picture (scan, photo) shown under the outline
 	// for tracing. It is not part of the exported font.
 	Image *Image `json:"image,omitempty"`
+	// Components are other glyphs drawn inside this one, moved by (X, Y):
+	// À is A plus the grave. RefContours is their outline as the editor
+	// last built it; the font uses Contours plus RefContours.
+	Components  []Component `json:"components,omitempty"`
+	RefContours []Contour   `json:"refContours,omitempty"`
+}
+
+// Component places another glyph inside a glyph.
+type Component struct {
+	Glyph string  `json:"glyph"`
+	X     float64 `json:"x"`
+	Y     float64 `json:"y"`
+}
+
+// Outline is everything the glyph draws: its own contours and those of
+// its components.
+func (g *Glyph) Outline() []Contour {
+	if len(g.RefContours) == 0 {
+		return g.Contours
+	}
+	out := make([]Contour, 0, len(g.Contours)+len(g.RefContours))
+	return append(append(out, g.Contours...), g.RefContours...)
 }
 
 // Compose lists the glyphs a composed letter is made of.
@@ -256,7 +278,10 @@ func (p *Project) Validate() error {
 		if len(g.Contours) > maxContours {
 			return fmt.Errorf("glyph %q has too many contours", g.Name)
 		}
-		for _, c := range g.Contours {
+		if len(g.RefContours) > maxContours {
+			return fmt.Errorf("glyph %q has too many component contours", g.Name)
+		}
+		for _, c := range g.Outline() {
 			nodes += len(c.Nodes)
 			for _, n := range c.Nodes {
 				if !okCoord(n.X) || !okCoord(n.Y) {

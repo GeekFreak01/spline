@@ -33,8 +33,16 @@ export function charOf(g) {
   return g.unicode ? String.fromCodePoint(g.unicode) : '';
 }
 
+// Everything a glyph draws: its own contours and its components' (see
+// components.js). Only the own contours are editable.
+export function outline(g) {
+  return g.refContours?.length ? [...g.contours, ...g.refContours] : g.contours;
+}
+
+export const hasOutline = (g) => g.contours.length > 0 || g.refContours?.length > 0;
+
 export function isDrawn(g) {
-  return g.contours.length > 0 || g.unicode === 32;
+  return hasOutline(g) || g.unicode === 32;
 }
 
 // Accepts any parsed JSON and returns a clean project or throws.
@@ -68,6 +76,11 @@ export function validateProject(p) {
     if (!(g.compose && typeof g.compose.base === 'string' && Array.isArray(g.compose.marks))) delete g.compose;
     if (g.composeOff !== true) delete g.composeOff;
     if (!Array.isArray(g.background) || !g.background.length) delete g.background;
+    g.components = (Array.isArray(g.components) ? g.components : [])
+      .filter((k) => k && typeof k.glyph === 'string' && k.glyph && k.glyph !== g.name)
+      .map((k) => ({ glyph: k.glyph, x: Number(k.x) || 0, y: Number(k.y) || 0 }));
+    if (!g.components.length) delete g.components;
+    if (!Array.isArray(g.refContours) || !g.refContours.length) delete g.refContours;
     if (Array.isArray(g.snapshots)) g.snapshots = g.snapshots.filter((x) => x && Array.isArray(x.contours) && Number.isFinite(x.advance)).slice(-20);
     if (!g.snapshots?.length) delete g.snapshots;
     for (const k of ['lsbKey', 'rsbKey', 'widthKey']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];
@@ -156,7 +169,7 @@ export function polyBox(pts) {
 }
 
 export function glyphBox(g) {
-  const pts = g.contours.flatMap((c) => flatten(c, 8));
+  const pts = outline(g).flatMap((c) => flatten(c, 8));
   return pts.length ? polyBox(pts) : null;
 }
 
@@ -193,7 +206,7 @@ export function normalizeDirections(g) {
 
 // Canvas / SVG path for a glyph in font units (y up).
 export function tracePath(ctx, g, closedOnly = false) {
-  for (const c of g.contours) {
+  for (const c of outline(g)) {
     if (!c.nodes.length || (closedOnly && !c.closed)) continue;
     const segs = segments(c);
     ctx.moveTo(c.nodes[0].x, c.nodes[0].y);
@@ -208,7 +221,7 @@ export function tracePath(ctx, g, closedOnly = false) {
 export function svgPath(g) {
   const r = (v) => Math.round(v);
   let d = '';
-  for (const c of g.contours) {
+  for (const c of outline(g)) {
     if (!c.nodes.length) continue;
     d += `M${r(c.nodes[0].x)} ${r(c.nodes[0].y)}`;
     for (const s of segments({ ...c, closed: true })) {
@@ -222,7 +235,8 @@ export function svgPath(g) {
 
 // Moves every point of a glyph by dx, dy.
 export function translateGlyph(g, dx, dy) {
-  for (const c of g.contours) for (const n of c.nodes) movePoint(n, dx, dy, true);
+  for (const c of outline(g)) for (const n of c.nodes) movePoint(n, dx, dy, true);
+  for (const k of g.components || []) { k.x += dx; k.y += dy; }
 }
 
 export function movePoint(n, dx, dy, withHandles) {

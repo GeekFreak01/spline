@@ -134,7 +134,7 @@ func prepare(p *project.Project, f Format) *fontData {
 	// another font instead of showing an empty gap. Spaces stay.
 	src := []project.Glyph{notdef}
 	for _, g := range p.Glyphs {
-		if len(g.Contours) > 0 || (g.Unicode > 0 && unicode.IsSpace(rune(g.Unicode))) {
+		if len(g.Outline()) > 0 || (g.Unicode > 0 && unicode.IsSpace(rune(g.Unicode))) {
 			src = append(src, g)
 		}
 	}
@@ -154,9 +154,9 @@ func prepare(p *project.Project, f Format) *fontData {
 			fd.gid[g.Name] = len(fd.glyphs)
 		}
 		if f == TTF {
-			gd.contours = normalize(g.Contours, false)
+			gd.contours = normalize(g.Outline(), false)
 		} else {
-			gd.contours = normalize(g.Contours, true)
+			gd.contours = normalize(g.Outline(), true)
 		}
 		gd.contours = roundContours(gd.contours)
 		gd.bbox, gd.empty = contoursBox(gd.contours, f)

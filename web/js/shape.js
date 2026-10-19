@@ -1,14 +1,14 @@
 // Shape analysis for kerning help: side profiles of glyphs, grouping by the
 // shape of a side, and a kerning estimate from the white space between two
 // letters.
-import { flatten, charOf } from './model.js';
+import { flatten, charOf, outline, hasOutline } from './model.js';
 
 const ROWS = 48;
 
 // Left and right ink edge of a glyph on ROWS horizontal lines between y0 and
 // y1: { left: [x | null], right: [x | null], minX, maxX }. null = no ink.
 export function profile(g, y0, y1) {
-  const polys = g.contours.filter((c) => c.closed && c.nodes.length > 1).map((c) => flatten(c, 16));
+  const polys = outline(g).filter((c) => c.closed && c.nodes.length > 1).map((c) => flatten(c, 16));
   const left = [], right = [];
   let minX = Infinity, maxX = -Infinity;
   for (let i = 0; i < ROWS; i++) {
@@ -76,7 +76,7 @@ export function proposeGroups(glyphs, info, side, tolerance) {
   const byKind = new Map();
   for (const g of glyphs) {
     const kind = letterKind(charOf(g));
-    if (!kind || !g.contours.length) continue;
+    if (!kind || !hasOutline(g)) continue;
     if (!byKind.has(kind)) byKind.set(kind, []);
     byKind.get(kind).push({ g, shape: sideShapes(g, info, kind)[side] });
   }

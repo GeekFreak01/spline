@@ -1,6 +1,6 @@
 // Kerning view: a line of text set with the font's own outlines. The cursor
 // sits between two letters; that pair is the one being kerned.
-import { tracePath, charOf, glyphBox } from './model.js';
+import { tracePath, charOf, glyphBox, hasOutline } from './model.js';
 
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -298,7 +298,7 @@ export class KernView {
         ctx.fillStyle = css('--accent-soft');
         ctx.fillRect(it.x, top, it.adv, (info.ascender - info.descender) * s);
       }
-      if (it.g && it.g.contours.length) {
+      if (it.g && hasOutline(it.g)) {
         ctx.save();
         ctx.setTransform(dpr * s, 0, 0, -dpr * s, dpr * it.x, dpr * it.baseline);
         ctx.beginPath();
@@ -322,7 +322,7 @@ export class KernView {
     if (pr && this.showGroupMembers) {
       const L = items[this.cursor - 1], R = items[this.cursor];
       const ghost = (g, x, baseline) => {
-        if (!g.contours.length) return;
+        if (!hasOutline(g)) return;
         ctx.save();
         ctx.setTransform(dpr * s, 0, 0, -dpr * s, dpr * x, dpr * baseline);
         ctx.beginPath();

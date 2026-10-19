@@ -3,8 +3,9 @@ import { icon, fillIcons } from './icons.js';
 import { CATEGORIES, COLORS } from './glyphsets.js';
 import {
   newProject, validateProject, serialize, addGlyphForChar, charOf, isDrawn, svgPath, glyphBox,
-  translateGlyph, normalizeDirections,
+  translateGlyph, normalizeDirections, hasOutline,
 } from './model.js';
+import { refreshComponents, usedBy, decompose } from './components.js';
 import { History, KERNING, GROUPS } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
 import { Editor } from './editor.js';
@@ -89,7 +90,7 @@ function toast(msg, kind = 'ok') {
 }
 
 // Modal dialog. Resolves with FormData (OK) or null (cancel).
-function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true }) {
+function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true, onOpen = null }) {
   const dlg = $('dialog');
   dlg.innerHTML = `<form method="dialog">
     <h2>${esc(title)}</h2>
@@ -105,6 +106,7 @@ function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', c
     form.addEventListener('submit', (e) => { if (e.submitter?.value === 'ok') data = new FormData(form); });
     dlg.addEventListener('close', () => resolve(data), { once: true });
     dlg.showModal();
+    onOpen?.(dlg);
     const first = dlg.querySelector('input:not([type=checkbox])');
     if (first) { first.focus(); first.select?.(); }
   });
@@ -131,6 +133,7 @@ const selectedGlyphs = () => [...app.selected].map(findGlyph).filter(Boolean);
 // ================================================================ project state
 
 function setProject(p, { fileName = null, fileHandle = null, serverFile = null } = {}) {
+  refreshComponents(p);
   recompose(p);
   app.project = p;
   app.fileName = fileName;
@@ -161,7 +164,8 @@ function updateTitle() {
 
 let autosaveTimer;
 function markChanged() {
-  for (const g of recompose(app.project)) if (app.mode === 'grid') updateTile(g);
+  const touched = new Set([...refreshComponents(app.project), ...recompose(app.project)]);
+  if (app.mode === 'grid') touched.forEach(updateTile);
   setDirty(true);
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(autosave, 700);
@@ -283,6 +287,8 @@ function menuDefs() {
       { label: 'joinContours', key: keyLabel('joinContours'), run: joinContours, enabled: inEditor && editor.sel.size > 0, ext: true },
       { label: 'bgCopy', key: keyLabel('bgCopy'), run: () => backgroundOp('copy'), enabled: inEditor, ext: true },
       { label: 'bgSwap', run: () => backgroundOp('swap'), enabled: inEditor, ext: true },
+      { label: 'cmAddMenu', run: addComponentDialog, enabled: inEditor, ext: true },
+      { label: 'cmDecomposeMenu', run: decomposeCurrent, enabled: inEditor && !!app.current?.components?.length, ext: true },
       { label: 'updateMetrics', key: keyLabel('updateMetrics'), run: updateAllMetrics, ext: true },
       '-',
       ...PATH_OPS.map((op) => ({ label: op.label, key: keyLabel(`op.${op.id}`), run: () => runPathOp(op.id), enabled: inEditor })),
@@ -547,7 +553,7 @@ $('sideMetrics').addEventListener('change', onMetricChange);
 
 function tileHTML(g) {
   const ch = charOf(g);
-  const drawn = g.contours.length > 0;
+  const drawn = hasOutline(g);
   const body = drawn || g.unicode === 32 ? glyphSVG(g)
     : g.image ? `<img class="ref" src="${esc(g.image.data)}" alt="" aria-hidden="true">`
       : `<span class="ghost" aria-hidden="true">${esc(ch)}</span>`;
@@ -598,6 +604,7 @@ function selectGlyph(name, e = {}) {
   renderInspector();
   renderSideMetrics();
   updateStatus();
+  if (app.extended) renderPreviewText();
 }
 
 $('glyphGrid').addEventListener('click', (e) => {
@@ -740,7 +747,7 @@ function renderInspectorBody() {
   }
   const g = sel[0];
   const head = sel.length === 1
-    ? `<div class="big-glyph">${g.contours.length ? glyphSVG(g) : `<span class="ghost">${esc(charOf(g))}</span>`}</div>
+    ? `<div class="big-glyph">${hasOutline(g) ? glyphSVG(g) : `<span class="ghost">${esc(charOf(g))}</span>`}</div>
        <div class="title-row"><b>${esc(charOf(g).trim() || g.name)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>`
     : `<div class="title-row"><b>${sel.length}</b><small>${esc(t('glyphs'))}: ${esc(sel.slice(0, 24).map((x) => charOf(x) || x.name).join(' '))}</small></div>`;
   el.innerHTML = section('glyph', t('dimensions'), `${head}
@@ -776,7 +783,7 @@ function renderGlyphPanelBody() {
     + section('pathops', t('pathOps'), `<div class="op-row">${PATH_OPS.map((op) => `<button class="btn btn-icon" type="button"
         data-pathop="${op.id}" data-tip="${esc(t(op.label))}" data-key="${esc(keyLabel(`op.${op.id}`))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
 `)
-    + (app.extended ? pointsSection() + backgroundSection(g) : '')
+    + (app.extended ? componentsSection(g) + pointsSection() + backgroundSection(g) : '')
     + alignSection()
     + transformSection()
     + variantsSection(g)
@@ -936,7 +943,7 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['components', 'cmTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
 initPanels({
@@ -949,7 +956,7 @@ initPanels({
   icons: { dock: icon('panelDock', 14), close: icon('close', 14), collapse: icon('chevronRight', 14) },
   panelIcons: {
     glyph: icon('pen', 18), selection: icon('select', 18), pathops: icon('opUnite', 18), align: icon('alignHCenter', 18),
-    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), actions: icon('spacing', 18), font: icon('type', 18),
+    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), components: icon('components', 18), actions: icon('spacing', 18), font: icon('type', 18),
     kernPair: icon('kerning', 18), kernSpacing: icon('spacing', 18), kernSuggest: icon('check', 18), kernList: icon('search', 18),
   },
   onChange: () => renderMenus(),
@@ -970,6 +977,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
   }, true);
   dock.addEventListener('change', (e) => {
     if (onVariantsChange(e)) return;
+    if (e.target.dataset.cmpos) { moveComponent(e.target.dataset.cmpos, Number(e.target.value)); return; }
     if (e.target.dataset.ul) { setUnderlayValue(e.target.dataset.ul, Number(e.target.value), true); return; }
     if (e.target.id === 'bgShow') { editor.showBackground = e.target.checked; store.set('spline.showBackground', e.target.checked ? '1' : '0'); editor.render(); return; }
     if (e.target.dataset.kgroup) {
@@ -1004,6 +1012,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
   dock.addEventListener('click', (e) => {
     if (onVariantsClick(e)) return;
     if (snapshotClick(e)) return;
+    if (componentClick(e)) return;
     const sw = e.target.closest('[data-role="colorPick"] [data-color]');
     if (sw) { setColor(sw.dataset.color); return; }
     const al = e.target.closest('[data-align]');
@@ -1229,14 +1238,52 @@ function deleteSelection() {
 
 // ================================================================ dialogs
 
+// Extended mode: glyphs by code and range. Presets cover whole alphabets.
+const AG_PRESETS = [
+  ['latin1', 'U+00C0-00FF'], ['latinExtA', 'U+0100-017F'], ['cyrillic', 'U+0400-045F'],
+  ['cyrillicExt', 'U+0460-04FF'], ['greek', 'U+0391-03C9'], ['punctExt', 'U+2010-2027, U+2030-203A, U+20AC, U+2116, U+2122'],
+];
+
+// "U+0410-044F, uni0401, А-Я, A-Z" -> characters; null when unreadable.
+function parseCodes(text) {
+  const hex = (h) => parseInt(h.replace(/^(U\+|uni|u)/i, ''), 16);
+  const out = [];
+  for (const tok of text.split(/[,;\s]+/).filter(Boolean)) {
+    let m;
+    if ((m = /^(?:U\+|uni|u)([0-9a-f]{4,6})(?:[-–:](?:U\+|uni|u)?([0-9a-f]{4,6}))?$/i.exec(tok))) {
+      const a = hex(m[1]), b = m[2] ? hex(m[2]) : a;
+      if (!(a <= b) || b - a > 3000) return null;
+      for (let c = a; c <= b; c++) if (!(c >= 0xd800 && c <= 0xdfff)) out.push(String.fromCodePoint(c));
+    } else if ((m = /^(.)[-–](.)$/u.exec(tok))) {
+      const a = m[1].codePointAt(0), b = m[2].codePointAt(0);
+      if (!(a <= b) || b - a > 3000) return null;
+      for (let c = a; c <= b; c++) out.push(String.fromCodePoint(c));
+    } else if ([...tok].length === 1) {
+      out.push(tok);
+    } else return null;
+  }
+  // Only real characters: letters, marks, digits, punctuation, symbols.
+  return out.filter((c) => /[\p{L}\p{M}\p{N}\p{P}\p{S}]/u.test(c)).slice(0, 3000);
+}
+
 async function addGlyphs() {
   const data = await showDialog({
     title: t('addGlyph').replace('…', ''),
-    body: `<label class="field">${esc(t('addGlyphHint'))}<input type="text" name="chars" required maxlength="500" autocomplete="off"></label>`,
+    body: `<label class="field">${esc(t('addGlyphHint'))}<input type="text" name="chars" ${app.extended ? '' : 'required'} maxlength="500" autocomplete="off"></label>
+      ${app.extended ? `<label class="field">${esc(t('agCodes'))}<input type="text" name="codes" id="agCodes" maxlength="500" autocomplete="off" placeholder="U+0400-045F, uni0490, А-Я"></label>
+      <div class="ag-presets">${AG_PRESETS.map(([id, codes]) => `<button class="btn" type="button" data-ag="${codes}">${esc(t('ag_' + id))}</button>`).join('')}</div>
+      <p class="hint">${esc(t('agHint'))}</p>` : ''}`,
     okLabel: t('add'),
+    onOpen: (dlg) => dlg.querySelectorAll('[data-ag]').forEach((b) => b.addEventListener('click', () => {
+      const f = dlg.querySelector('#agCodes');
+      f.value = [f.value.trim(), b.dataset.ag].filter(Boolean).join(', ');
+    })),
   });
   if (!data) return;
-  const chars = [...new Set(Array.from(String(data.get('chars'))))].filter((c) => c !== '\n');
+  const typed = Array.from(String(data.get('chars') || ''));
+  const coded = app.extended ? parseCodes(String(data.get('codes') || '')) : [];
+  if (coded === null) { toast(t('agBad'), 'error'); return; }
+  const chars = [...new Set([...typed, ...coded])].filter((c) => c !== '\n' && c.trim());
   const added = chars.map((c) => addGlyphForChar(app.project, c)).filter(Boolean);
   if (!added.length) { toast(t('exists'), 'error'); return; }
   app.category = 'all';
@@ -2112,7 +2159,7 @@ function shapeGroupsProposal() {
   const p = app.project, info = p.info;
   const bases = p.glyphs.filter((g) => {
     const ch = charOf(g);
-    return g.contours.length && letterKind(ch) && baseLetter(ch) === ch;
+    return hasOutline(g) && letterKind(ch) && baseLetter(ch) === ch;
   });
   const result = {};
   for (const side of ['left', 'right']) {
@@ -2218,8 +2265,8 @@ function suggestKerning() {
   const refOf = (g, kind) => {
     const cyr = /[а-яёА-ЯЁ]/.test(charOf(g));
     const c = kind === 'small' ? (cyr ? 'н' : 'n') : (cyr ? 'Н' : 'H');
-    return p.glyphs.find((x) => x.unicode === c.codePointAt(0) && x.contours.length)
-      || p.glyphs.find((x) => x.unicode === (kind === 'small' ? 110 : 72) && x.contours.length);
+    return p.glyphs.find((x) => x.unicode === c.codePointAt(0) && hasOutline(x))
+      || p.glyphs.find((x) => x.unicode === (kind === 'small' ? 110 : 72) && hasOutline(x));
   };
   const kindOf = (g) => letterKind(charOf(g)) || 'other';
   // How much white a side brings next to its own control letter, minus
@@ -2234,7 +2281,7 @@ function suggestKerning() {
   const out = [], seen = new Set();
   for (let i = 1; i < items.length; i++) {
     const L = items[i - 1].g, R = items[i].g;
-    if (!L || !R || !L.contours.length || !R.contours.length || !charOf(L).trim() || !charOf(R).trim()) continue;
+    if (!L || !R || !hasOutline(L) || !hasOutline(R) || !charOf(L).trim() || !charOf(R).trim()) continue;
     const a = side(L, 'right'), b = side(R, 'left'), have = pairGap(L, R, zone);
     if (!a || !b || !have) continue;
     // The eye does not read a gap as fully as geometry does (a diagonal
@@ -2790,7 +2837,7 @@ function applyHistory(name) {
     editor.sel.clear();
     editor.penContour = null;
     editor.render();
-    updateMetricInputs();
+    renderGlyphPanel(); // components, notes and keys may have changed
     syncTransformFields();
   } else {
     const g = findGlyph(name);
@@ -2870,6 +2917,101 @@ function backgroundSection(g) {
       <button class="btn btn-icon" type="button" data-snap-delete="${i}" aria-label="${esc(t('snapDelete'))}" data-tip="${esc(t('snapDelete'))}">${icon('trash', 14)}</button>
     </div>`).join('') || `<p class="hint">${esc(t('snapHint'))}</p>`}
     <button class="btn btn-block" type="button" data-cmd="snapSave">${icon('plus', 15)}<span>${esc(t('snapSave'))}</span></button>`, false);
+}
+
+// ================================================================ components
+
+function componentsSection(g) {
+  const label = (name) => { const x = findGlyph(name); return x ? (charOf(x).trim() || x.name) : name; };
+  const rows = (g.components || []).map((k, i) => `<div class="cm-row">
+      <button class="btn cm-name" type="button" data-cm-open="${esc(k.glyph)}" data-tip="${esc(t('cmOpenTip'))}">${esc(label(k.glyph))}</button>
+      <label><span>X</span><input type="number" step="1" data-cmpos="${i}:x" value="${Math.round(k.x)}"></label>
+      <label><span>Y</span><input type="number" step="1" data-cmpos="${i}:y" value="${Math.round(k.y)}"></label>
+      <button class="btn btn-icon" type="button" data-cm-remove="${i}" aria-label="${esc(t('cmRemove'))}" data-tip="${esc(t('cmRemove'))}">${icon('close', 14)}</button>
+    </div>`).join('');
+  const users = usedBy(app.project, g.name);
+  return section('components', t('cmTitle'), `
+    ${rows || `<p class="hint">${esc(t('cmHint'))}</p>`}
+    <div class="btn-row">
+      <button class="btn" type="button" data-cmd="cmAdd">${icon('plus', 15)}<span>${esc(t('cmAddShort'))}</span></button>
+      <button class="btn" type="button" data-cmd="cmDecompose" data-tip="${esc(t('cmDecomposeTip'))}" ${g.components?.length ? '' : 'disabled'}>${esc(t('cmDecompose'))}</button>
+    </div>
+    ${users.length ? `<div class="sub-head">${esc(t('cmUsedBy'))}</div><div class="cm-users">${users.map((u) => `<button class="btn" type="button" data-cm-open="${esc(u.name)}">${esc(charOf(u).trim() || u.name)}</button>`).join('')}</div>` : ''}`,
+  !!(g.components?.length || users.length));
+}
+
+function componentClick(e) {
+  const open = e.target.closest('[data-cm-open]'), rm = e.target.closest('[data-cm-remove]');
+  if (open) { openEditor(open.dataset.cmOpen); return true; }
+  if (!rm) return false;
+  const g = app.current;
+  app.history.push(g);
+  g.components.splice(Number(rm.dataset.cmRemove), 1);
+  if (!g.components.length) delete g.components;
+  markChanged();
+  afterGlyphChange(g);
+  return true;
+}
+
+function moveComponent(spec, v) {
+  const g = app.current;
+  const [i, axis] = spec.split(':');
+  const k = g?.components?.[Number(i)];
+  if (!k || !Number.isFinite(v)) return;
+  app.history.push(g);
+  k[axis] = Math.round(v);
+  markChanged();
+  updateMetricInputs();
+  editor.render();
+}
+
+// Adds a glyph as a component. A mark goes over the middle of what is
+// already drawn, raised for capitals, like the automatic letters.
+async function addComponentDialog() {
+  const g = app.current;
+  if (!g) return;
+  const opts = app.project.glyphs.filter((x) => x !== g).map((x) => `<option value="${esc(charOf(x).trim() || x.name)}">${esc(x.name)}</option>`).join('');
+  const data = await showDialog({
+    title: t('cmAddTitle'),
+    body: `<label class="field">${esc(t('cmAddLabel'))}<input type="text" name="glyph" list="cmList" required autocomplete="off" placeholder="A, uni0410, grave"></label>
+      <datalist id="cmList">${opts}</datalist><p class="hint">${esc(t('cmAddHint'))}</p>`,
+    okLabel: t('cmAddShort'),
+  });
+  if (!data) return;
+  const ref = String(data.get('glyph')).trim();
+  const src = findGlyph(ref) || ([...ref].length === 1 ? app.project.glyphs.find((x) => x.unicode === ref.codePointAt(0)) : null);
+  if (!src || src === g) { toast(t('cmNotFound', { name: ref }), 'error'); return; }
+  if (src.components?.some((k) => k.glyph === g.name)) { toast(t('cmLoop'), 'error'); return; }
+  let x = 0, y = 0;
+  // An automatic letter (compose.js) becomes one built from components.
+  const wasAuto = !!g.compose;
+  app.history.push(g);
+  if (wasAuto) g.contours = [];
+  const box = glyphBox(g), sb = glyphBox(src);
+  if (box && sb) {
+    // Something is there already: centre the new part over it.
+    x = Math.round((box.minX + box.maxX) / 2 - (sb.minX + sb.maxX) / 2);
+    const ch = charOf(g);
+    const mark = /\p{Sk}|\p{Mn}/u.test(charOf(src));
+    const fi = app.project.info;
+    if (mark && ch && ch === ch.toUpperCase() && ch !== ch.toLowerCase()) y = fi.capHeight - fi.xHeight;
+  }
+  (g.components ||= []).push({ glyph: src.name, x, y });
+  if (!box) g.advance = src.advance;
+  delete g.compose;
+  g.composeOff = true;
+  markChanged();
+  afterGlyphChange(g);
+}
+
+function decomposeCurrent() {
+  const g = app.current;
+  if (!g?.components?.length) return;
+  app.history.push(g);
+  decompose(g);
+  editor.afterEdit();
+  renderGlyphPanel();
+  toast(t('cmDecomposed'));
 }
 
 // Snapshots: saved versions of a glyph to come back to (extended mode).
@@ -2956,6 +3098,7 @@ const composeState = (g) => (g.compose ? 'auto' : g.composeOff ? 'manual' : 'non
 
 // Й = И + ˘: tells how the letter is made and offers the other way.
 function composeNoteHTML(g) {
+  if (g.components?.length) return ''; // built from components by hand
   const info = composeInfo(app.project, g);
   if (!info) return '';
   const parts = [info.baseChar, ...info.markChars].join(' + ');
@@ -3513,7 +3656,7 @@ const COMMANDS = {
   ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
   ptBreak: breakContour, ptJoin: joinContours, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
   bgClear: () => backgroundOp('clear'),
-  ptEven: evenHandles, snapSave: saveSnapshot,
+  ptEven: evenHandles, snapSave: saveSnapshot, cmAdd: addComponentDialog, cmDecompose: decomposeCurrent,
   selRect: () => setSelectShape('rect'), selLasso: () => setSelectShape('lasso'),
   ulFitCap: () => fitUnderlay('cap'), ulFitX: () => fitUnderlay('x'), ulFitAll: () => fitUnderlay('all'),
 };
@@ -3656,7 +3799,7 @@ function schedulePreview(delay = 500) {
 
 async function updatePreview() {
   const msg = $('previewMsg');
-  if (!app.project.glyphs.some((g) => g.contours.length)) {
+  if (!app.project.glyphs.some(hasOutline)) {
     msg.textContent = t('previewEmpty');
     $('previewOut').hidden = true;
     return;
@@ -3689,13 +3832,14 @@ async function updatePreview() {
 // editor, so "HH*HH OO*OO" shows it between control letters.
 function previewText() {
   const text = $('previewInput').value;
-  const cur = app.extended && app.mode === 'editor' && app.current ? charOf(app.current) : '';
+  const g = app.mode === 'editor' ? app.current : app.selected.size === 1 ? findGlyph([...app.selected][0]) : null;
+  const cur = app.extended && g ? charOf(g) : '';
   return cur ? text.replaceAll('*', cur) : text;
 }
 
 function renderPreviewText() {
   if (!app.project) return;
-  const drawn = new Set(app.project.glyphs.filter((g) => g.contours.length || g.unicode === 32).map((g) => g.unicode));
+  const drawn = new Set(app.project.glyphs.filter((g) => hasOutline(g) || g.unicode === 32).map((g) => g.unicode));
   const out = $('previewOut');
   out.textContent = '';
   let run = '', runMine = null;

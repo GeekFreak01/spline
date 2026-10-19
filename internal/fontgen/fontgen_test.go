@@ -211,3 +211,31 @@ func TestPSNameCyrillic(t *testing.T) {
 		}
 	}
 }
+
+// A glyph made only of components is exported with their outline.
+func TestComponentsExported(t *testing.T) {
+	p := testProject()
+	h := p.Glyphs[1]
+	p.Glyphs = append(p.Glyphs, project.Glyph{
+		Name: "Hcomp", Unicode: 'Ĥ', Advance: 600,
+		Components:  []project.Component{{Glyph: "H"}},
+		RefContours: h.Contours,
+	})
+	data, err := Build(p, TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := sfnt.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf sfnt.Buffer
+	gi, err := f.GlyphIndex(&buf, 'Ĥ')
+	if err != nil || gi == 0 {
+		t.Fatalf("component glyph missing from the font: %v", err)
+	}
+	segs, err := f.LoadGlyph(&buf, gi, fixed.I(1000), nil)
+	if err != nil || len(segs) == 0 {
+		t.Fatalf("component glyph has no outline: %v", err)
+	}
+}

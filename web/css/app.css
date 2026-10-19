@@ -682,3 +682,12 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 :root[data-mode="extended"] .ext-only { display: inline-flex !important; }
 .snap-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px; align-items: center; font-size: var(--fs-s); color: var(--text-2); }
 .snap-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cm-row { display: grid; grid-template-columns: minmax(36px, auto) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 4px; align-items: center; }
+.cm-row label { display: grid; grid-template-columns: 12px minmax(0, 1fr); align-items: center; gap: 2px; font-size: var(--fs-s); color: var(--text-3); }
+.cm-row input { width: 100%; }
+.cm-name { font-size: 15px; padding: 0 8px; }
+.cm-users { display: flex; flex-wrap: wrap; gap: 4px; }
+.cm-users .btn { min-width: 32px; padding: 0 8px; }
+
+.ag-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
