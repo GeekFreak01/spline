@@ -709,13 +709,13 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 
 /* Extended mode: the glyph list as a table. */
 .glyph-grid.as-table { display: block; padding: 0; }
-.glyph-table { width: 100%; border-collapse: collapse; font-size: var(--fs-s); }
+.glyph-table { width: 100%; border-collapse: collapse; font-size: var(--fs-s); background: var(--bg-panel); }
 .glyph-table th { position: sticky; top: 0; z-index: 1; background: var(--bg-panel); text-align: left; border-bottom: 1px solid var(--line); padding: 0; }
 .glyph-table th button { width: 100%; min-height: 30px; padding: 0 8px; border: 0; background: none; color: var(--text-3); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 .glyph-table th button:hover { color: var(--text); }
 .glyph-table td { padding: 2px 4px; border-bottom: 1px solid var(--line-soft); }
 .glyph-table tr.trow { cursor: default; }
-.glyph-table tr.trow:hover { background: var(--bg-hover, rgba(255,255,255,0.03)); }
+.glyph-table tr.trow:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .glyph-table tr.trow[aria-selected="true"] { background: var(--accent-soft); }
 .glyph-table input[type="text"], .glyph-table input[type="number"] { width: 100%; min-width: 48px; background: transparent; border: 1px solid transparent; }
 .glyph-table input:hover, .glyph-table input:focus { border-color: var(--line-soft); background: var(--bg-input); }
@@ -730,3 +730,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .seg.seg-wrap { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; }
 .seg.seg-wrap button { padding: 0 4px; }
 .dialog .tm-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) 90px; align-items: center; gap: 8px; margin-bottom: 6px; }
+
+.part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.part-row select { min-width: 0; }
+.mkeys-head { margin-top: 6px; cursor: help; }

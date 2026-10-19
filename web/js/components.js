@@ -6,6 +6,7 @@
 // the outline built from it, used for drawing, measuring and export. It is
 // rebuilt here whenever the project changes.
 import { clone } from './model.js';
+import { partsOutline } from './parts.js';
 
 const MAX_DEPTH = 6; // components inside components, but no endless loops
 
@@ -31,11 +32,15 @@ export function refreshComponents(project) {
   const byName = new Map(project.glyphs.map((g) => [g.name, g]));
   const changed = [];
   for (const g of project.glyphs) {
-    if (!g.components?.length) {
+    const hasParts = g.contours.some((c) => c.brush || c.nodes.some((n) => n.corner));
+    if (!g.components?.length && !hasParts) {
       if (g.refContours) { delete g.refContours; changed.push(g); }
       continue;
     }
-    const next = build(project, g, byName, 0, new Set([g.name]));
+    const next = [
+      ...(g.components?.length ? build(project, g, byName, 0, new Set([g.name])) : []),
+      ...(hasParts ? partsOutline(project, g, byName) : []),
+    ];
     if (JSON.stringify(next) === JSON.stringify(g.refContours || [])) continue;
     if (next.length) g.refContours = next; else delete g.refContours;
     changed.push(g);
@@ -51,6 +56,10 @@ export function usedBy(project, name) {
 // Turns the components of g into its own, editable contours.
 export function decompose(g) {
   g.contours = [...g.contours, ...clone(g.refContours || [])];
+  for (const c of g.contours) {
+    delete c.brush;
+    for (const n of c.nodes) delete n.corner;
+  }
   delete g.components;
   delete g.refContours;
 }

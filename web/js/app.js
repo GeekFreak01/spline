@@ -3,9 +3,10 @@ import { icon, fillIcons } from './icons.js';
 import { CATEGORIES, COLORS } from './glyphsets.js';
 import {
   newProject, validateProject, serialize, addGlyphForChar, charOf, isDrawn, svgPath, glyphBox,
-  translateGlyph, normalizeDirections, hasOutline,
+  translateGlyph, normalizeDirections, hasOutline, rectContour, ellipseContour,
 } from './model.js';
 import { refreshComponents, usedBy, decompose } from './components.js';
+import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
@@ -38,7 +39,7 @@ setDefaults({
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
   snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
-  'tool.measure': ['M'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
+  'tool.measure': ['M'], 'tool.pixel': ['G'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
   'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'],
   'op.unite': ['Ctrl+Alt+U'], 'op.subtract': ['Ctrl+Alt+M'], 'op.intersect': ['Ctrl+Alt+I'],
   'op.exclude': ['Ctrl+Alt+E'], 'op.divide': ['Ctrl+Alt+D'], 'op.removeOverlap': ['Ctrl+Alt+O'],
@@ -56,6 +57,7 @@ const TOOLS = [
   { id: 'knife', icon: 'knife', key: 'K' },
   { id: 'hand', icon: 'hand', key: 'H' },
   { id: 'measure', icon: 'ruler', key: 'M', ext: true },
+  { id: 'pixel', icon: 'pixel', key: 'G', ext: true },
 ];
 const visibleTools = () => TOOLS.filter((tl) => !tl.ext || app.extended);
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
@@ -546,9 +548,10 @@ function renderSideMetrics() {
 // longer matches its glyph is marked; "Update Metrics" applies it.
 function metricKeysHTML(g) {
   const stale = new Set(outOfSync(app.project, g));
-  const f = (role) => `<input type="text" data-mkey="${role}" value="${esc(g[KEY_FIELDS[role]] || '')}" placeholder="=n"
+  const f = (role) => `<input type="text" data-mkey="${role}" aria-label="${esc(t('mkLabel') + ': ' + t(role === 'advance' ? 'width' : role))}" value="${esc(g[KEY_FIELDS[role]] || '')}" placeholder="=n"
     class="${stale.has(role) ? 'stale' : ''}" data-tip="${esc(t(stale.has(role) ? 'mkStale' : 'mkTip'))}" spellcheck="false" autocomplete="off">`;
-  return `<div class="metrics-widget mkeys">${f('lsb')}${f('advance')}${f('rsb')}</div>`;
+  return `<div class="sub-head mkeys-head" data-tip="${esc(t('mkTip'))}">${esc(t('mkLabel'))}</div>
+    <div class="metrics-widget mkeys">${f('lsb')}${f('advance')}${f('rsb')}</div>`;
 }
 
 function onMetricKeyChange(e) {
@@ -628,16 +631,16 @@ function tableHTML(list) {
     return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * Number(dir);
   }) : list;
   const head = TABLE_COLS.map((c) => c === 'glyph' ? '<th></th>' : `<th><button type="button" data-sort="${c}" aria-sort="${col === c ? (dir === '1' ? 'ascending' : 'descending') : 'none'}">${esc(t('tc_' + c))}${col === c ? (dir === '1' ? ' ▲' : ' ▼') : ''}</button></th>`).join('');
-  const num = (g, k, v) => `<input type="number" step="1" data-cell="${k}" value="${v === null ? '' : Math.round(v)}" ${v === null ? 'disabled' : ''}>`;
+  const num = (g, k, v) => `<input type="number" step="1" data-cell="${k}" aria-label="${esc(t('tc_' + k))} ${esc(g.name)}" value="${v === null ? '' : Math.round(v)}" ${v === null ? 'disabled' : ''}>`;
   const body = rows.map((g) => {
     const sd = sides(g);
     return `<tr class="trow" data-name="${esc(g.name)}" aria-selected="${app.selected.has(g.name)}">
       <td class="tg">${hasOutline(g) ? glyphSVG(g, 'tglyph') : `<span class="ghost">${esc(charOf(g))}</span>`}</td>
-      <td><input type="text" data-cell="name" value="${esc(g.name)}" spellcheck="false"></td>
-      <td><input type="text" data-cell="unicode" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></td>
+      <td><input type="text" data-cell="name" aria-label="${esc(t('tc_name'))} ${esc(g.name)}" value="${esc(g.name)}" spellcheck="false"></td>
+      <td><input type="text" data-cell="unicode" aria-label="Unicode ${esc(g.name)}" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></td>
       <td>${num(g, 'advance', g.advance)}</td><td>${num(g, 'lsb', sd.lsb)}</td><td>${num(g, 'rsb', sd.rsb)}</td>
-      <td><input type="text" data-cell="tags" value="${esc((g.tags || []).join(', '))}" spellcheck="false"></td>
-      <td><input type="text" data-cell="note" value="${esc(g.note || '')}"></td>
+      <td><input type="text" data-cell="tags" aria-label="${esc(t('tc_tags'))} ${esc(g.name)}" value="${esc((g.tags || []).join(', '))}" spellcheck="false"></td>
+      <td><input type="text" data-cell="note" aria-label="${esc(t('tc_note'))} ${esc(g.name)}" value="${esc(g.note || '')}"></td>
       <td><input type="checkbox" data-cell="export" ${g.noExport ? '' : 'checked'} aria-label="${esc(t('tc_export'))}"></td>
     </tr>`;
   }).join('');
@@ -799,6 +802,11 @@ $('optionsBar').addEventListener('change', (e) => {
   const opt = e.target.dataset.opt;
   if (opt === 'guide' || opt === 'grid') toggleView(opt === 'guide' ? 'showGuide' : 'showGrid');
   if (opt === 'snapGrid' || opt === 'snapGuides') toggleView(opt);
+  if (opt === 'pixelSize') {
+    const v = Math.round(Number(e.target.value));
+    if (v >= 4 && v <= 500) { editor.pixelSize = v; store.set('spline.pixelSize', String(v)); editor.render(); }
+    e.target.value = editor.pixelSize;
+  }
   if (opt === 'gridStep') {
     const v = Math.round(Number(e.target.value));
     if (v >= 1) { editor.gridStep = v; store.set('spline.gridStep', String(v)); editor.render(); }
@@ -907,7 +915,8 @@ function renderGlyphPanelBody() {
     + section('pathops', t('pathOps'), `<div class="op-row">${PATH_OPS.map((op) => `<button class="btn btn-icon" type="button"
         data-pathop="${op.id}" data-tip="${esc(t(op.label))}" data-key="${esc(keyLabel(`op.${op.id}`))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
 `)
-    + (app.extended ? filtersSection() + componentsSection(g) + anchorsSection(g) + pointsSection() + backgroundSection(g) : '')
+    // Extended mode: everyday point tools first, then parts, then the rest.
+    + (app.extended ? pointsSection() + componentsSection(g) + anchorsSection(g) + filtersSection() + backgroundSection(g) : '')
     + alignSection()
     + transformSection()
     + variantsSection(g)
@@ -994,8 +1003,21 @@ function selectionHTML(info) {
     <p class="hint">${esc(t('pointsSelected', { n: info.count }))}</p>`;
 }
 
+let partsKey = '';
 app.onDraw = () => {
   if (app.mode !== 'editor') return;
+  if (app.extended) {
+    const k = [...editor.sel].join(',');
+    if (k !== partsKey) {
+      partsKey = k;
+      const sec = panelQuery('details[data-sec="points"] .section');
+      if (sec) {
+        const old = sec.querySelector('.parts');
+        const html = `<div class="parts">${partsHTML()}</div>`;
+        if (old) old.outerHTML = html; else sec.querySelector('.hint:last-child')?.insertAdjacentHTML('beforebegin', html);
+      }
+    }
+  }
   syncTransformFields();
   const box = $('selBox');
   if (!box) return;
@@ -1113,6 +1135,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
       return;
     }
     if (e.target.dataset.fl !== undefined) { onFilterInput(e.target); return; }
+    if (e.target.dataset.part) { setPart(e.target.dataset.part, e.target.value); return; }
     if (e.target.dataset.cmpos) { moveComponent(e.target.dataset.cmpos, Number(e.target.value)); return; }
     if (e.target.dataset.anpos) { setAnchorValue(e.target.dataset.anpos, e.target.value); return; }
     if (e.target.dataset.ul) { setUnderlayValue(e.target.dataset.ul, Number(e.target.value), true); return; }
@@ -1528,7 +1551,7 @@ const KEY_GROUPS = [
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
   ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'simplify', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups', 'fontInfo']],
-  ['extTools', ['tool.measure', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'bgCopy', 'updateMetrics']],
+  ['extTools', ['tool.measure', 'tool.pixel', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'bgCopy', 'updateMetrics']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -1613,6 +1636,8 @@ function helpDialog() {
 
 const editor = new Editor(app, $('canvas'));
 editor.extended = app.extended;
+editor.pixelSize = Number(store.get('spline.pixelSize', '50')) || 50;
+editor.pixelErase = false;
 editor.selectShape = store.get('spline.selectShape', 'rect');
 editor.showBackground = store.get('spline.showBackground', '1') === '1';
 document.documentElement.dataset.mode = app.extended ? 'extended' : 'simple';
@@ -1714,6 +1739,12 @@ function renderEditorOptions() {
       <label data-tip="${esc(t('stabilizerTip'))}">${esc(t('stabilizer'))}
       <input type="range" data-opt="stabilizer" min="0" max="10" step="1" value="${editor.stabilizer}"><output class="mono" id="stabOut">${editor.stabilizer}</output></label>
       </div><div class="sep"></div>` : ''}
+    ${editor.tool === 'pixel' ? `<div class="group">
+      <label data-tip="${esc(t('pxSizeTip'))}">${esc(t('pxSize'))}<input type="number" data-opt="pixelSize" min="4" max="500" step="1" value="${editor.pixelSize}"></label>
+      <div class="seg" role="radiogroup">
+        <button type="button" role="radio" data-cmd="pxDraw" aria-checked="${!editor.pixelErase}">${esc(t('pxDraw'))}</button>
+        <button type="button" role="radio" data-cmd="pxErase" aria-checked="${editor.pixelErase}" data-tip="${esc(t('pxEraseTip'))}">${esc(t('pxErase'))}</button>
+      </div></div><div class="sep"></div>` : ''}
     ${app.extended && editor.tool === 'select' ? `<div class="group"><span class="opt-label">${esc(t('selShape'))}</span>
       <div class="seg" role="radiogroup">
         <button type="button" role="radio" data-cmd="selRect" aria-checked="${editor.selectShape !== 'lasso'}" data-tip="${esc(t('selRectTip'))}">${esc(t('selRect'))}</button>
@@ -1786,6 +1817,7 @@ function openEditor(name, push = true) {
   editor.resize();
   editor.open(g);
   editor.preview = null;
+  filterState.active = false;
   if (app.extended) queueMicrotask(previewFilter);
   renderMenus();
   updateStatus();
@@ -3285,7 +3317,78 @@ function pointsSection() {
     <div class="btn-row">${b('ptBreak', 'breakContour', 'breakContour')}${b('ptJoin', 'joinContours', 'joinContours')}</div>
     <div class="btn-row">${b('ptEven', 'evenHandles', 'evenHandles')}${b('ptFirst', 'makeFirst', 'makeFirst')}</div>
     <div class="btn-row">${b('ptInvert', 'invertSelection', 'invertSelection')}</div>
+    <div class="parts">${partsHTML()}</div>
     <p class="hint">${esc(t('ptHint'))}</p>`);
+}
+
+// Corner details and brushes for the selection (see parts.js).
+function partsHTML() {
+  const g = app.current;
+  if (!g || isCornerGlyph(g) || isBrushGlyph(g)) return '';
+  const keys = [...editor.sel].map((k) => k.split(':').map(Number));
+  const corners = app.project.glyphs.filter(isCornerGlyph), brushes = app.project.glyphs.filter(isBrushGlyph);
+  const opt = (list, cur) => `<option value="">${esc(t('ptNone'))}</option>${list.map((x) => `<option value="${esc(x.name)}" ${cur === x.name ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`;
+  let html = '';
+  if (keys.length === 1) {
+    const [ci, ni] = keys[0];
+    const n = g.contours[ci]?.nodes[ni];
+    if (n && !n.smooth) {
+      html += `<div class="sub-head">${esc(t('ptCorner'))}</div><div class="part-row">
+        <select data-part="corner" data-tip="${esc(t('ptCornerTip'))}">${opt(corners, n.corner)}</select>
+        <button class="btn" type="button" data-cmd="newCorner">${icon('plus', 14)}<span>${esc(t('ptNewCorner'))}</span></button></div>`;
+    }
+  }
+  const cis = [...new Set(keys.map(([ci]) => ci))];
+  if (cis.length === 1 && g.contours[cis[0]]) {
+    const c = g.contours[cis[0]];
+    html += `<div class="sub-head">${esc(t('ptBrush'))}</div><div class="part-row">
+      <select data-part="brush" data-tip="${esc(t('ptBrushTip'))}">${opt(brushes, c.brush)}</select>
+      <button class="btn" type="button" data-cmd="newBrush">${icon('plus', 14)}<span>${esc(t('ptNewBrush'))}</span></button></div>`;
+  }
+  return html;
+}
+
+function setPart(kind, name) {
+  const g = app.current;
+  const keys = [...editor.sel].map((k) => k.split(':').map(Number));
+  if (!g || !keys.length) return;
+  app.history.push(g);
+  if (kind === 'corner') {
+    const [ci, ni] = keys[0];
+    const n = g.contours[ci].nodes[ni];
+    if (name) n.corner = name; else delete n.corner;
+  } else {
+    const [ci, ni] = keys[0];
+    const c = g.contours[ci];
+    if (name) {
+      // A brush runs along an open line: a closed contour opens at the
+      // selected point.
+      if (c.closed) {
+        c.nodes = [...c.nodes.slice(ni), ...c.nodes.slice(0, ni)];
+        delete c.nodes[0].in;
+        delete c.nodes[c.nodes.length - 1].out;
+        c.closed = false;
+        editor.sel = new Set([`${ci}:0`]);
+      }
+      c.brush = name;
+    } else delete c.brush;
+  }
+  editor.afterEdit(false);
+  renderGlyphPanel();
+}
+
+// A new detail glyph (left out of the font), with a sample shape to start.
+function newPartGlyph(kind) {
+  const base = kind === 'corner' ? '_corner.serif' : '_brush.stroke';
+  const name = uniqueGlyphName(base);
+  const sample = kind === 'corner' ? [rectContour(-60, 0, 20, 30)] : [ellipseContour(0, -30, 300, 30)];
+  const g = { name, advance: 0, contours: sample, noExport: true };
+  app.history.pushGroups(app.project);
+  app.project.glyphs.push(g);
+  // Use it right away on the current selection.
+  if (app.current && editor.sel.size) setPart(kind, name);
+  markChanged();
+  toast(t(kind === 'corner' ? 'ptCornerMade' : 'ptBrushMade', { name }));
 }
 
 function backgroundSection(g) {
@@ -3317,7 +3420,8 @@ const FILTERS = {
   stroke: { min: 2, max: 200, def: 40, unit: '', overlap: true },
   fit: { min: 20, max: 100, def: 55, unit: '%' },
 };
-const filterState = { kind: 'offset', values: {}, overlap: true };
+// `active`: the preview shows only after the user touches the filter.
+const filterState = { kind: 'offset', values: {}, overlap: true, active: false };
 const filterValue = (k) => filterState.values[k] ?? FILTERS[k].def;
 
 function filtersSection() {
@@ -3350,19 +3454,23 @@ function runFilter(contours) {
 function previewFilter() {
   const g = app.current;
   const open = panelQuery('details[data-sec="filters"]')?.open;
-  if (!app.extended || app.mode !== 'editor' || !g || !open) { editor.preview = null; editor.render(); return; }
+  if (!app.extended || app.mode !== 'editor' || !g || !open || !filterState.active) { editor.preview = null; editor.render(); return; }
   const { contours } = filterInput(g);
   try { editor.preview = contours.length ? runFilter(contours) : null; } catch { editor.preview = null; }
   editor.render();
 }
 
+app.onPreviewCancel = () => { filterState.active = false; };
+
 function setFilter(kind) {
   filterState.kind = kind;
+  filterState.active = true;
   renderGlyphPanel();
   previewFilter();
 }
 
 function onFilterInput(el) {
+  filterState.active = true;
   if (el.dataset.fl === 'overlap') filterState.overlap = el.checked;
   else {
     const f = FILTERS[filterState.kind];
@@ -3387,6 +3495,7 @@ function applyFilter() {
   g.contours = [...keep, ...out];
   editor.sel.clear();
   editor.preview = null;
+  filterState.active = false;
   editor.afterEdit();
   toast(t('flApplied', { name: t('fl_' + filterState.kind) }));
 }
@@ -3675,6 +3784,9 @@ const composeState = (g) => (g.compose ? 'auto' : g.composeOff ? 'manual' : 'non
 
 // Й = И + ˘: tells how the letter is made and offers the other way.
 function composeNoteHTML(g) {
+  if (app.extended && (isCornerGlyph(g) || isBrushGlyph(g))) {
+    return `<div class="compose-note"><p>${esc(t(isCornerGlyph(g) ? 'ptCornerGlyphHint' : 'ptBrushGlyphHint'))}</p></div>`;
+  }
   if (g.components?.length) return ''; // built from components by hand
   const info = composeInfo(app.project, g);
   if (!info) return '';
@@ -4239,6 +4351,8 @@ const COMMANDS = {
   btDecompose: () => batch('decompose'), btExportOff: () => batch('exportOff'), btExportOn: () => batch('exportOn'), cmAdd: addComponentDialog, cmDecompose: decomposeCurrent,
   anAuto: autoAnchors,
   selRect: () => setSelectShape('rect'), selLasso: () => setSelectShape('lasso'),
+  pxDraw: () => { editor.pixelErase = false; renderEditorOptions(); }, pxErase: () => { editor.pixelErase = true; renderEditorOptions(); },
+  newCorner: () => newPartGlyph('corner'), newBrush: () => newPartGlyph('brush'),
   ulFitCap: () => fitUnderlay('cap'), ulFitX: () => fitUnderlay('x'), ulFitAll: () => fitUnderlay('all'),
 };
 

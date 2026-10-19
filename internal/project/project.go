@@ -43,6 +43,8 @@ type Node struct {
 	In     *Point  `json:"in,omitempty"`
 	Out    *Point  `json:"out,omitempty"`
 	Smooth bool    `json:"smooth,omitempty"`
+	// Corner names a corner detail glyph placed at this point (extended mode).
+	Corner string `json:"corner,omitempty"`
 }
 
 // Contour is a closed outline. Fonts only support closed outlines, so an
@@ -50,6 +52,9 @@ type Node struct {
 type Contour struct {
 	Nodes  []Node `json:"nodes"`
 	Closed bool   `json:"closed"`
+	// Brush names a brush glyph drawn along this open line; the line itself
+	// is only its spine and is not part of the font.
+	Brush string `json:"brush,omitempty"`
 }
 
 // Glyph is one character of the font.
@@ -105,11 +110,13 @@ type Component struct {
 // Outline is everything the glyph draws: its own contours and those of
 // its components.
 func (g *Glyph) Outline() []Contour {
-	if len(g.RefContours) == 0 {
-		return g.Contours
-	}
 	out := make([]Contour, 0, len(g.Contours)+len(g.RefContours))
-	return append(append(out, g.Contours...), g.RefContours...)
+	for _, c := range g.Contours {
+		if c.Brush == "" { // a brush spine draws nothing by itself
+			out = append(out, c)
+		}
+	}
+	return append(out, g.RefContours...)
 }
 
 // Compose lists the glyphs a composed letter is made of.

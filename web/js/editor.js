@@ -289,6 +289,10 @@ export class Editor {
     } else if (tool === 'knife') {
       const sp = this.snap(p);
       this.drag = { kind: 'knife', start: sp, end: sp };
+    } else if (tool === 'pixel') {
+      // Pixel tool: cells on a square grid; Alt (or the Erase option) clears.
+      this.drag = { kind: 'pixel', erase: e.altKey || this.pixelErase, cells: new Map() };
+      this.addPixel(p);
     } else if (tool === 'measure') {
       const sp = this.snap(p);
       this.measure = { start: sp, end: sp };
@@ -424,6 +428,12 @@ export class Editor {
       case 'knife':
         d.end = e.shiftKey ? snap45(d.start, p) : this.snap(p);
         break;
+      case 'pixel': {
+        // Fill every cell between the last point and this one.
+        const last = d.last || p, steps = Math.ceil(Math.hypot(p.x - last.x, p.y - last.y) / (this.pixelSize / 2)) || 1;
+        for (let k = 1; k <= steps; k++) this.addPixel({ x: last.x + (p.x - last.x) * k / steps, y: last.y + (p.y - last.y) * k / steps });
+        break;
+      }
       case 'measure':
         this.measure.end = e.shiftKey ? snap45(this.measure.start, p) : this.snap(p);
         break;
@@ -550,6 +560,9 @@ export class Editor {
     switch (d.kind) {
       case 'knife':
         this.knife(d.start, d.end);
+        break;
+      case 'pixel':
+        this.commitPixels(d);
         break;
       case 'guide': {
         const list = this.guides();
@@ -1539,6 +1552,43 @@ export class Editor {
     return true;
   }
 
+  // ---------------------------------------------------------------- pixels
+
+  addPixel(p) {
+    const d = this.drag;
+    const cx = Math.floor(p.x / this.pixelSize), cy = Math.floor(p.y / this.pixelSize);
+    d.cells.set(`${cx}:${cy}`, [cx, cy]);
+    d.last = p;
+  }
+
+  commitPixels(d) {
+    if (!d.cells.size) return;
+    const s = this.pixelSize;
+    const cells = [...d.cells.values()].map(([cx, cy]) => rectContour(cx * s, cy * s, (cx + 1) * s, (cy + 1) * s));
+    this.app.history.push(this.glyph);
+    const own = this.glyph.contours.filter((c) => c.closed);
+    const open = this.glyph.contours.filter((c) => !c.closed);
+    let res;
+    try {
+      res = d.erase ? (own.length ? subtract(own, cells) : own) : (own.length ? unite(own, cells) : removeOverlap(cells));
+    } catch { res = d.erase ? own : [...own, ...cells]; }
+    this.glyph.contours = [...res, ...open];
+    this.sel.clear();
+    this.afterEdit();
+  }
+
+  drawPixelGrid(colors) {
+    const ctx = this.ctx, s = this.pixelSize;
+    if (s * this.view.scale < 5) return;
+    const a = this.toFont(0, this.h), b = this.toFont(this.w, 0);
+    ctx.strokeStyle = colors.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = Math.ceil(a.x / s) * s; x <= b.x; x += s) { const sx = Math.round(this.toScreen({ x, y: 0 }).x) + 0.5; ctx.moveTo(sx, 0); ctx.lineTo(sx, this.h); }
+    for (let y = Math.ceil(a.y / s) * s; y <= b.y; y += s) { const sy = Math.round(this.toScreen({ x: 0, y }).y) + 0.5; ctx.moveTo(0, sy); ctx.lineTo(this.w, sy); }
+    ctx.stroke();
+  }
+
   // Alt+arrows: move only the points, their handles stay.
   nudgeNodesOnly(dx, dy) {
     const nodes = this.selectedNodes();
@@ -1573,6 +1623,7 @@ export class Editor {
   escape() {
     if (this.xform) { this.cancelTransform(); return true; }
     if (this.measure) { this.measure = null; this.render(); return true; }
+    if (this.preview) { this.preview = null; this.app.onPreviewCancel?.(); this.render(); return true; }
     if (this.penContour !== null) { this.finishPen(); return true; }
     if (this.sel.size) { this.sel.clear(); this.render(); return true; }
     return false;
@@ -1834,6 +1885,12 @@ export class Editor {
         ctx.lineWidth = 2;
         ctx.strokeStyle = first ? colors.accent : colors.primary;
         ctx.stroke();
+        if (n.corner) {
+          ctx.beginPath();
+          ctx.moveTo(s.x + r + 3, s.y - r - 3); ctx.lineTo(s.x + r + 9, s.y - r - 3); ctx.lineTo(s.x + r + 3, s.y - r - 9); ctx.closePath();
+          ctx.fillStyle = colors.accent;
+          ctx.fill();
+        }
         if (lines?.has(n.y)) {
           ctx.beginPath();
           ctx.arc(s.x, s.y, r + 4, 0, Math.PI * 2);
@@ -1925,6 +1982,17 @@ export class Editor {
     const d = this.drag;
     const tool = this.activeTool();
     this.drawMeasure(colors);
+    if (tool === 'pixel') this.drawPixelGrid(colors);
+    if (d?.kind === 'pixel') {
+      const ctx2 = this.ctx, sz = this.pixelSize * this.view.scale;
+      ctx2.fillStyle = d.erase ? 'rgba(220,60,60,0.45)' : colors.primary;
+      ctx2.globalAlpha = d.erase ? 1 : 0.6;
+      for (const [cx, cy] of d.cells.values()) {
+        const s0 = this.toScreen({ x: cx * this.pixelSize, y: (cy + 1) * this.pixelSize });
+        ctx2.fillRect(s0.x, s0.y, sz, sz);
+      }
+      ctx2.globalAlpha = 1;
+    }
     if (d?.kind === 'marquee' && d.lasso) {
       ctx.fillStyle = 'rgba(37,99,235,0.08)';
       ctx.strokeStyle = colors.primary;
