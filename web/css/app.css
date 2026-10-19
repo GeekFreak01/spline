@@ -449,6 +449,16 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .panel-icon:hover { background: var(--bg-raised); color: var(--text); }
 .panel-icon[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
 
+/* Tab groups: the header is a row of tabs, only the active tab's body shows. */
+.tab-off { display: none !important; }
+.dock summary.tabs, .float-title.tabs { display: flex; align-items: stretch; gap: 0; overflow: hidden; }
+.dock summary.tabs { padding-right: 0; }
+.float-title.tabs { align-self: stretch; margin-left: -10px; }
+.tab { display: flex; align-items: center; min-width: 24px; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto;
+  color: var(--text-3); border-right: 1px solid var(--line-soft); cursor: pointer; }
+.dock summary.tabs::before { flex: none; align-self: center; margin-right: 2px; }
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { flex-shrink: 0; max-width: 70%; color: var(--text); background: var(--bg-panel); box-shadow: inset 0 -2px 0 var(--accent); }
 .drop-hint { position: fixed; z-index: 1; pointer-events: none; border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 2px; }
 .drop-hint[hidden] { display: none; }
 .flyout { resize: none; }
@@ -569,6 +579,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .tool-flyout button:hover, .tool-flyout button:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
 .tool-flyout button[aria-checked="true"] { box-shadow: inset 2px 0 0 var(--accent); }
 .tool-flyout kbd { margin-left: auto; color: inherit; opacity: 0.6; font: var(--fs-s) var(--font-mono, monospace); }
+.op-row.op-gap { margin-top: 10px; }
 .tool-sep { width: 24px; height: 1px; background: var(--line-soft); margin: 4px 0; }
 .canvas-wrap { position: relative; overflow: hidden; min-height: 0; min-width: 0; background: var(--canvas-pasteboard); touch-action: none; }
 #canvas { position: absolute; inset: 0; display: block; outline: none; }

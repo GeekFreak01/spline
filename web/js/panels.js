@@ -10,15 +10,16 @@
 //   float  — a free window
 //
 // Drag a panel header (or an icon) to move it: while dragging, the place it
-// will snap to is outlined. The Window menu shows and hides panels. The
-// layout is kept in localStorage.
+// will snap to is outlined. Dropped on another panel's header it joins it as
+// a tab, as in Photoshop; dragging a tab out makes it a panel again. The
+// Window menu shows and hides panels. The layout is kept in localStorage.
 
 const STORE = 'spline.panels';
 const DRAG_START = 6;   // px before a drag tears a panel off
 const EDGE = 48;        // px from the left/top edge of the work area that dock there
 const STRIP = 36;       // width of the icon strip
 const LEFT_W = 260;     // width of the left column
-export const TOP_ALLOWED = new Set(['align', 'pathops']);
+export const TOP_ALLOWED = new Set(['pathops']);
 
 let state = {};
 try { state = JSON.parse(localStorage.getItem(STORE) || '{}') || {}; } catch { state = {}; }
@@ -57,9 +58,61 @@ export function initPanels(opts) {
 }
 
 export const isHidden = (id) => !!(state[id]?.hidden ?? defaults[id]?.hidden);
+
+// --- tab groups: { ids: [lead, ...], tab: active id }. The lead (first id)
+// keeps the place, the rank and the window of the whole group.
+
+const groups = () => (state._groups ||= []);
+const groupOf = (id) => groups().find((g) => g.ids.includes(id));
+const leadOf = (id) => groupOf(id)?.ids[0] ?? id;
+
+function leaveGroup(id) {
+  const g = groupOf(id);
+  if (!g) return;
+  const i = g.ids.indexOf(id);
+  g.ids.splice(i, 1);
+  if (i === 0 && g.ids.length) {
+    // The next tab takes over the place of the group.
+    const from = st(id), to = st(g.ids[0]);
+    for (const k of ['place', 'float', 'rank']) {
+      if (from[k] !== undefined) to[k] = JSON.parse(JSON.stringify(from[k])); else delete to[k];
+    }
+  }
+  if (g.tab === id) g.tab = g.ids[0];
+  if (g.ids.length < 2) state._groups = groups().filter((x) => x !== g);
+}
+
+// Puts panels `ids` as tabs into the group of `target`; the first becomes the
+// active tab.
+function joinGroup(ids, target) {
+  ids = ids.filter((x) => x !== target);
+  if (!ids.length) return;
+  for (const id of ids) leaveGroup(id);
+  let g = groupOf(target);
+  if (!g) { g = { ids: [target] }; groups().push(g); }
+  g.ids.push(...ids);
+  g.tab = ids[0];
+  for (const id of ids) st(id).hidden = false;
+}
+
+function setTab(id) {
+  const g = groupOf(id);
+  if (!g || g.tab === id) return;
+  // The new tab is folded or unfolded like the one it replaces.
+  const dock = containers()?.dock.id;
+  const find = (x) => document.querySelector(`details[data-sec="${x}"][data-dock="${dock}"]`);
+  const was = find(g.tab), now = find(id);
+  if (was && now) now.open = was.open;
+  g.tab = id;
+  save();
+  layoutPanels();
+}
+
 const placeOf = (id) => {
-  const p = state[id]?.place || defaults[id]?.place || (state[id]?.float ? 'float' : 'right');
-  return p === 'top' && !TOP_ALLOWED.has(id) ? 'right' : p;
+  const g = groupOf(id);
+  const lead = g ? g.ids[0] : id;
+  const p = state[lead]?.place || defaults[lead]?.place || (state[lead]?.float ? 'float' : 'right');
+  return p === 'top' && (g || !TOP_ALLOWED.has(id)) ? 'right' : p;
 };
 
 export function setHidden(id, hidden) {
@@ -73,8 +126,12 @@ export function setHidden(id, hidden) {
 // Opens a panel as a window in front (or unfolds it where it is docked),
 // like Photoshop's Window menu.
 export function openWindow(id) {
+  const asked = id;
+  st(id).hidden = false;
+  const g = groupOf(id);
+  if (g) { g.tab = id; id = g.ids[0]; }
   const s = st(id);
-  s.hidden = false;
+  if (!g) s.hidden = false;
   if (!s.place) s.place = defaults[id]?.place || 'right';
   if (s.place === 'float' && !s.float) {
     // Next to the right dock, each new window a step lower than the last.
@@ -86,7 +143,7 @@ export function openWindow(id) {
   layoutPanels();
   const w = layer.querySelector(`.float-panel[data-float="${id}"]`);
   if (w) { layer.insertBefore(w, hint); fitHeight(w); }
-  const d = w?.querySelector('details') || document.querySelector(`details[data-sec="${id}"]:not([hidden])`);
+  const d = w?.querySelector(`details[data-sec="${asked}"]`) || document.querySelector(`details[data-sec="${asked}"]:not([hidden])`);
   if (d) { d.open = true; if (!w) d.scrollIntoView({ block: 'nearest' }); }
   onChange();
 }
@@ -166,13 +223,34 @@ export function layoutPanels() {
     const own = [...dock.querySelectorAll(':scope > details[data-sec]'),
       ...view.querySelectorAll(`[data-zone] > details[data-dock="${dock.id}"]`),
       ...layer.querySelectorAll(`.float-body > details[data-dock="${dock.id}"]`)];
-    const seen = new Set();
-    const iconIds = [];
+    const byId = new Map();
     for (const d of own) {
       const id = d.dataset.sec;
-      if (seen.has(id)) { d.remove(); continue; }
-      seen.add(id);
+      if (byId.has(id)) { d.remove(); continue; }
+      byId.set(id, d);
       d.dataset.dock = dock.id;
+      const sum = d.querySelector(':scope > summary');
+      if (sum && !sum.classList.contains('tabs')) d.dataset.title = sum.textContent.trim();
+    }
+    const titleOf = (id) => byId.get(id)?.dataset.title || '';
+    // Members of a group that are in this dock, the shown ones and the active tab.
+    const tabsOf = (id) => {
+      const g = groupOf(id);
+      const mates = g ? g.ids.filter((x) => byId.has(x)) : [id];
+      const shown = mates.filter((x) => !isHidden(x));
+      const tab = shown.length > 1 ? (shown.includes(g.tab) ? g.tab : shown[0]) : null;
+      return { mates, shown, tab };
+    };
+    const iconIds = [];
+    const windows = new Map();
+    for (const [id, d] of byId) {
+      const { shown, tab } = tabsOf(id);
+      d.classList.toggle('tab-off', !!tab && id !== tab);
+      const sum = d.querySelector(':scope > summary');
+      if (sum) {
+        if (tab === id) setTabs(sum, shown, id, titleOf);
+        else if (sum.classList.contains('tabs')) { sum.classList.remove('tabs'); sum.removeAttribute('role'); sum.textContent = d.dataset.title; }
+      }
       const place = placeOf(id);
       const hidden = isHidden(id);
       if (place === 'right' || place === 'left' || place === 'top') {
@@ -182,18 +260,27 @@ export function layoutPanels() {
         if (d.parentElement !== box) box.insertBefore(d, nextIn(box, id));
         continue;
       }
-      // A window: free, or the flyout of an icon.
-      present.add(id);
-      d.hidden = false;
-      d.open = true;
+      // A window (free, or the flyout of an icon), one for the whole group.
+      const lead = leadOf(id);
+      if (!windows.has(lead)) windows.set(lead, { place, ids: [] });
+      windows.get(lead).ids.push(id);
+    }
+    for (const [lead, { place, ids }] of windows) {
+      present.add(lead);
       const flyout = place === 'icons';
-      const w = windowFor(id, flyout);
-      w.querySelector('.float-title').textContent = d.querySelector('summary')?.textContent || '';
+      const w = windowFor(lead, flyout);
+      const { shown, tab } = tabsOf(ids[0]);
+      const title = w.querySelector('.float-title');
+      if (tab) setTabs(title, shown, tab, titleOf);
+      else { title.classList.remove('tabs'); title.removeAttribute('role'); title.textContent = titleOf(shown[0] || ids[0]); }
       const body = w.querySelector('.float-body');
-      if (body.firstElementChild !== d) body.replaceChildren(d);
-      w.hidden = hidden || (flyout && openFlyout !== id);
+      const kids = ids.map((x) => byId.get(x));
+      if (body.children.length !== kids.length || kids.some((d, i) => body.children[i] !== d)) body.replaceChildren(...kids);
+      for (const d of kids) { d.hidden = isHidden(d.dataset.sec); d.open = true; }
+      const hidden = !shown.length;
+      w.hidden = hidden || (flyout && openFlyout !== lead);
       if (!w.hidden) fitHeight(w);
-      if (flyout && !hidden) iconIds.push([id, w.querySelector('.float-title').textContent]);
+      if (flyout && !hidden) iconIds.push([lead, titleOf(tab || shown[0])]);
     }
     sortBox(dock);
     sortBox(c.left);
@@ -205,6 +292,15 @@ export function layoutPanels() {
   for (const w of layer.querySelectorAll('.float-panel')) {
     if (!present.has(w.dataset.float)) w.remove();
   }
+}
+
+const escHTML = (x) => String(x).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+// A header turned into a row of tabs.
+function setTabs(el, ids, active, titleOf) {
+  el.classList.add('tabs');
+  el.setAttribute('role', 'tablist');
+  el.innerHTML = ids.map((x) => `<span class="tab" role="tab" data-tab="${x}" aria-selected="${x === active}">${escHTML(titleOf(x))}</span>`).join('');
 }
 
 // --- icon strip and flyouts
@@ -238,9 +334,11 @@ function onZonePointerDown(e) {
   const icon = e.target.closest('[data-panel-icon]');
   const sum = !icon && e.target.closest('[data-zone] > details[data-sec] > summary, .dock > details[data-sec] > summary');
   if ((!icon && !sum) || (sum && e.target.closest('button'))) return;
-  const id = icon ? icon.dataset.panelIcon : sum.parentElement.dataset.sec;
+  // A tab tears off alone; the rest of a header moves the whole group.
+  const tab = sum && e.target.closest('[data-tab]');
+  const id = icon ? icon.dataset.panelIcon : tab ? tab.dataset.tab : leadOf(sum.parentElement.dataset.sec);
   const from = (icon || sum).getBoundingClientRect();
-  startDrag(e, id, { x: from.left, y: from.top, w: Math.max(240, Math.round(sum ? from.width : 260)) }, false);
+  startDrag(e, id, { x: from.left, y: from.top, w: Math.max(240, Math.round(sum ? from.width : 260)) }, false, !!tab);
 }
 
 function onLayerPointerDown(e) {
@@ -249,12 +347,14 @@ function onLayerPointerDown(e) {
   e.preventDefault();
   const w = head.parentElement;
   const r = w.getBoundingClientRect();
-  startDrag(e, w.dataset.float, { x: r.left, y: r.top, w: Math.round(r.width) }, true);
+  const tab = e.target.closest('[data-tab]');
+  if (tab) startDrag(e, tab.dataset.tab, { x: r.left, y: r.top, w: Math.round(r.width) }, false, true);
+  else startDrag(e, w.dataset.float, { x: r.left, y: r.top, w: Math.round(r.width) }, true);
 }
 
 // Drags a panel: it turns into a free window once the pointer has moved a
 // little, and on release snaps to the outlined place.
-function startDrag(e, id, from, isWindow) {
+function startDrag(e, id, from, isWindow, tear = false) {
   const x0 = e.clientX, y0 = e.clientY;
   let w = isWindow ? layer.querySelector(`.float-panel[data-float="${id}"]`) : null;
   let moved = false;
@@ -262,6 +362,7 @@ function startDrag(e, id, from, isWindow) {
     if (!moved) {
       if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < DRAG_START) return;
       moved = true;
+      if (tear) { leaveGroup(id); w = null; }
       if (!w || w.classList.contains('flyout')) {
         st(id).float = { x: from.x, y: from.y, w: from.w };
         st(id).place = 'float';
@@ -287,6 +388,13 @@ function startDrag(e, id, from, isWindow) {
     const target = dropTarget(id, ev);
     showHint(null);
     w?.classList.remove('dragging');
+    if (target?.join) {
+      joinGroup(groupOf(id)?.ids.slice() || [id], target.join);
+      save();
+      layoutPanels();
+      onChange();
+      return;
+    }
     if (target) {
       if (target.container) placeAt(id, target.container, target.before);
       setPlace(id, target.place);
@@ -317,6 +425,13 @@ function dropTarget(id, ev) {
   const c = containers();
   if (!c || !c.center) return null;
   const x = ev.clientX, y = ev.clientY;
+  // On another panel's header: join it as a tab.
+  const el = document.elementsFromPoint(x, y).find((n) => !n.closest('.float-panel.dragging, .drop-hint'));
+  const head = el?.closest('.float-panel:not(.flyout) > .float-head, .dock > details[data-sec] > summary, [data-zone="left"] > details[data-sec] > summary');
+  if (head) {
+    const other = head.classList.contains('float-head') ? head.parentElement.dataset.float : head.parentElement.dataset.sec;
+    if (leadOf(other) !== leadOf(id)) return { join: other, box: head.getBoundingClientRect() };
+  }
   const dockR = c.dock.getBoundingClientRect();
   const rowR = c.row.getBoundingClientRect();
   const centerR = c.center.getBoundingClientRect();
@@ -337,7 +452,7 @@ function dropTarget(id, ev) {
 
 // Inside a column the hint is a line between sections: the panel goes there.
 function insertion(id, place, box, r, y) {
-  const secs = [...box.querySelectorAll(':scope > details[data-sec]')].filter((d) => d.dataset.sec !== id && !d.hidden);
+  const secs = [...box.querySelectorAll(':scope > details[data-sec]')].filter((d) => d.dataset.sec !== id && !d.hidden && !d.classList.contains('tab-off'));
   let before = null, lineY = r.top;
   for (const d of secs) {
     const b = d.getBoundingClientRect();
@@ -358,7 +473,14 @@ function showHint(target) {
 // --- order
 
 // Sort key of a section: where the user put it, else the render order.
-const rankOf = (id) => state[id]?.rank ?? (order.get(id) ?? 99);
+// Tabs of a group follow their lead.
+const baseRank = (id) => state[id]?.rank ?? order.get(id);
+const rankOf = (id) => {
+  const g = groupOf(id);
+  if (!g) return baseRank(id) ?? 99;
+  const lead = g.ids.map(baseRank).find((r) => r !== undefined) ?? 99;
+  return lead + (g.ids.indexOf(id) + 1) / 100;
+};
 
 // The section a returning panel goes before, to keep the order.
 function nextIn(box, id) {
@@ -369,7 +491,7 @@ function nextIn(box, id) {
 // Puts the sections of a column in the user's order (when there is one).
 function sortBox(box) {
   const kids = [...box.querySelectorAll(':scope > details[data-sec]')];
-  if (!kids.some((d) => state[d.dataset.sec]?.rank !== undefined)) return;
+  if (!groups().length && !kids.some((d) => state[d.dataset.sec]?.rank !== undefined)) return;
   const sorted = [...kids].sort((a, b) => rankOf(a.dataset.sec) - rankOf(b.dataset.sec));
   if (sorted.every((d, i) => d === kids[i])) return;
   const anchor = kids[kids.length - 1].nextSibling;
@@ -379,8 +501,9 @@ function sortBox(box) {
 // Drops panel id into a column before section `before` (null = at the
 // end): every section there gets a rank, so the order stays.
 function placeAt(id, box, before) {
-  const ids = [...box.querySelectorAll(':scope > details[data-sec]')].map((d) => d.dataset.sec).filter((x) => x !== id);
-  const at = before ? ids.indexOf(before) : -1;
+  id = leadOf(id);
+  const ids = [...new Set([...box.querySelectorAll(':scope > details[data-sec]')].map((d) => leadOf(d.dataset.sec)))].filter((x) => x !== id);
+  const at = before ? ids.indexOf(leadOf(before)) : -1;
   ids.splice(at < 0 ? ids.length : at, 0, id);
   ids.forEach((x, i) => { st(x).rank = i; });
 }
@@ -396,6 +519,9 @@ export function recordOrder(dock) {
 function onZoneClick(e) {
   const icon = e.target.closest('[data-panel-icon]');
   if (icon) { toggleFlyout(icon.dataset.panelIcon); return; }
+  // A tab: another one is picked; the active one folds the group as usual.
+  const tab = e.target.closest('summary [data-tab]');
+  if (tab && tab.getAttribute('aria-selected') !== 'true') { e.preventDefault(); setTab(tab.dataset.tab); return; }
   // The top strip has no folding.
   if (e.target.closest('[data-zone="top"] > details > summary')) e.preventDefault();
 }
@@ -404,8 +530,14 @@ function onLayerClick(e) {
   const w = e.target.closest('.float-panel');
   if (!w) return;
   const id = w.dataset.float;
+  const tab = e.target.closest('[data-tab]');
+  if (tab) { setTab(tab.dataset.tab); return; }
   if (e.target.closest('[data-panel-close]')) {
-    if (w.classList.contains('flyout')) closeFlyout(); else setHidden(id, true);
+    if (w.classList.contains('flyout')) closeFlyout();
+    else {
+      for (const x of groupOf(id)?.ids || [id]) st(x).hidden = true;
+      setHidden(id, true);
+    }
   } else if (e.target.closest('[data-panel-dock]')) setPlace(id, 'right');
   else if (e.target.closest('.float-body > details > summary')) e.preventDefault(); // stays open
 }

@@ -41,7 +41,7 @@ setDefaults({
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
   snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
-  'tool.measure': ['M'], 'tool.pixel': ['G'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
+  'tool.measure': ['M'], selShapeCycle: ['Shift+V'], 'tool.pixel': ['G'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
   'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'],
   'op.unite': ['Ctrl+Alt+U'], 'op.subtract': ['Ctrl+Alt+M'], 'op.intersect': ['Ctrl+Alt+I'],
   'op.exclude': ['Ctrl+Alt+E'], 'op.divide': ['Ctrl+Alt+D'], 'op.removeOverlap': ['Ctrl+Alt+O'],
@@ -985,12 +985,12 @@ function renderGlyphPanelBody() {
       <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(g.color)}</div>
       ${groupFields([g])}`)
     + section('selection', t('selection'), '<div id="selBox"></div>')
+    // Path operations and alignment: one section, a small gap between them.
     + section('pathops', t('pathOps'), `<div class="op-row">${PATH_OPS.map((op) => `<button class="btn btn-icon" type="button"
         data-pathop="${op.id}" data-tip="${esc(t(op.label))}" data-key="${esc(keyLabel(`op.${op.id}`))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
-`)
+      ${alignHTML()}`)
     // Extended mode: everyday point tools first, then parts, then the rest.
     + (app.extended ? pointsSection() + componentsSection(g) + smartSection(g) + anchorsSection(g) + paintSection(g) + backgroundSection(g) : '')
-    + alignSection()
     + transformSection()
     + variantsSection(g)
     + underlaySection(g)
@@ -1014,16 +1014,16 @@ const ALIGN_OPS = [
   { id: 'dist-y', icon: 'distributeY', label: 'alDistY' },
 ];
 
-function alignSection() {
+function alignHTML() {
   const btn = (op) => `<button class="btn btn-icon" type="button" data-align="${op.id}"
     data-tip="${esc(t(op.label))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`;
-  return section('align', t('alignment'), `
-    <div class="op-row">${ALIGN_OPS.slice(0, 6).map(btn).join('')}</div>
+  return `
+    <div class="op-row op-gap">${ALIGN_OPS.slice(0, 6).map(btn).join('')}</div>
     <div class="op-row">${ALIGN_OPS.slice(6).map(btn).join('')}</div>
     <label class="prop"><span>${esc(t('alignTo'))}</span><select data-align-to>
       <option value="selection" ${editor.alignTo === 'selection' ? 'selected' : ''}>${esc(t(editor.keyContour ? 'alignToKey' : 'alignToSelection'))}</option>
       <option value="frame" ${editor.alignTo === 'frame' ? 'selected' : ''}>${esc(t('alignToFrame'))}</option>
-    </select></label>`);
+    </select></label>`;
 }
 
 function runAlign(id) {
@@ -1162,7 +1162,7 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['batch', 'btTitleShort'], ['paint', 'pnTitle'], ['components', 'cmTitle'], ['smart', 'smTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['transform', 'transform'], ['batch', 'btTitleShort'], ['paint', 'pnTitle'], ['components', 'cmTitle'], ['smart', 'smTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
 initPanels({
@@ -1634,7 +1634,7 @@ const KEY_GROUPS = [
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
   ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'simplify', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups', 'fontInfo']],
-  ['extTools', ['tool.measure', 'tool.pixel', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'bgCopy', 'updateMetrics']],
+  ['extTools', ['tool.measure', 'tool.pixel', 'selShapeCycle', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'bgCopy', 'updateMetrics']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -1912,7 +1912,7 @@ document.body.append(flyout);
 
 function openToolFlyout(btn) {
   const item = (shape, ic, label) => `<button type="button" role="menuitemradio" data-shape="${shape}" aria-checked="${editor.selectShape === shape}">
-    ${icon(ic, 16)}<span>${esc(t(label))}</span><kbd>${esc(keyLabel('tool.select'))}</kbd></button>`;
+    ${icon(ic, 16)}<span>${esc(t(label))}</span><kbd>${esc(keyLabel('selShapeCycle'))}</kbd></button>`;
   flyout.innerHTML = item('rect', 'select', 'selRect') + item('lasso', 'lasso', 'selLasso');
   const r = btn.getBoundingClientRect();
   flyout.style.left = `${r.right + 4}px`;
@@ -1949,7 +1949,7 @@ flyout.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.stopPropagation(); closeToolFlyout(); }
 });
 document.addEventListener('pointerdown', (e) => {
-  if (!flyout.hidden && !flyout.contains(e.target) && !e.target.closest('.has-flyout')) closeToolFlyout();
+  if (!flyout.hidden && !flyout.contains(e.target) && !e.target.closest?.('.has-flyout')) closeToolFlyout();
 }, true);
 $('backBtn').addEventListener('click', () => history.back());
 
@@ -4900,6 +4900,7 @@ const ACTIONS = {
   newLigature: { run: newLigature, label: () => t('ligNewMenu') },
   shapeGroups: { run: shapeGroupsDialog, label: () => t('sgMenu') },
   invertSelection: { run: () => editor.invertSelection(), when: () => app.extended && inEditorMode() },
+  selShapeCycle: { run: () => { setSelectShape(editor.selectShape === 'lasso' ? 'rect' : 'lasso'); setTool('select'); }, when: () => app.extended && inEditorMode() },
   addExtremes: { run: addExtremes, when: () => app.extended && inEditorMode() },
   makeFirst: { run: makeFirst, when: () => app.extended && inEditorMode() },
   alignPoints: { run: alignPoints, when: () => app.extended && inEditorMode() },
