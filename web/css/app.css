@@ -697,7 +697,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .sf-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; max-height: 340px; overflow: auto; margin: 6px 0 10px; }
 .sf-card { position: relative; display: grid; gap: 2px; padding: 8px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--bg-input); cursor: pointer; }
 .sf-card input { position: absolute; opacity: 0; pointer-events: none; }
-.sf-card b { color: var(--text); }
+.sf-card b { color: var(--text); overflow-wrap: anywhere; hyphens: auto; }
 .sf-card small { color: var(--text-3); font-size: var(--fs-s); line-height: 1.35; }
 .sf-card:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .sf-card:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -711,7 +711,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .glyph-grid.as-table { display: block; padding: 0; }
 .glyph-table { width: 100%; border-collapse: collapse; font-size: var(--fs-s); background: var(--bg-panel); }
 .glyph-table th { position: sticky; top: 0; z-index: 1; background: var(--bg-panel); text-align: left; border-bottom: 1px solid var(--line); padding: 0; }
-.glyph-table th button { width: 100%; min-height: 30px; padding: 0 8px; border: 0; background: none; color: var(--text-3); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.glyph-table th button { white-space: nowrap; width: 100%; min-height: 30px; padding: 0 8px; border: 0; background: none; color: var(--text-3); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 .glyph-table th button:hover { color: var(--text); }
 .glyph-table td { padding: 2px 4px; border-bottom: 1px solid var(--line-soft); }
 .glyph-table tr.trow { cursor: default; }

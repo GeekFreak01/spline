@@ -194,20 +194,32 @@ The simple mode stays simple. Everything for serious type work switches on in **
 <table>
   <tr>
     <td width="50%" valign="top">
+      <img src="docs/screenshots/en/ext-edit.png" alt="Extended mode: the letter o with the Ruler across it — stem widths 104 and a counter of 262, the Points panel on the right with Extremes, In a line, Break, Join, Even handles" width="100%">
+      <br>
+      <sub>The Ruler measures stems and counters; the Points panel holds the editing commands.</sub>
       <h3>✏️ Editing and spacing</h3>
       Extremes, align in a line, break and join contours, even handles, first point, lasso, Tab through points, Alt-drag to copy · the Ruler tool: length, angle, stem widths · metric keys <code>=n</code>, <code>=o+10</code>, <code>=|</code> · sidebearings right in the kerning line · background and glyph snapshots.
     </td>
     <td width="50%" valign="top">
+      <img src="docs/screenshots/en/ext-anchors.png" alt="The letter И with top and bottom anchors (orange diamonds), the Anchors panel with coordinates and Place Automatically, the preview “Йй Ёё — À É Ñ Ö Ü”" width="100%">
+      <br>
+      <sub>Top and bottom anchors: marks land on letters by them.</sub>
       <h3>🧩 Components and anchors</h3>
       A glyph inside a glyph as a live reference (À = A + `) · anchors <code>top</code>/<code>_top</code>, entry and exit for handwriting · the font gets <code>mark</code>, <code>mkmk</code>, <code>curs</code> and GDEF · adding glyphs by code and whole alphabets.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
+      <img src="docs/screenshots/en/ext-forms.png" alt="The “A special form of 1” dialog with cards: small caps, for capitals, old-style figures, lining, tabular, proportional figures, superscript, subscript, numerator, denominator" width="100%">
+      <br>
+      <sub>Special Form…: pick what the copy is for and the OpenType feature appears by itself.</sub>
       <h3>🔠 OpenType without code</h3>
       Special Form…: small caps, figure styles, superscript and subscript, slashed zero, swash, stylistic sets, Bulgarian and Serbian forms · feature checkboxes in the preview · font info: rights, weight, slant, line gap · WOFF export.
     </td>
     <td width="50%" valign="top">
+      <img src="docs/screenshots/en/ext-table.png" alt="The glyph table: name, Unicode, width, sidebearings, tags “ready” and “check”, a note “the spur is too short”, Export checkboxes; the With a note filter and tags on the left" width="100%">
+      <br>
+      <sub>The table: in-place editing, tags, notes and filters.</sub>
       <h3>📋 Glyph list</h3>
       A table with in-place editing and sorting · renaming that updates kerning and rules · tags, notes, "do not export" · filters · batch commands for the selected glyphs · duplicating.
     </td>
