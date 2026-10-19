@@ -191,6 +191,9 @@ type Info struct {
 	LineGap      int     `json:"lineGap,omitempty"`
 	UnderlinePos int     `json:"underlinePosition,omitempty"`
 	UnderlineW   int     `json:"underlineThickness,omitempty"`
+	// Overshoot: alignment zones of this height at every font line
+	// (0 = none); OTF fonts get them as BlueValues / OtherBlues.
+	Overshoot int `json:"overshoot,omitempty"`
 }
 
 // Guide is a ruler guide shared by all glyphs: a horizontal line at

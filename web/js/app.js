@@ -1574,7 +1574,7 @@ async function editFontInfo() {
 
 // Extended mode: rights, style and line metrics of the font.
 const FI_TEXT = ['copyright', 'trademark', 'manufacturer', 'vendorURL', 'license', 'licenseURL', 'description'];
-const FI_NUM = ['italicAngle', 'lineGap', 'underlinePosition', 'underlineThickness'];
+const FI_NUM = ['italicAngle', 'lineGap', 'underlinePosition', 'underlineThickness', 'overshoot'];
 const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900];
 
 function fontInfoExtended(i) {
@@ -1582,7 +1582,8 @@ function fontInfoExtended(i) {
     ? `<textarea name="${k}" rows="2" maxlength="5000">${esc(i[k] || '')}</textarea>`
     : `<input type="text" name="${k}" value="${esc(i[k] || '')}" maxlength="500">`}</label>`;
   const num = (k) => `<label class="field" data-tip="${esc(t('fi_' + k + 'Tip'))}">${esc(t('fi_' + k))}<input type="number" name="${k}" value="${i[k] ?? ''}" step="${k === 'italicAngle' ? '0.5' : '1'}" placeholder="${k === 'italicAngle' ? '0' : t('fiAuto')}"></label>`;
-  return `<h3>${esc(t('fiStyle'))}</h3>
+  return `<div class="field-row">${num('overshoot')}<span></span></div>
+    <h3>${esc(t('fiStyle'))}</h3>
     <div class="field-row">
       <label class="field">${esc(t('fi_weight'))}<select name="weight">${WEIGHTS.map((w) => `<option value="${w}" ${(i.weight || 400) === w ? 'selected' : ''}>${w} · ${esc(t('weightNames')[w])}</option>`).join('')}</select></label>
       ${num('italicAngle')}
@@ -1607,7 +1608,7 @@ function readFontInfoExtended(i, data) {
   for (const k of FI_NUM) {
     const raw = String(data.get(k) ?? '').trim();
     const v = Number(raw);
-    if (raw !== '' && Number.isFinite(v) && v !== 0) i[k] = k === 'italicAngle' ? Math.max(-45, Math.min(45, v)) : Math.round(v);
+    if (raw !== '' && Number.isFinite(v) && v !== 0) i[k] = k === 'italicAngle' ? Math.max(-45, Math.min(45, v)) : k === 'overshoot' ? Math.max(0, Math.min(100, Math.round(v))) : Math.round(v);
     else delete i[k];
   }
 }

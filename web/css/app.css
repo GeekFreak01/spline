@@ -40,6 +40,7 @@
   --canvas-handle: #8C8C8C;
   --canvas-node-fill: #1B1B1B;
   --canvas-text: #8A8A8A;
+  --canvas-zone: rgba(76, 195, 138, 0.10); /* alignment zones */
 
   --label-red: #6B2E2E; --label-orange: #6E4422; --label-yellow: #6A5A1E;
   --label-green: #27553A; --label-blue: #23466E; --label-purple: #4B3168;
@@ -86,6 +87,7 @@
   --canvas-handle: #7A7A7A;
   --canvas-node-fill: #FFFFFF;
   --canvas-text: #6E6E6E;
+  --canvas-zone: rgba(30, 140, 80, 0.12);
   --label-red: #F6CFCF; --label-orange: #F8DDC3; --label-yellow: #F4EAB8;
   --label-green: #CBEBD6; --label-blue: #CFE0F6; --label-purple: #E2D3F3;
   --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.15);

@@ -1754,6 +1754,7 @@ export class Editor {
       guide: css('--canvas-guide'), handle: css('--canvas-handle'), bg: css('--canvas-bg'),
       grid: css('--canvas-grid'), gridMajor: css('--canvas-grid-major'), nodeFill: css('--canvas-node-fill'),
       userGuide: css('--canvas-user-guide'), rulerBg: css('--ruler-bg'), rulerLine: css('--ruler-line'), rulerText: css('--ruler-text'),
+      zone: css('--canvas-zone'), ok: css('--ok'),
     };
     const info = this.app.project.info;
     const S = (p) => this.toScreen(p);
@@ -1803,6 +1804,12 @@ export class Editor {
     const lines = [
       [info.ascender, L.asc], [info.capHeight, L.cap], [info.xHeight, L.x], [0, L.base], [info.descender, L.desc],
     ];
+    // Alignment zones (extended mode): the overshoot band of each line.
+    for (const z of this.zones()) {
+      const a = S({ x: 0, y: z[1] }).y, b = S({ x: 0, y: z[0] }).y;
+      ctx.fillStyle = colors.zone;
+      ctx.fillRect(0, a, this.w, b - a);
+    }
     for (const [y, label] of lines) {
       const sy = Math.round(S({ x: 0, y }).y) + 0.5;
       ctx.strokeStyle = y === 0 ? colors.metric : colors.line;
@@ -1979,11 +1986,28 @@ export class Editor {
     return capPx / this.capRatio;
   }
 
+  // Alignment zones [bottom, top] from the font's overshoot: above the
+  // x-height, cap height and ascender, below the baseline and descender.
+  zones() {
+    const fi = this.app.project.info;
+    const o = this.extended ? fi.overshoot || 0 : 0;
+    if (!o) return [];
+    return [[-o, 0], [fi.descender - o, fi.descender], [fi.xHeight, fi.xHeight + o], [fi.capHeight, fi.capHeight + o], [fi.ascender, fi.ascender + o]];
+  }
+
+  // Where a point stands to the font lines (extended mode): 'on' a line or
+  // inside its zone, 'near' when it misses one by a few units, else null.
+  lineFit(y) {
+    if (!this.extended) return null;
+    const fi = this.app.project.info;
+    const ranges = [[0, 0], [fi.xHeight, fi.xHeight], [fi.capHeight, fi.capHeight], [fi.ascender, fi.ascender], [fi.descender, fi.descender], ...this.zones()];
+    if (ranges.some(([a, b]) => y >= a && y <= b)) return 'on';
+    if (ranges.some(([a, b]) => (y < a && a - y <= 4) || (y > b && y - b <= 4))) return 'near';
+    return null;
+  }
+
   drawPoints(colors) {
     const ctx = this.ctx;
-    // Extended mode: points lying exactly on a font line get a ring.
-    const fi = this.app.project.info;
-    const lines = this.extended ? new Set([0, fi.xHeight, fi.capHeight, fi.ascender, fi.descender]) : null;
     this.glyph.contours.forEach((c, ci) => {
       c.nodes.forEach((n, ni) => {
         const s = this.toScreen(n);
@@ -2013,12 +2037,17 @@ export class Editor {
           ctx.fillStyle = colors.accent;
           ctx.fill();
         }
-        if (lines?.has(n.y)) {
+        // On a font line or in its zone: a green ring; a few units off: an
+        // orange dashed one (most likely a miss).
+        const fit = this.lineFit(n.y);
+        if (fit) {
           ctx.beginPath();
           ctx.arc(s.x, s.y, r + 4, 0, Math.PI * 2);
           ctx.lineWidth = 1.5;
-          ctx.strokeStyle = colors.accent;
+          ctx.strokeStyle = fit === 'on' ? colors.ok : colors.accent;
+          if (fit === 'near') ctx.setLineDash([3, 2]);
           ctx.stroke();
+          ctx.setLineDash([]);
         }
       });
     });
