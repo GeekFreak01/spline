@@ -18,7 +18,7 @@ import { Editor } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
 import { proposeGroups, letterKind, pairGap } from './shape.js';
 import { setDefaults, keyLabel, comboOf, comboLabel, actionFor, assign, resetAll, bindings, isCustom, BROWSER_RESERVED, TAKEN } from './keys.js';
-import { initPanels, layoutPanels, setHidden, isHidden, resetPanels, recordOrder, watchResize } from './panels.js';
+import { initPanels, layoutPanels, setHidden, isHidden, resetPanels, recordOrder, watchResize, openWindow } from './panels.js';
 import { recompose, composeInfo } from './compose.js';
 import { simplifyContours, addExtremesTo } from './simplify.js';
 import { KEY_FIELDS, isKey, outOfSync, updateMetrics, setMetric, sides } from './metrics.js';
@@ -306,8 +306,12 @@ function menuDefs() {
       { label: 'bgCopy', key: keyLabel('bgCopy'), run: () => backgroundOp('copy'), enabled: inEditor, ext: true },
       { label: 'bgSwap', run: () => backgroundOp('swap'), enabled: inEditor, ext: true },
       { label: 'cmAddMenu', run: addComponentDialog, enabled: inEditor, ext: true },
-      { label: 'tmMenu', run: transformMetricsDialog, enabled: inEditor || app.selected.size > 0, ext: true },
       { label: 'msMenu', run: mastersDialog, ext: true },
+      '-',
+      { label: 'wAnchors', run: () => openWindow('anchors'), enabled: inEditor, ext: true },
+      { label: 'wPaint', run: () => openWindow('paint'), enabled: inEditor, ext: true },
+      { label: 'wSmart', run: () => openWindow('smart'), enabled: inEditor, ext: true },
+      { label: 'wBackground', run: () => openWindow('background'), enabled: inEditor, ext: true },
       { label: 'cmDecomposeMenu', run: decomposeCurrent, enabled: inEditor && !!app.current?.components?.length, ext: true },
       { label: 'updateMetrics', key: keyLabel('updateMetrics'), run: updateAllMetrics, ext: true },
       '-',
@@ -319,6 +323,14 @@ function menuDefs() {
       { label: 'kgTitleMenu', key: keyLabel('groups'), run: () => groupsDialog() },
       { label: 'sgMenu', key: keyLabel('shapeGroups'), run: shapeGroupsDialog },
       { label: 'fontInfo', key: keyLabel('fontInfo'), run: editFontInfo },
+    ] },
+    { id: 'menuFilter', items: [
+      { text: `${t('fl_offset')}…`, run: () => openFilter('offset'), enabled: inEditor, ext: true },
+      { text: `${t('fl_round')}…`, run: () => openFilter('round'), enabled: inEditor, ext: true },
+      { text: `${t('fl_stroke')}…`, run: () => openFilter('stroke'), enabled: inEditor, ext: true },
+      { text: `${t('fl_fit')}…`, run: () => openFilter('fit'), enabled: inEditor, ext: true },
+      '-',
+      { label: 'tmMenu', run: transformMetricsDialog, enabled: inEditor || app.selected.size > 0, ext: true },
     ] },
     { id: 'menuWindow', items: [
       // Only the panels of the current view: glyphs or kerning.
@@ -347,8 +359,12 @@ function visibleItems(items) {
   return out.filter((it, i) => it !== '-' || (i > 0 && out[i - 1] !== '-' && i < out.length - 1));
 }
 
+function shownMenus() {
+  return menuDefs().map((m) => ({ ...m, items: visibleItems(m.items) })).filter((m) => m.items.length);
+}
+
 function renderMenus() {
-  const defs = menuDefs().map((m) => ({ ...m, items: visibleItems(m.items) }));
+  const defs = shownMenus();
   $('menus').innerHTML = defs.map((m, i) => `<div class="menu-root">
     <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="${openMenu === i}" data-menu="${i}">${esc(t(m.id))}</button>
     <div class="menu" role="menu" ${openMenu === i ? '' : 'hidden'}>
@@ -374,7 +390,7 @@ $('menus').addEventListener('click', (e) => {
   const item = e.target.closest('[data-item]');
   if (!item || item.disabled) return;
   const [i, j] = item.dataset.item.split(':').map(Number);
-  const def = visibleItems(menuDefs()[i].items)[j];
+  const def = shownMenus()[i].items[j];
   setMenu(null);
   def.run();
 });
@@ -383,7 +399,7 @@ $('menus').addEventListener('mouseover', (e) => {
   if (root && openMenu !== null && Number(root.dataset.menu) !== openMenu) setMenu(Number(root.dataset.menu));
 });
 $('menus').addEventListener('keydown', (e) => {
-  const count = menuDefs().length;
+  const count = shownMenus().length;
   const items = [...$('menus').querySelectorAll('.menu:not([hidden]) [role^="menuitem"]:not(:disabled)')];
   const i = items.indexOf(document.activeElement);
   if (e.key === 'ArrowDown') { e.preventDefault(); if (openMenu === null) setMenu(Number(e.target.dataset.menu ?? 0), true); else items[(i + 1) % items.length]?.focus(); }
@@ -1118,6 +1134,8 @@ initPanels({
     kernPair: icon('kerning', 18), kernSpacing: icon('spacing', 18), kernSuggest: icon('check', 18), kernList: icon('search', 18),
   },
   onChange: () => renderMenus(),
+  // Used now and then: opened from the menus as windows, not kept in the dock.
+  defaults: Object.fromEntries(['filters', 'paint', 'smart', 'anchors', 'background'].map((id) => [id, { place: 'float', hidden: true }])),
 });
 watchResize();
 
@@ -3698,6 +3716,15 @@ function previewFilter() {
 }
 
 app.onPreviewCancel = () => { filterState.active = false; };
+
+// Filter menu: the Filters window with this filter picked.
+function openFilter(kind) {
+  filterState.kind = kind;
+  filterState.active = true;
+  renderGlyphPanel();
+  openWindow('filters');
+  previewFilter();
+}
 
 function setFilter(kind) {
   filterState.kind = kind;

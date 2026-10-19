@@ -33,10 +33,13 @@ let panelIcons = {};
 let onChange = () => {};
 let hint = null;
 let openFlyout = null;
+// Panels that start as closed windows (opened from a menu), by id.
+let defaults = {};
 
 export function initPanels(opts) {
   ({ layer, active, labels, icons, panelIcons } = opts);
   onChange = opts.onChange || onChange;
+  defaults = opts.defaults || {};
   for (const view of opts.views) {
     view.addEventListener('pointerdown', onZonePointerDown);
     view.addEventListener('click', onZoneClick, true);
@@ -53,9 +56,9 @@ export function initPanels(opts) {
   layer.append(hint);
 }
 
-export const isHidden = (id) => !!state[id]?.hidden;
+export const isHidden = (id) => !!(state[id]?.hidden ?? defaults[id]?.hidden);
 const placeOf = (id) => {
-  const p = state[id]?.place || (state[id]?.float ? 'float' : 'right');
+  const p = state[id]?.place || defaults[id]?.place || (state[id]?.float ? 'float' : 'right');
   return p === 'top' && !TOP_ALLOWED.has(id) ? 'right' : p;
 };
 
@@ -64,6 +67,27 @@ export function setHidden(id, hidden) {
   if (hidden && openFlyout === id) openFlyout = null;
   save();
   layoutPanels();
+  onChange();
+}
+
+// Opens a panel as a window in front (or unfolds it where it is docked),
+// like Photoshop's Window menu.
+export function openWindow(id) {
+  const s = st(id);
+  s.hidden = false;
+  if (!s.place) s.place = defaults[id]?.place || 'right';
+  if (s.place === 'float' && !s.float) {
+    // Next to the right dock, each new window a step lower than the last.
+    const n = [...layer.querySelectorAll('.float-panel:not(.flyout)')].filter((w) => !w.hidden).length;
+    const right = containers()?.dock.getBoundingClientRect().left || innerWidth - 280;
+    s.float = { x: Math.max(20, Math.round(right - 292 - n * 36)), y: 96 + n * 44, w: 280 };
+  }
+  save();
+  layoutPanels();
+  const w = layer.querySelector(`.float-panel[data-float="${id}"]`);
+  if (w) { layer.insertBefore(w, hint); fitHeight(w); }
+  const d = w?.querySelector('details') || document.querySelector(`details[data-sec="${id}"]:not([hidden])`);
+  if (d) { d.open = true; if (!w) d.scrollIntoView({ block: 'nearest' }); }
   onChange();
 }
 

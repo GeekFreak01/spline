@@ -1,7 +1,7 @@
 // Interface translations. Add a language by copying the "en" block.
 const dict = {
   ru: {
-    menuFile: 'Файл', menuEdit: 'Правка', menuView: 'Вид', menuGlyph: 'Буква', menuWindow: 'Окно', resetPanels: 'Вернуть панели на место', panelDock: 'Вернуть в панель справа', panelClose: 'Закрыть', panelCollapse: 'Свернуть в иконку', menuHelp: 'Справка',
+    menuFile: 'Файл', menuEdit: 'Правка', menuView: 'Вид', menuGlyph: 'Буква', menuWindow: 'Окно', menuFilter: 'Фильтр', wAnchors: 'Якоря…', wPaint: 'Цвет…', wSmart: 'Умная деталь…', wBackground: 'Фон и снимки…', resetPanels: 'Вернуть панели на место', panelDock: 'Вернуть в панель справа', panelClose: 'Закрыть', panelCollapse: 'Свернуть в иконку', menuHelp: 'Справка',
     new: 'Новый шрифт…', open: 'Открыть…', importSvg: 'Импорт SVG…', importSp: 'Взять буквы из .sp…',
     save: 'Сохранить', saveAs: 'Сохранить как…', export: 'Экспорт', exportTTF: 'Экспорт TTF', exportOTF: 'Экспорт OTF',
     undo: 'Отменить', redo: 'Повторить', cut: 'Вырезать', copy: 'Копировать', paste: 'Вставить',
@@ -284,7 +284,7 @@ const dict = {
     colorNames: { red: 'красная', orange: 'оранжевая', yellow: 'жёлтая', green: 'зелёная', blue: 'синяя', purple: 'фиолетовая' },
   },
   en: {
-    menuFile: 'File', menuEdit: 'Edit', menuView: 'View', menuGlyph: 'Glyph', menuWindow: 'Window', resetPanels: 'Reset Panels', panelDock: 'Back to the right dock', panelClose: 'Close', panelCollapse: 'Collapse to icon', menuHelp: 'Help',
+    menuFile: 'File', menuEdit: 'Edit', menuView: 'View', menuGlyph: 'Glyph', menuWindow: 'Window', menuFilter: 'Filter', wAnchors: 'Anchors…', wPaint: 'Colour…', wSmart: 'Smart Part…', wBackground: 'Background and Snapshots…', resetPanels: 'Reset Panels', panelDock: 'Back to the right dock', panelClose: 'Close', panelCollapse: 'Collapse to icon', menuHelp: 'Help',
     new: 'New Font…', open: 'Open…', importSvg: 'Import SVG…', importSp: 'Import Glyphs from .sp…',
     save: 'Save', saveAs: 'Save As…', export: 'Export', exportTTF: 'Export TTF', exportOTF: 'Export OTF',
     undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste',
