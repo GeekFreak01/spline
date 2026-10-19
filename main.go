@@ -326,6 +326,8 @@ func writeFont(w http.ResponseWriter, format fontgen.Format, data []byte) {
 		w.Header().Set("Content-Type", "font/otf")
 	case fontgen.WOFF:
 		w.Header().Set("Content-Type", "font/woff")
+	case fontgen.WOFF2:
+		w.Header().Set("Content-Type", "font/woff2")
 	default:
 		w.Header().Set("Content-Type", "font/ttf")
 	}

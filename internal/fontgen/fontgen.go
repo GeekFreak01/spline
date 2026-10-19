@@ -26,6 +26,7 @@ const (
 	OTF
 	WOFF   // TrueType packed for the web (WOFF 1.0)
 	VarTTF // variable TrueType from the masters (extended mode)
+	WOFF2  // TrueType packed for the web with Brotli (WOFF 2.0)
 )
 
 // ParseFormat converts "ttf" / "otf" to a Format.
@@ -37,6 +38,8 @@ func ParseFormat(s string) (Format, error) {
 		return OTF, nil
 	case "woff":
 		return WOFF, nil
+	case "woff2":
+		return WOFF2, nil
 	case "variable", "ttf-var", "vf":
 		return VarTTF, nil
 	}
@@ -77,10 +80,13 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
-	if f == WOFF {
+	if f == WOFF || f == WOFF2 {
 		ttf, err := Build(p, TTF)
 		if err != nil {
 			return nil, err
+		}
+		if f == WOFF2 {
+			return toWOFF2(ttf)
 		}
 		return toWOFF(ttf)
 	}

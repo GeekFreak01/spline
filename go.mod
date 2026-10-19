@@ -3,6 +3,7 @@ module github.com/GeekFreak01/spline
 go 1.22
 
 require (
+	github.com/andybalholm/brotli v1.1.1
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef

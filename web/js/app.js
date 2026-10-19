@@ -35,7 +35,7 @@ const MOD = isMac ? '⌘' : 'Ctrl+';
 
 // Default shortcuts; the user can change them in Help → Keyboard Shortcuts.
 setDefaults({
-  simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [], exportWOFF: [], specialForm: [],
+  simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [], exportWOFF: [], exportWOFF2: [], specialForm: [],
   undo: ['Ctrl+Z'], redo: ['Ctrl+Shift+Z', 'Ctrl+Y'], selectAll: ['Ctrl+A'], freeTransform: ['Ctrl+T'],
   invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
@@ -284,6 +284,7 @@ function menuDefs() {
       '-',
       { label: 'exportTTF', key: keyLabel('exportTTF'), run: () => exportFont('ttf') },
       { label: 'exportOTF', key: keyLabel('exportOTF'), run: () => exportFont('otf') },
+      { label: 'exportWOFF2', key: keyLabel('exportWOFF2'), run: () => exportFont('woff2'), ext: true },
       { label: 'exportWOFF', key: keyLabel('exportWOFF'), run: () => exportFont('woff'), ext: true },
       { label: 'msExport', run: exportInstances, enabled: hasMasters(app.project || {}), ext: true },
       { label: 'vfExport', run: exportVariable, enabled: hasMasters(app.project || {}), ext: true },
@@ -1628,7 +1629,7 @@ async function newFontDialog() {
 
 // Keyboard shortcuts: click a shortcut and press a new one.
 const KEY_GROUPS = [
-  ['menuFile', ['new', 'open', 'save', 'saveAs', 'importSvg', 'exportTTF', 'exportOTF', 'exportWOFF']],
+  ['menuFile', ['new', 'open', 'save', 'saveAs', 'importSvg', 'exportTTF', 'exportOTF', 'exportWOFF2', 'exportWOFF']],
   ['menuEdit', ['undo', 'redo', 'selectAll', 'freeTransform']],
   ['keysTools', TOOLS.map((tl) => `tool.${tl.id}`)],
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
@@ -4876,6 +4877,7 @@ const ACTIONS = {
   simplify: { run: simplifyGlyphs, when: () => app.mode === 'editor' || app.selected.size > 0 },
   exportTTF: { run: () => exportFont('ttf') }, exportOTF: { run: () => exportFont('otf') },
   exportWOFF: { run: () => exportFont('woff'), when: () => app.extended },
+  exportWOFF2: { run: () => exportFont('woff2'), when: () => app.extended },
   specialForm: { run: () => specialFormDialog(), when: () => app.extended && (app.mode === 'editor' || app.selected.size === 1) },
   undo: { run: undo }, redo: { run: redo }, selectAll: { run: selectAll },
   freeTransform: { run: startTransform, when: inEditorMode },
