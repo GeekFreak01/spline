@@ -153,6 +153,17 @@ export class Editor {
 
   // ---------------------------------------------------------------- hit tests
 
+  // Extended mode: the anchor under the cursor (index), or -1.
+  anchorAt(sx, sy) {
+    if (!this.extended) return -1;
+    const list = this.glyph.anchors || [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const s = this.toScreen(list[i]);
+      if (Math.abs(s.x - sx) <= 7 && Math.abs(s.y - sy) <= 7) return i;
+    }
+    return -1;
+  }
+
   nodeAt(sx, sy) {
     const cs = this.glyph.contours;
     for (let ci = cs.length - 1; ci >= 0; ci--) {
@@ -295,6 +306,11 @@ export class Editor {
   }
 
   downSelect(e, sx, sy, p) {
+    const ai = this.anchorAt(sx, sy);
+    if (ai >= 0) {
+      this.drag = { kind: 'anchor', index: ai, start: p };
+      return;
+    }
     const h = this.handleAt(sx, sy);
     if (h) {
       this.drag = { kind: 'handle', ...h, start: p, cusp: isCuspKey(e) };
@@ -467,6 +483,16 @@ export class Editor {
         d.moved = true;
         this.app.onGlyphMetricsChanged?.();
         break;
+      case 'anchor': {
+        if (!d.moved && Math.hypot(p.x - d.start.x, p.y - d.start.y) * this.view.scale < 2) break;
+        this.checkpoint();
+        const a = this.glyph.anchors[d.index];
+        const q = e.shiftKey ? snap45(d.start, p) : this.snap(p);
+        a.x = Math.round(q.x); a.y = Math.round(q.y);
+        d.moved = true;
+        this.app.onAnchorsChanged?.();
+        break;
+      }
       case 'marquee':
         d.end = { sx, sy };
         d.lasso?.push({ sx, sy });
@@ -560,6 +586,9 @@ export class Editor {
         break;
       case 'advance':
         if (d.moved) this.afterEdit();
+        break;
+      case 'anchor':
+        if (d.moved) this.afterEdit(false);
         break;
       case 'marquee': {
         const x0 = Math.min(d.start.sx, d.end.sx), x1 = Math.max(d.start.sx, d.end.sx);
@@ -1732,6 +1761,7 @@ export class Editor {
       this.drawPoints(colors);
     }
 
+    this.drawAnchors(colors);
     this.drawUserGuides(colors);
     this.drawOverlay(colors);
 
@@ -1815,6 +1845,25 @@ export class Editor {
         }
       });
     });
+  }
+
+  // Anchors: a diamond with the name, the mark anchors ("_top") hollow.
+  drawAnchors(colors) {
+    if (!this.extended || !this.glyph.anchors?.length) return;
+    const ctx = this.ctx;
+    ctx.font = `600 11px ${getComputedStyle(document.documentElement).getPropertyValue('--font-ui') || 'sans-serif'}`;
+    for (const a of this.glyph.anchors) {
+      const s = this.toScreen(a);
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y - 6); ctx.lineTo(s.x + 6, s.y); ctx.lineTo(s.x, s.y + 6); ctx.lineTo(s.x - 6, s.y); ctx.closePath();
+      ctx.fillStyle = a.name.startsWith('_') ? colors.bg : colors.accent;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = colors.accent;
+      ctx.stroke();
+      ctx.fillStyle = colors.accent;
+      ctx.fillText(a.name, s.x + 9, s.y - 6);
+    }
   }
 
   // The measuring line: its length and angle, and where it crosses the

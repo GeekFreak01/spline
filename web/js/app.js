@@ -6,6 +6,7 @@ import {
   translateGlyph, normalizeDirections, hasOutline,
 } from './model.js';
 import { refreshComponents, usedBy, decompose } from './components.js';
+import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
 import { History, KERNING, GROUPS } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
 import { Editor } from './editor.js';
@@ -181,6 +182,7 @@ app.commitGlyph = (g) => {
   markChanged();
   updateMetricInputs();
   if (g && composeState(g) !== $('glyphPanel').querySelector('[data-compose]')?.dataset.compose) renderGlyphPanel();
+  else if (app.extended && g?.anchors?.length) renderGlyphPanel();
 };
 app.onGlyphMetricsChanged = () => updateMetricInputs();
 app.onCursor = (p) => { $('statusPos').textContent = p ? `X ${Math.round(p.x)}   Y ${Math.round(p.y)}` : ''; };
@@ -783,7 +785,7 @@ function renderGlyphPanelBody() {
     + section('pathops', t('pathOps'), `<div class="op-row">${PATH_OPS.map((op) => `<button class="btn btn-icon" type="button"
         data-pathop="${op.id}" data-tip="${esc(t(op.label))}" data-key="${esc(keyLabel(`op.${op.id}`))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
 `)
-    + (app.extended ? componentsSection(g) + pointsSection() + backgroundSection(g) : '')
+    + (app.extended ? componentsSection(g) + anchorsSection(g) + pointsSection() + backgroundSection(g) : '')
     + alignSection()
     + transformSection()
     + variantsSection(g)
@@ -943,7 +945,7 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['components', 'cmTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['components', 'cmTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
 initPanels({
@@ -956,7 +958,7 @@ initPanels({
   icons: { dock: icon('panelDock', 14), close: icon('close', 14), collapse: icon('chevronRight', 14) },
   panelIcons: {
     glyph: icon('pen', 18), selection: icon('select', 18), pathops: icon('opUnite', 18), align: icon('alignHCenter', 18),
-    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), components: icon('components', 18), actions: icon('spacing', 18), font: icon('type', 18),
+    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), components: icon('components', 18), anchors: icon('anchor', 18), actions: icon('spacing', 18), font: icon('type', 18),
     kernPair: icon('kerning', 18), kernSpacing: icon('spacing', 18), kernSuggest: icon('check', 18), kernList: icon('search', 18),
   },
   onChange: () => renderMenus(),
@@ -978,6 +980,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
   dock.addEventListener('change', (e) => {
     if (onVariantsChange(e)) return;
     if (e.target.dataset.cmpos) { moveComponent(e.target.dataset.cmpos, Number(e.target.value)); return; }
+    if (e.target.dataset.anpos) { setAnchorValue(e.target.dataset.anpos, e.target.value); return; }
     if (e.target.dataset.ul) { setUnderlayValue(e.target.dataset.ul, Number(e.target.value), true); return; }
     if (e.target.id === 'bgShow') { editor.showBackground = e.target.checked; store.set('spline.showBackground', e.target.checked ? '1' : '0'); editor.render(); return; }
     if (e.target.dataset.kgroup) {
@@ -1013,6 +1016,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
     if (onVariantsClick(e)) return;
     if (snapshotClick(e)) return;
     if (componentClick(e)) return;
+    if (anchorClick(e)) return;
     const sw = e.target.closest('[data-role="colorPick"] [data-color]');
     if (sw) { setColor(sw.dataset.color); return; }
     const al = e.target.closest('[data-align]');
@@ -2996,6 +3000,10 @@ async function addComponentDialog() {
     const fi = app.project.info;
     if (mark && ch && ch === ch.toUpperCase() && ch !== ch.toLowerCase()) y = fi.capHeight - fi.xHeight;
   }
+  // Anchors win over the guess: the mark's _top onto the letter's top.
+  const baseComp = g.components?.[0] && findGlyph(g.components[0].glyph);
+  const at = baseComp && attachOffset(baseComp, src);
+  if (at) { x = Math.round(at.dx + g.components[0].x); y = Math.round(at.dy + g.components[0].y); }
   (g.components ||= []).push({ glyph: src.name, x, y });
   if (!box) g.advance = src.advance;
   delete g.compose;
@@ -3012,6 +3020,71 @@ function decomposeCurrent() {
   editor.afterEdit();
   renderGlyphPanel();
   toast(t('cmDecomposed'));
+}
+
+// ================================================================ anchors
+
+const ANCHOR_LABEL = { top: 'anTop', bottom: 'anBottom', _top: 'anMarkTop', _bottom: 'anMarkBottom', entry: 'anEntry', exit: 'anExit' };
+
+function anchorsSection(g) {
+  const rows = (g.anchors || []).map((a, i) => `<div class="cm-row">
+      <span class="an-name" data-tip="${esc(t((ANCHOR_LABEL[a.name] || 'anCustom') + 'Tip'))}">${esc(a.name)}</span>
+      <label><span>X</span><input type="number" step="1" data-anpos="${i}:x" value="${Math.round(a.x)}"></label>
+      <label><span>Y</span><input type="number" step="1" data-anpos="${i}:y" value="${Math.round(a.y)}"></label>
+      <button class="btn btn-icon" type="button" data-an-remove="${i}" aria-label="${esc(t('anRemove'))}" data-tip="${esc(t('anRemove'))}">${icon('close', 14)}</button>
+    </div>`).join('');
+  const add = suggestedAnchors(g).map((n) => `<button class="btn" type="button" data-an-add="${n}" data-tip="${esc(t(ANCHOR_LABEL[n] + 'Tip'))}">${esc(t(ANCHOR_LABEL[n]))}</button>`).join('');
+  return section('anchors', t('anTitle'), `
+    ${rows || `<p class="hint">${esc(t('anHint'))}</p>`}
+    ${add ? `<div class="sub-head">${esc(t('anAdd'))}</div><div class="ag-presets">${add}</div>` : ''}
+    <button class="btn btn-block" type="button" data-cmd="anAuto" data-tip="${esc(t('anAutoTip'))}">${icon('check', 15)}<span>${esc(t('anAuto'))}</span></button>
+    ${g.anchors?.length ? `<p class="hint">${esc(t('anDragHint'))}</p>` : ''}`, !!g.anchors?.length);
+}
+
+function anchorsChanged(g) {
+  markChanged();
+  editor.render();
+  renderGlyphPanel();
+}
+
+function anchorClick(e) {
+  const g = app.current;
+  const add = e.target.closest('[data-an-add]'), rm = e.target.closest('[data-an-remove]');
+  if (!g || (!add && !rm)) return false;
+  app.history.push(g);
+  if (add) (g.anchors ||= []).push(defaultAnchor(g, add.dataset.anAdd));
+  else {
+    g.anchors.splice(Number(rm.dataset.anRemove), 1);
+    if (!g.anchors.length) delete g.anchors;
+  }
+  anchorsChanged(g);
+  return true;
+}
+
+function setAnchorValue(spec, v) {
+  const g = app.current;
+  const [i, axis] = spec.split(':');
+  const a = g?.anchors?.[Number(i)];
+  if (!a || !Number.isFinite(Number(v))) return;
+  app.history.push(g);
+  a[axis] = Math.round(Number(v));
+  anchorsChanged(g);
+}
+
+// Puts the usual anchors on the open glyph: top and bottom on letters,
+// _top on marks. Existing anchors stay where they are.
+function autoAnchors() {
+  const g = app.current;
+  if (!g) return;
+  // A mark below the baseline half (cedilla, ogonek) attaches at the bottom.
+  const box = glyphBox(g);
+  const below = box && box.maxY < app.project.info.xHeight / 2;
+  const names = (isMarkGlyph(g) ? [below ? '_bottom' : '_top'] : ['top', 'bottom']).filter((n) => !anchorOf(g, n));
+  if (!names.length) { toast(t('anNothing')); return; }
+  app.history.push(g);
+  for (const n of names) (g.anchors ||= []).push(defaultAnchor(g, n));
+  anchorsChanged(g);
+  toast(t('anAdded', { list: names.join(', ') }));
 }
 
 // Snapshots: saved versions of a glyph to come back to (extended mode).
@@ -3657,6 +3730,7 @@ const COMMANDS = {
   ptBreak: breakContour, ptJoin: joinContours, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
   bgClear: () => backgroundOp('clear'),
   ptEven: evenHandles, snapSave: saveSnapshot, cmAdd: addComponentDialog, cmDecompose: decomposeCurrent,
+  anAuto: autoAnchors,
   selRect: () => setSelectShape('rect'), selLasso: () => setSelectShape('lasso'),
   ulFitCap: () => fitUnderlay('cap'), ulFitX: () => fitUnderlay('x'), ulFitAll: () => fitUnderlay('all'),
 };

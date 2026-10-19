@@ -78,6 +78,16 @@ type Glyph struct {
 	// last built it; the font uses Contours plus RefContours.
 	Components  []Component `json:"components,omitempty"`
 	RefContours []Contour   `json:"refContours,omitempty"`
+	// Anchors place marks and join handwriting: "top"/"bottom" on letters,
+	// "_top"/"_bottom" on marks, "entry"/"exit" for cursive joins.
+	Anchors []Anchor `json:"anchors,omitempty"`
+}
+
+// Anchor is a named point of a glyph.
+type Anchor struct {
+	Name string  `json:"name"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
 }
 
 // Component places another glyph inside a glyph.
@@ -277,6 +287,14 @@ func (p *Project) Validate() error {
 		}
 		if len(g.Contours) > maxContours {
 			return fmt.Errorf("glyph %q has too many contours", g.Name)
+		}
+		if len(g.Anchors) > 64 {
+			return fmt.Errorf("glyph %q has too many anchors", g.Name)
+		}
+		for _, a := range g.Anchors {
+			if a.Name == "" || len(a.Name) > 32 || !okCoord(a.X) || !okCoord(a.Y) {
+				return fmt.Errorf("glyph %q has an invalid anchor", g.Name)
+			}
 		}
 		if len(g.RefContours) > maxContours {
 			return fmt.Errorf("glyph %q has too many component contours", g.Name)

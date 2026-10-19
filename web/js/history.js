@@ -60,6 +60,7 @@ export class History {
     g.advance = s.advance;
     if (s.compose) g.compose = structuredClone(s.compose); else delete g.compose;
     if (s.composeOff) g.composeOff = true; else delete g.composeOff;
+    if (s.anchors) g.anchors = structuredClone(s.anchors); else delete g.anchors;
     if (s.components) g.components = structuredClone(s.components); else delete g.components;
     if (s.background) g.background = structuredClone(s.background); else delete g.background;
     return g.name;
@@ -77,4 +78,5 @@ const snap = (g) => ({
   compose: g.compose && structuredClone(g.compose), composeOff: !!g.composeOff,
   background: g.background && structuredClone(g.background),
   components: g.components && structuredClone(g.components),
+  anchors: g.anchors && structuredClone(g.anchors),
 });

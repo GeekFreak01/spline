@@ -54,6 +54,8 @@ type fontData struct {
 	kern   []kernPair
 	calt   []caltRule
 	ligs   []ligRule
+	// anchors by glyph id (extended mode): mark, mkmk and curs.
+	anchors map[int]glyphAnchors
 	names  names
 	bbox   box
 	now    time.Time
@@ -91,12 +93,17 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 		tables["maxp"] = buildMaxpCFF(len(fd.glyphs))
 		sfntVersion = 0x4F54544F // 'OTTO'
 	}
-	if len(fd.kern) > 0 {
-		gpos, err := buildGPOS(fd.kern)
-		if err != nil {
-			return nil, err
-		}
+	gpos, err := buildGPOS(fd)
+	if err != nil {
+		return nil, err
+	}
+	if gpos != nil {
 		tables["GPOS"] = gpos
+	}
+	if gdef := buildGDEF(fd); gdef != nil {
+		tables["GDEF"] = gdef
+	}
+	if len(fd.kern) > 0 {
 		if k := buildKern(fd.kern); k != nil {
 			tables["kern"] = k
 		}
@@ -179,6 +186,7 @@ func prepare(p *project.Project, f Format) *fontData {
 	}
 	fd.kern = collectKerning(p, fd.gid)
 	fd.calt, fd.ligs = collectSubst(p, fd.gid)
+	fd.anchors = collectAnchors(p, fd.gid)
 	return fd
 }
 

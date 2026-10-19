@@ -691,3 +691,5 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .cm-users .btn { min-width: 32px; padding: 0 8px; }
 
 .ag-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+
+.an-name { font: 600 var(--fs-s) var(--font-mono, monospace); color: var(--dot-orange); overflow: hidden; text-overflow: ellipsis; }

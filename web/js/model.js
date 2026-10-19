@@ -81,6 +81,9 @@ export function validateProject(p) {
       .map((k) => ({ glyph: k.glyph, x: Number(k.x) || 0, y: Number(k.y) || 0 }));
     if (!g.components.length) delete g.components;
     if (!Array.isArray(g.refContours) || !g.refContours.length) delete g.refContours;
+    g.anchors = (Array.isArray(g.anchors) ? g.anchors : [])
+      .filter((a) => a && typeof a.name === 'string' && a.name && Number.isFinite(a.x) && Number.isFinite(a.y)).slice(0, 64);
+    if (!g.anchors.length) delete g.anchors;
     if (Array.isArray(g.snapshots)) g.snapshots = g.snapshots.filter((x) => x && Array.isArray(x.contours) && Number.isFinite(x.advance)).slice(-20);
     if (!g.snapshots?.length) delete g.snapshots;
     for (const k of ['lsbKey', 'rsbKey', 'widthKey']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];
@@ -237,6 +240,7 @@ export function svgPath(g) {
 export function translateGlyph(g, dx, dy) {
   for (const c of outline(g)) for (const n of c.nodes) movePoint(n, dx, dy, true);
   for (const k of g.components || []) { k.x += dx; k.y += dy; }
+  for (const a of g.anchors || []) { a.x += dx; a.y += dy; }
 }
 
 export function movePoint(n, dx, dy, withHandles) {

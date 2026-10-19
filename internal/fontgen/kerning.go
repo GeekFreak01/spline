@@ -83,11 +83,9 @@ func collectKerning(p *project.Project, gid map[string]int) []kernPair {
 	return out
 }
 
-// buildGPOS writes a GPOS table with one 'kern' feature (DFLT, cyrl, latn
-// scripts) and one pair-adjustment lookup (PairPos format 1, XAdvance of
-// the first glyph).
-func buildGPOS(pairs []kernPair) ([]byte, error) {
-	// PairPos subtable.
+// pairLookup writes the kerning lookup: PairPos format 1 with the
+// XAdvance of the first glyph.
+func pairLookup(pairs []kernPair) ([]byte, error) {
 	var firsts []int
 	sets := map[int][]kernPair{}
 	for _, p := range pairs {
@@ -127,63 +125,7 @@ func buildGPOS(pairs []kernPair) ([]byte, error) {
 	}
 	sub.bytes(coverage.buf)
 	sub.bytes(pairSets.buf)
-
-	// Lookup list with a single lookup.
-	lookup := &writer{}
-	lookup.u16(2) // pair adjustment
-	lookup.u16(0)
-	lookup.u16(1)
-	lookup.u16(8) // subtable follows the 8-byte lookup header
-	lookup.bytes(sub.buf)
-	lookupList := &writer{}
-	lookupList.u16(1)
-	lookupList.u16(4)
-	lookupList.bytes(lookup.buf)
-
-	// Feature list: 'kern' -> lookup 0.
-	featureList := &writer{}
-	featureList.u16(1)
-	featureList.bytes([]byte("kern"))
-	featureList.u16(8)
-	featureList.u16(0) // featureParams
-	featureList.u16(1)
-	featureList.u16(0)
-
-	// Script list: every script uses the default language system.
-	tags := []string{"DFLT", "cyrl", "latn"}
-	scriptList := &writer{}
-	scriptList.u16(uint16(len(tags)))
-	base := 2 + 6*len(tags)
-	const scriptLen = 4 + 8 // Script header + LangSys
-	for i, tag := range tags {
-		scriptList.bytes([]byte(tag))
-		scriptList.u16(uint16(base + i*scriptLen))
-	}
-	for range tags {
-		scriptList.u16(4)      // defaultLangSys right after the script header
-		scriptList.u16(0)      // no other languages
-		scriptList.u16(0)      // lookupOrder
-		scriptList.u16(0xFFFF) // no required feature
-		scriptList.u16(1)
-		scriptList.u16(0) // feature index
-	}
-
-	w := &writer{}
-	w.u16(1)
-	w.u16(0)
-	off := 10
-	w.u16(uint16(off))
-	off += len(scriptList.buf)
-	w.u16(uint16(off))
-	off += len(featureList.buf)
-	if off+len(lookupList.buf) > 0xFFFF {
-		return nil, errors.New("too many kerning pairs")
-	}
-	w.u16(uint16(off))
-	w.bytes(scriptList.buf)
-	w.bytes(featureList.buf)
-	w.bytes(lookupList.buf)
-	return w.buf, nil
+	return lookupTable(2, sub.buf), nil
 }
 
 // buildKern writes the legacy 'kern' table (format 0) used by older

@@ -6,6 +6,7 @@
 // copy of the parts), so export and every other tool see a normal glyph.
 // Editing it by hand turns it into a normal glyph (composeOff).
 import { glyphBox, clone, outline, hasOutline } from './model.js';
+import { attachOffset } from './anchors.js';
 
 // Combining mark (from Unicode decomposition) -> the spacing mark glyph
 // that is drawn for it.
@@ -70,8 +71,12 @@ function build(project, g, info) {
     // ogonek) stay where they are drawn.
     let dy = BELOW.has(cp) ? 0 : (info.upper ? fi.capHeight - fi.xHeight : 0);
     if (!BELOW.has(cp) && mb.minY + dy < above + GAP) dy = above + GAP - mb.minY;
-    const dx = cp === 0x2db ? bbox.maxX - mb.maxX // ogonek: at the right foot
+    let dx = cp === 0x2db ? bbox.maxX - mb.maxX // ogonek: at the right foot
       : (bbox.minX + bbox.maxX) / 2 - (mb.minX + mb.maxX) / 2;
+    // Extended mode: anchors (top on the letter, _top on the mark) decide
+    // the place exactly. Only for the first mark: stacking stays automatic.
+    const at = i === 0 ? attachOffset(info.base, m) : null;
+    if (at) ({ dx, dy } = at);
     for (const c of clone(outline(m))) {
       for (const n of c.nodes) {
         for (const p of [n, n.in, n.out]) if (p) { p.x = Math.round(p.x + dx); p.y = Math.round(p.y + dy); }
