@@ -202,6 +202,10 @@ func (ws *webServer) handleExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too many requests, try again in a minute", http.StatusTooManyRequests)
 		return
 	}
+	if r.URL.Query().Get("format") == "ufo" {
+		exportUFO(w, r)
+		return
+	}
 	format, err := fontgen.ParseFormat(r.URL.Query().Get("format"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

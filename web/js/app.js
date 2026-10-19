@@ -287,6 +287,7 @@ function menuDefs() {
       { label: 'exportTTF', key: keyLabel('exportTTF'), run: () => exportFont('ttf') },
       { label: 'exportOTF', key: keyLabel('exportOTF'), run: () => exportFont('otf') },
       { label: 'exportWOFF2', key: keyLabel('exportWOFF2'), run: () => exportFont('woff2'), ext: true },
+      { label: 'exportUFO', run: () => exportFont('ufo'), ext: true },
       { label: 'exportWOFF', key: keyLabel('exportWOFF'), run: () => exportFont('woff'), ext: true },
       { label: 'msExport', run: exportInstances, enabled: hasMasters(app.project || {}), ext: true },
       { label: 'vfExport', run: exportVariable, enabled: hasMasters(app.project || {}), ext: true },
@@ -4639,7 +4640,7 @@ function underlaySection(g) {
 
 // ================================================================ fonts: open TTF/OTF, install
 
-const isFontFile = (f) => /\.(ttf|otf)$/i.test(f?.name || '');
+const isFontFile = (f) => /\.(ttf|otf|ufoz|zip)$/i.test(f?.name || '');
 
 // A ready font opens as a new project (not saved yet).
 async function openFontFile(file, ask = false) {
@@ -4776,8 +4777,8 @@ async function openDialog() {
 function pickFiles(mode) {
   const input = $('fileInput');
   input.dataset.mode = mode;
-  input.accept = { svg: '.svg,image/svg+xml', image: 'image/png,image/jpeg,image/webp,image/gif', font: '.ttf,.otf' }[mode]
-    || '.sp,.json,.ttf,.otf,application/json';
+  input.accept = { svg: '.svg,image/svg+xml', image: 'image/png,image/jpeg,image/webp,image/gif', font: '.ttf,.otf,.ufoz,.zip' }[mode]
+    || '.sp,.json,.ttf,.otf,.ufoz,.zip,application/json';
   input.multiple = mode === 'svg';
   input.click();
 }
@@ -4890,7 +4891,7 @@ async function exportFont(format) {
       method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON(),
     });
     if (!r.ok) throw new Error(await r.text());
-    const name = safeFileName('.' + format);
+    const name = safeFileName('.' + (r.headers.get('X-File-Ext') || format));
     download(await r.blob(), name);
     toast(t('exported', { name }));
   } catch (err) {

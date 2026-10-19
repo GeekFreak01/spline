@@ -135,6 +135,8 @@ type Component struct {
 	Glyph string  `json:"glyph"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
+	// Props are the slider values when the glyph is a smart part.
+	Props map[string]float64 `json:"props,omitempty"`
 }
 
 // Outline is everything the glyph draws: its own contours and those of

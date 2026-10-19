@@ -31,6 +31,7 @@ import (
 	"github.com/GeekFreak01/spline/internal/fontgen"
 	"github.com/GeekFreak01/spline/internal/fontimport"
 	"github.com/GeekFreak01/spline/internal/project"
+	"github.com/GeekFreak01/spline/internal/ufo"
 )
 
 // version is set at build time: -ldflags "-X main.version=v1.2.3"
@@ -234,6 +235,10 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
+	if r.URL.Query().Get("format") == "ufo" {
+		exportUFO(w, r)
+		return
+	}
 	format, err := fontgen.ParseFormat(r.URL.Query().Get("format"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -252,6 +257,29 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 	writeFont(w, format, data)
 }
 
+// exportUFO answers /api/export?format=ufo: a .ufoz, or a .zip with a
+// .designspace and a UFO per master; X-File-Ext names which.
+func exportUFO(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	p, err := project.Parse(body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	data, ext, err := ufo.Export(p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("X-File-Ext", ext)
+	w.Write(data)
+}
+
 // maxFontFile limits fonts opened as projects.
 const maxFontFile = 16 << 20
 
@@ -265,6 +293,16 @@ func handleImportFont(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "font file is too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	// A zip is a UFO (.ufoz, or UFOs with a .designspace).
+	if ufo.IsZip(data) {
+		p, skipped, err := ufo.Import(data)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		writeJSON(w, map[string]any{"project": p, "skipped": skipped})
 		return
 	}
 	res, err := fontimport.Import(data)
