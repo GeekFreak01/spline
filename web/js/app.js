@@ -1739,9 +1739,13 @@ if (!TOOLS.some((x) => x.id === editor.tool)) editor.tool = 'brush';
 
 function renderToolbar() {
   if (!app.extended && editor.tool === 'measure') editor.setTool('select');
-  $('toolButtons').innerHTML = visibleTools().map((tl) => `<button type="button" class="tool" role="radio" data-tool="${tl.id}"
-      aria-checked="${editor.tool === tl.id}" aria-label="${esc(toolName(tl.id))}" data-tip="${esc(toolName(tl.id))}" data-key="${esc(keyLabel(`tool.${tl.id}`))}">
-      ${icon(tl.icon, 18)}</button>`).join('');
+  $('toolButtons').innerHTML = visibleTools().map((tl) => {
+    const fly = app.extended && tl.id === 'select';
+    const name = fly ? `${toolName(tl.id)}: ${t(editor.selectShape === 'lasso' ? 'selLasso' : 'selRect')}` : toolName(tl.id);
+    return `<button type="button" class="tool${fly ? ' has-flyout' : ''}" role="radio" data-tool="${tl.id}"
+      aria-checked="${editor.tool === tl.id}" aria-label="${esc(name)}" data-tip="${esc(name)}" data-key="${esc(keyLabel(`tool.${tl.id}`))}"${fly ? ' aria-haspopup="menu"' : ''}>
+      ${icon(fly && editor.selectShape === 'lasso' ? 'lasso' : tl.icon, 18)}</button>`;
+  }).join('');
   $('backBtn').dataset.tip = t('back');
   $('backBtn').dataset.key = 'Esc';
 }
@@ -1855,11 +1859,6 @@ function drawEditorOptions() {
         <button type="button" role="radio" data-cmd="pxErase" aria-checked="${editor.pixelErase}" data-tip="${esc(t('pxEraseTip'))}">${esc(t('pxErase'))}</button>
       </div></div><div class="sep"></div>` : ''}
     ${masterBarHTML()}
-    ${app.extended && editor.tool === 'select' ? `<div class="group"><span class="opt-label">${esc(t('selShape'))}</span>
-      <div class="seg" role="radiogroup">
-        <button type="button" role="radio" data-cmd="selRect" aria-checked="${editor.selectShape !== 'lasso'}" data-tip="${esc(t('selRectTip'))}">${esc(t('selRect'))}</button>
-        <button type="button" role="radio" data-cmd="selLasso" aria-checked="${editor.selectShape === 'lasso'}" data-tip="${esc(t('selLassoTip'))}">${esc(t('selLasso'))}</button>
-      </div></div><div class="sep"></div>` : ''}
     <div class="group">
       <label class="check"><input type="checkbox" data-opt="guide" ${editor.showGuide ? 'checked' : ''}>${esc(t('guide'))}</label>
       <label class="check"><input type="checkbox" data-opt="grid" ${editor.showGrid ? 'checked' : ''}>${esc(t('grid'))}</label>
@@ -1898,8 +1897,60 @@ function setTool(id) {
 
 $('toolButtons').addEventListener('click', (e) => {
   const b = e.target.closest('[data-tool]');
-  if (b) setTool(b.dataset.tool);
+  if (b && !flyoutJustOpened) setTool(b.dataset.tool);
+  flyoutJustOpened = false;
 });
+
+// Tool flyout, as in Photoshop: right-click or hold the Select tool to pick
+// rectangle or lasso selection.
+let flyoutTimer = 0, flyoutJustOpened = false;
+const flyout = document.createElement('div');
+flyout.className = 'tool-flyout';
+flyout.setAttribute('role', 'menu');
+flyout.hidden = true;
+document.body.append(flyout);
+
+function openToolFlyout(btn) {
+  const item = (shape, ic, label) => `<button type="button" role="menuitemradio" data-shape="${shape}" aria-checked="${editor.selectShape === shape}">
+    ${icon(ic, 16)}<span>${esc(t(label))}</span><kbd>${esc(keyLabel('tool.select'))}</kbd></button>`;
+  flyout.innerHTML = item('rect', 'select', 'selRect') + item('lasso', 'lasso', 'selLasso');
+  const r = btn.getBoundingClientRect();
+  flyout.style.left = `${r.right + 4}px`;
+  flyout.style.top = `${r.top}px`;
+  flyout.hidden = false;
+  flyout.querySelector('[aria-checked="true"]')?.focus();
+}
+const closeToolFlyout = () => { flyout.hidden = true; };
+
+$('toolButtons').addEventListener('contextmenu', (e) => {
+  const b = e.target.closest('.has-flyout');
+  if (!b) return;
+  e.preventDefault();
+  openToolFlyout(b);
+});
+$('toolButtons').addEventListener('pointerdown', (e) => {
+  const b = e.target.closest('.has-flyout');
+  if (!b || e.button !== 0) return;
+  clearTimeout(flyoutTimer);
+  flyoutTimer = setTimeout(() => { flyoutJustOpened = true; openToolFlyout(b); }, 350);
+});
+for (const ev of ['pointerup', 'pointerleave']) $('toolButtons').addEventListener(ev, () => clearTimeout(flyoutTimer));
+flyout.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-shape]');
+  if (!b) return;
+  closeToolFlyout();
+  setSelectShape(b.dataset.shape);
+  setTool('select');
+});
+flyout.addEventListener('keydown', (e) => {
+  const items = [...flyout.querySelectorAll('[data-shape]')];
+  const i = items.indexOf(document.activeElement);
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }
+  if (e.key === 'Escape') { e.stopPropagation(); closeToolFlyout(); }
+});
+document.addEventListener('pointerdown', (e) => {
+  if (!flyout.hidden && !flyout.contains(e.target) && !e.target.closest('.has-flyout')) closeToolFlyout();
+}, true);
 $('backBtn').addEventListener('click', () => history.back());
 
 function setViewTabs() {
@@ -4182,7 +4233,7 @@ function evenHandles() {
 function setSelectShape(shape) {
   editor.selectShape = shape;
   store.set('spline.selectShape', shape);
-  renderEditorOptions();
+  renderToolbar();
 }
 
 // Ctrl+arrows in the kerning line (extended mode).
@@ -4804,7 +4855,6 @@ const COMMANDS = {
   duplicate: duplicateGlyphs, tmOpen: transformMetricsDialog, btExtremes: () => batch('extremes'), btRound: () => batch('round'), btMetrics: () => batch('metrics'),
   btDecompose: () => batch('decompose'), btExportOff: () => batch('exportOff'), btExportOn: () => batch('exportOn'), cmAdd: addComponentDialog, cmDecompose: decomposeCurrent,
   anAuto: autoAnchors, smAdd: addPropDialog,
-  selRect: () => setSelectShape('rect'), selLasso: () => setSelectShape('lasso'),
   snapMenu: () => { snapMenuOpen = !snapMenuOpen; renderEditorOptions(); },
   pxDraw: () => { editor.pixelErase = false; renderEditorOptions(); }, pxErase: () => { editor.pixelErase = true; renderEditorOptions(); },
   newCorner: () => newPartGlyph('corner'), newBrush: () => newPartGlyph('brush'),

@@ -560,6 +560,15 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 }
 .tool:hover { background: var(--bg-raised); color: var(--text); }
 .tool[aria-checked="true"] { background: var(--bg-active); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+/* A tool with variants: a small corner, right-click or hold for the flyout. */
+.tool.has-flyout::after { content: ''; position: absolute; right: 3px; bottom: 3px; border: 3px solid transparent; border-right-color: currentColor; border-bottom-color: currentColor; opacity: 0.7; }
+.tool-flyout { position: fixed; z-index: 1000; display: grid; padding: 4px; min-width: 190px;
+  background: var(--bg-panel-2, var(--bg-panel)); border: 1px solid var(--line-soft); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.tool-flyout[hidden] { display: none; }
+.tool-flyout button { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border: 0; border-radius: var(--radius); background: none; color: var(--text); text-align: left; }
+.tool-flyout button:hover, .tool-flyout button:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
+.tool-flyout button[aria-checked="true"] { box-shadow: inset 2px 0 0 var(--accent); }
+.tool-flyout kbd { margin-left: auto; color: inherit; opacity: 0.6; font: var(--fs-s) var(--font-mono, monospace); }
 .tool-sep { width: 24px; height: 1px; background: var(--line-soft); margin: 4px 0; }
 .canvas-wrap { position: relative; overflow: hidden; min-height: 0; min-width: 0; background: var(--canvas-pasteboard); touch-action: none; }
 #canvas { position: absolute; inset: 0; display: block; outline: none; }
