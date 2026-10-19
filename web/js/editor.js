@@ -4,6 +4,7 @@ import {
   rectContour, ellipseContour, movePoint, charOf, reverseContour, pointInPolygon,
 } from './model.js';
 import { applyStroke } from './trace.js';
+import { openCorner, reconnect, deleteSegment } from './corners.js';
 import { addExtremesTo } from './simplify.js';
 import { unite, subtract, removeOverlap, shapesOf, pathOperation, knifeCut } from './boolean.js';
 import { t } from './i18n.js';
@@ -457,6 +458,9 @@ export class Editor {
           // The grabbed point lands exactly on the grid / guide line.
           const target = this.snap({ x: d.ref.x + total.x, y: d.ref.y + total.y });
           total = { x: target.x - d.ref.x, y: target.y - d.ref.y };
+          // An open end sticks to another open end (then joins on release).
+          const end = this.extended && this.openEndNear({ x: d.ref.x + p.x - d.start.x, y: d.ref.y + p.y - d.start.y });
+          if (end) total = { x: end[2].x - d.ref.x, y: end[2].y - d.ref.y };
         }
         const dx = total.x - d.applied.x, dy = total.y - d.applied.y;
         if (!d.moved && Math.hypot(total.x, total.y) * this.view.scale < 2) break;
@@ -579,6 +583,7 @@ export class Editor {
           this.keyContour = this.keyContour === d.keyCandidate ? null : d.keyCandidate;
           this.app.onKeyObject?.(!!this.keyContour);
         }
+        if (d.moved && this.extended && this.joinDroppedEnd()) break;
         if (d.moved) { this.roundSelection(); this.afterEdit(); } else if (d.cuspNode) {
           // Ctrl/Alt-click on a point: sharp corner on both sides.
           const n = this.glyph.contours[d.cuspNode.ci].nodes[d.cuspNode.ni];
@@ -1525,6 +1530,107 @@ export class Editor {
     } else nodes = [...A.nodes, ...B.nodes];
     this.glyph.contours = cs.filter((_, i) => i !== i1 && i !== i2);
     this.glyph.contours.push({ closed: false, nodes });
+    this.sel.clear();
+    this.afterEdit(false);
+    return true;
+  }
+
+  // An open end dropped onto another open end (of its own contour or of
+  // another one) joins them, like closing a path in Illustrator.
+  // The open end (of another contour, or the other end of its own) within
+  // a few pixels of p, while one open end is selected: [contour, index,
+  // node] or null.
+  openEndNear(p, px = 10) {
+    if (this.sel.size !== 1) return null;
+    const cs = this.glyph.contours;
+    const [ci, ni] = [...this.sel][0].split(':').map(Number);
+    const isEnd = (c, i) => c && !c.closed && c.nodes.length > 1 && (i === 0 || i === c.nodes.length - 1);
+    if (!isEnd(cs[ci], ni)) return null;
+    const me = this.toScreen(p);
+    let hit = null, best = px;
+    cs.forEach((c, cj) => {
+      if (c.closed) return;
+      for (const nj of [0, c.nodes.length - 1]) {
+        if ((cj === ci && nj === ni) || (cj === ci && c.nodes.length < 3)) continue;
+        const s = this.toScreen(c.nodes[nj]);
+        const dist = Math.hypot(s.x - me.x, s.y - me.y);
+        if (dist <= best) { best = dist; hit = [cj, nj, c.nodes[nj]]; }
+      }
+    });
+    return hit;
+  }
+
+  joinDroppedEnd() {
+    if (this.sel.size !== 1) return false;
+    const cs = this.glyph.contours;
+    const [ci, ni] = [...this.sel][0].split(':').map(Number);
+    const near = this.openEndNear(cs[ci].nodes[ni], 2);
+    if (!near) return false;
+    const hit = near.slice(0, 2);
+    const target = cs[hit[0]].nodes[hit[1]];
+    movePoint(cs[ci].nodes[ni], target.x - cs[ci].nodes[ni].x, target.y - cs[ci].nodes[ni].y, true);
+    this.sel = new Set([`${ci}:${ni}`, `${hit[0]}:${hit[1]}`]);
+    // The move is already one undo step; the join is the next.
+    this.afterEdit(false);
+    return this.joinEnds();
+  }
+
+  // Open Corner: every selected sharp point turns into crossing "ears".
+  openCorners(d = 30) {
+    const keys = [...this.sel].map((k) => k.split(':').map(Number)).sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const copy = structuredClone(this.glyph.contours);
+    let n = 0;
+    for (const [ci, ni] of keys) {
+      const node = copy[ci]?.nodes[ni];
+      if (node && !node.smooth && openCorner(copy[ci], ni, d)) n++;
+    }
+    if (!n) return 0;
+    this.app.history.push(this.glyph);
+    this.glyph.contours = copy;
+    this.sel.clear();
+    this.afterEdit(false);
+    return n;
+  }
+
+  // Reconnect: each pair of selected neighbouring points (ears) becomes
+  // one sharp point where the segments around them cross.
+  reconnectEars() {
+    const byContour = new Map();
+    for (const k of this.sel) {
+      const [ci, ni] = k.split(':').map(Number);
+      if (!byContour.has(ci)) byContour.set(ci, []);
+      byContour.get(ci).push(ni);
+    }
+    const copy = structuredClone(this.glyph.contours);
+    let n = 0;
+    for (const [ci, list] of byContour) {
+      const c = copy[ci];
+      const set = new Set(list);
+      // From the end, so the indexes in front stay valid.
+      for (const i of [...set].sort((a, b) => b - a)) {
+        const j = i + 1 < c.nodes.length ? i + 1 : c.closed ? 0 : -1;
+        if (j < 0 || !set.has(j) || !set.has(i)) continue;
+        if (reconnect(c, i)) { n++; set.delete(i); set.delete(j); }
+      }
+    }
+    if (!n) return 0;
+    this.app.history.push(this.glyph);
+    this.glyph.contours = copy;
+    this.sel.clear();
+    this.afterEdit(false);
+    return n;
+  }
+
+  // Alt+Delete: removes the segment between two selected neighbouring
+  // points (a closed contour opens there, an open one splits in two).
+  deleteSegmentBetween() {
+    if (this.sel.size !== 2) return false;
+    const [[c1, i], [c2, j]] = [...this.sel].map((k) => k.split(':').map(Number));
+    if (c1 !== c2) return false;
+    const parts = deleteSegment(this.glyph.contours[c1], i, j);
+    if (!parts) return false;
+    this.app.history.push(this.glyph);
+    this.glyph.contours.splice(c1, 1, ...parts);
     this.sel.clear();
     this.afterEdit(false);
     return true;

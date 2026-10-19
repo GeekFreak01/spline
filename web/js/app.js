@@ -37,7 +37,7 @@ const MOD = isMac ? '⌘' : 'Ctrl+';
 setDefaults({
   simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [], exportWOFF: [], exportWOFF2: [], specialForm: [],
   undo: ['Ctrl+Z'], redo: ['Ctrl+Shift+Z', 'Ctrl+Y'], selectAll: ['Ctrl+A'], freeTransform: ['Ctrl+T'],
-  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
+  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], openCorner: [], reconnect: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
   snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
@@ -1636,7 +1636,7 @@ const KEY_GROUPS = [
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
   ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'simplify', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups', 'fontInfo']],
-  ['extTools', ['tool.measure', 'tool.pixel', 'selShapeCycle', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'bgCopy', 'updateMetrics']],
+  ['extTools', ['tool.measure', 'tool.pixel', 'selShapeCycle', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'openCorner', 'reconnect', 'bgCopy', 'updateMetrics']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -3480,6 +3480,7 @@ function pointsSection() {
   return section('points', t('ptTitle'), `
     <div class="btn-row">${b('ptExtremes', 'addExtremes', 'addExtremes')}${b('ptAlign', 'alignPoints', 'alignPoints')}</div>
     <div class="btn-row">${b('ptBreak', 'breakContour', 'breakContour')}${b('ptJoin', 'joinContours', 'joinContours')}</div>
+    <div class="btn-row">${b('ptOpenCorner', 'openCorner', 'openCorner')}${b('ptReconnect', 'reconnect', 'reconnect')}</div>
     <div class="btn-row">${b('ptEven', 'evenHandles', 'evenHandles')}${b('ptFirst', 'makeFirst', 'makeFirst')}</div>
     <div class="btn-row">${b('ptInvert', 'invertSelection', 'invertSelection')}</div>
     <div class="parts">${partsHTML()}</div>`, true, t('ptHint'));
@@ -4854,7 +4855,9 @@ const COMMANDS = {
   simplify: simplifyGlyphs, composeOff: () => setComposed(false), composeOn: () => setComposed(true),
   ulLoad: () => pickFiles('image'), ulRemove: removeUnderlay,
   ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
-  ptBreak: breakContour, ptJoin: joinContours, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
+  ptBreak: breakContour, ptJoin: joinContours,
+  ptOpenCorner: () => { if (!editor.openCorners()) toast(t('openCornerNone'), 'error'); },
+  ptReconnect: () => { if (!editor.reconnectEars()) toast(t('reconnectNone'), 'error'); }, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
   bgClear: () => backgroundOp('clear'),
   ptEven: evenHandles, snapSave: saveSnapshot, gvTiles: () => setGridView('tiles'), gvTable: () => setGridView('table'),
   duplicate: duplicateGlyphs, tmOpen: transformMetricsDialog, btExtremes: () => batch('extremes'), btRound: () => batch('round'), btMetrics: () => batch('metrics'),
@@ -4913,6 +4916,8 @@ const ACTIONS = {
   updateMetrics: { run: updateAllMetrics, when: () => app.extended },
   breakContour: { run: breakContour, when: () => app.extended && inEditorMode() },
   joinContours: { run: joinContours, when: () => app.extended && inEditorMode() },
+  openCorner: { run: () => COMMANDS.ptOpenCorner(), when: () => app.extended && inEditorMode() },
+  reconnect: { run: () => COMMANDS.ptReconnect(), when: () => app.extended && inEditorMode() },
   bgCopy: { run: () => backgroundOp('copy'), when: () => app.extended && inEditorMode() },
   fontInfo: { run: editFontInfo }, groups: { run: () => groupsDialog(), label: () => t('kgTitle') }, shortcuts: { run: helpDialog, always: true },
 };
@@ -4973,6 +4978,11 @@ document.addEventListener('keydown', (e) => {
     const d = { arrowleft: [-st, 0], arrowright: [st, 0], arrowup: [0, st], arrowdown: [0, -st] }[key];
     const ok = editor.xform ? editor.nudgeTransform(...d) : mod ? editor.nudge(...d) : editor.nudgeNodesOnly(...d);
     if (ok) e.preventDefault();
+    return;
+  }
+  // Alt+Delete: the segment between two points, not the points.
+  if (app.extended && e.altKey && !mod && (e.key === 'Delete' || e.key === 'Backspace')) {
+    if (editor.deleteSegmentBetween()) e.preventDefault();
     return;
   }
   if (mod || e.altKey) return;
