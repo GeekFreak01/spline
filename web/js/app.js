@@ -556,7 +556,7 @@ const SMART_FILTERS = {
   forms: (g) => !!formOf(g.name),
   components: (g) => !!g.components?.length,
   notes: (g) => !!g.note,
-  noExport: (g) => !!g.noExport,
+  noExport: (g) => !!g.noExport || isPartGlyph(g),
   stale: (g) => outOfSync(app.project, g).length > 0,
 };
 function renderSmartFilters() {
@@ -695,7 +695,7 @@ function tableHTML(list) {
   const val = {
     name: (g) => g.name, unicode: (g) => g.unicode || 1e9, advance: (g) => g.advance,
     lsb: (g) => sides(g).lsb ?? -1e9, rsb: (g) => sides(g).rsb ?? -1e9, tags: (g) => (g.tags || []).join(','), note: (g) => g.note || '',
-    export: (g) => (g.noExport ? 1 : 0),
+    export: (g) => (g.noExport || isPartGlyph(g) ? 1 : 0),
   }[col];
   const rows = val ? [...list].sort((a, b) => {
     const x = val(a), y = val(b);
@@ -712,7 +712,7 @@ function tableHTML(list) {
       <td>${num(g, 'advance', g.advance)}</td><td>${num(g, 'lsb', sd.lsb)}</td><td>${num(g, 'rsb', sd.rsb)}</td>
       <td><input type="text" data-cell="tags" aria-label="${esc(t('tc_tags'))} ${esc(g.name)}" value="${esc((g.tags || []).join(', '))}" spellcheck="false"></td>
       <td><input type="text" data-cell="note" aria-label="${esc(t('tc_note'))} ${esc(g.name)}" value="${esc(g.note || '')}"></td>
-      <td><input type="checkbox" data-cell="export" ${g.noExport ? '' : 'checked'} aria-label="${esc(t('tc_export'))}"></td>
+      <td><input type="checkbox" data-cell="export" ${g.noExport || isPartGlyph(g) ? '' : 'checked'} ${isPartGlyph(g) ? `disabled data-tip="${esc(t('partNoExport'))}"` : ''} aria-label="${esc(t('tc_export'))}"></td>
     </tr>`;
   }).join('');
   return `<table class="glyph-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
@@ -2087,10 +2087,16 @@ function onLineInput(text) {
   const names = parseLine(text);
   const cur = app.current?.name;
   if (!names.length) return;
+  const grew = names.length !== (editor.line || []).length;
   editor.line = names;
   const at = names.indexOf(cur);
   saveLine();
-  if (at >= 0) { editor.lineAt = at; editor.lineCursor = Math.min(editor.lineCursor, names.length); editor.render(); return; }
+  if (at >= 0) {
+    editor.lineAt = at;
+    editor.lineCursor = Math.min(editor.lineCursor, names.length);
+    if (grew) editor.fit(); else editor.render(); // the whole line in view
+    return;
+  }
   // This glyph is no longer in the line: edit the first one instead.
   editor.lineCursor = names.length;
   openEditor(names[0], false, { lineAt: 0 });
@@ -3462,7 +3468,7 @@ function infoFieldsHTML(g) {
     <label class="prop"><span>Unicode</span><input type="text" data-info="unicode" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></label>
     <label class="prop"><span>${esc(t('tc_tags'))}</span><input type="text" data-info="tags" value="${esc((g.tags || []).join(', '))}" placeholder="${esc(t('tagsPh'))}" spellcheck="false"></label>
     <label class="prop"><span>${esc(t('tc_note'))}</span><input type="text" data-info="note" value="${esc(g.note || '')}"></label>
-    <label class="check" data-tip="${esc(t('exportTip'))}"><input type="checkbox" data-info="export" ${g.noExport ? '' : 'checked'}>${esc(t('exportIn'))}</label>`;
+    <label class="check" data-tip="${esc(t(isPartGlyph(g) ? 'partNoExport' : 'exportTip'))}"><input type="checkbox" data-info="export" ${g.noExport || isPartGlyph(g) ? '' : 'checked'} ${isPartGlyph(g) ? 'disabled' : ''}>${esc(t('exportIn'))}</label>`;
 }
 
 function onInfoChange(e) {
@@ -4212,6 +4218,9 @@ function setCompProp(spec, v, commit) {
 }
 
 // A glyph can become a smart part when it is a part: "_name", not exported or used by others.
+// A part (name starting with "_", as in Glyphs) never goes into the font.
+const isPartGlyph = (g) => g.name.length > 1 && g.name[0] === '_';
+
 function canBeSmart(g) {
   return !!g && (isSmart(g) || g.name.startsWith('_') || g.noExport || usedBy(app.project, g.name).length > 0);
 }

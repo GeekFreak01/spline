@@ -139,6 +139,11 @@ type Component struct {
 	Props map[string]float64 `json:"props,omitempty"`
 }
 
+// IsPart tells a glyph that only serves as a part of others: a name
+// starting with "_" (_dash, _corner.serif, _brush.ink), as in Glyphs. Parts
+// are not exported into fonts; the glyphs using them carry their outline.
+func (g *Glyph) IsPart() bool { return len(g.Name) > 1 && g.Name[0] == '_' }
+
 // Outline is everything the glyph draws: its own contours and those of
 // its components.
 func (g *Glyph) Outline() []Contour {

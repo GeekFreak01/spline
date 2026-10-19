@@ -193,7 +193,7 @@ func prepare(p *project.Project, f Format) *fontData {
 	// another font instead of showing an empty gap. Spaces stay.
 	src := []project.Glyph{notdef}
 	for _, g := range p.Glyphs {
-		if g.NoExport {
+		if g.NoExport || g.IsPart() {
 			continue
 		}
 		if len(g.Outline()) > 0 || (g.Unicode > 0 && unicode.IsSpace(rune(g.Unicode))) {

@@ -141,7 +141,7 @@ func writeUFO(z *zip.Writer, dir string, p *project.Project, mi int) error {
 	var order, skip []string
 	for _, g := range p.Glyphs {
 		order = append(order, g.Name)
-		if g.NoExport {
+		if g.NoExport || g.IsPart() {
 			skip = append(skip, g.Name)
 		}
 	}

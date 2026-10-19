@@ -160,12 +160,17 @@ export class Editor {
       ctx.globalAlpha = 1;
     }
     if (this.tool === 'text') {
+      // The caret: orange (the glyph edges are blue), with ticks at the ends.
       const info = this.app.project.info;
       const x = Math.round(this.toScreen({ x: this.caretX(this.lineCursor), y: 0 }).x) + 0.5;
       const top = this.toScreen({ x: 0, y: info.ascender }).y, bottom = this.toScreen({ x: 0, y: info.descender }).y;
-      ctx.strokeStyle = colors.primary;
+      ctx.strokeStyle = colors.accent;
       ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x, top); ctx.lineTo(x, bottom);
+      ctx.moveTo(x - 6, top); ctx.lineTo(x + 6, top);
+      ctx.moveTo(x - 6, bottom); ctx.lineTo(x + 6, bottom);
+      ctx.stroke();
     }
   }
 
@@ -208,17 +213,21 @@ export class Editor {
     this.render();
   }
 
+  // Fits the glyph, or with the Text tool the whole text line.
   fit() {
     if (!this.glyph || !this.w) { this.needsFit = true; return; }
     this.needsFit = false;
     const info = this.app.project.info;
     const top = info.ascender + 80, bottom = info.descender - 60;
-    const width = Math.max(this.glyph.advance, 300);
+    const items = this.tool === 'text' ? this.lineItems() : [];
+    const x0 = items.length ? Math.min(0, items[0].x) : 0;
+    const x1 = items.length ? Math.max(this.glyph.advance, items[items.length - 1].x + items[items.length - 1].g.advance) : this.glyph.advance;
+    const width = Math.max(x1 - x0, 300);
     const pad = 48;
     const scale = Math.min((this.w - pad * 2) / width, (this.h - pad * 2) / (top - bottom));
     this.view.scale = Math.max(0.05, scale);
     this.app.onZoom?.(this.view.scale);
-    this.view.ox = (this.w - width * this.view.scale) / 2;
+    this.view.ox = (this.w - width * this.view.scale) / 2 - x0 * this.view.scale;
     this.view.oy = pad + top * this.view.scale + ((this.h - pad * 2) - (top - bottom) * this.view.scale) / 2;
     this.render();
   }
