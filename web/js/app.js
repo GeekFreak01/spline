@@ -99,8 +99,9 @@ function toast(msg, kind = 'ok') {
 }
 
 // Modal dialog. Resolves with FormData (OK) or null (cancel).
-function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true, onOpen = null }) {
+function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true, onOpen = null, cls = '' }) {
   const dlg = $('dialog');
+  dlg.className = `dialog ${cls}`.trim();
   dlg.innerHTML = `<form method="dialog">
     <h2>${esc(title)}</h2>
     <div class="body">${body}</div>
@@ -901,7 +902,7 @@ function renderInspectorBody() {
   const el = $('inspector');
   const sel = selectedGlyphs();
   if (!sel.length) {
-    el.innerHTML = section('glyph', t('dimensions'), `<p class="hint">${esc(t('noSelection'))}</p>`) + fontSection();
+    el.innerHTML = section('glyph', t('glyph'), `<p class="hint">${esc(t('noSelection'))}</p>`) + fontSection();
     return;
   }
   const g = sel[0];
@@ -909,17 +910,21 @@ function renderInspectorBody() {
     ? `<div class="big-glyph">${hasOutline(g) ? glyphSVG(g) : `<span class="ghost">${esc(charOf(g))}</span>`}</div>
        <div class="title-row"><b>${esc(charOf(g).trim() || g.name)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>`
     : `<div class="title-row"><b>${sel.length}</b><small>${esc(t('glyphs'))}: ${esc(sel.slice(0, 24).map((x) => charOf(x) || x.name).join(' '))}</small></div>`;
-  el.innerHTML = section('glyph', t('dimensions'), `${head}
+  // One section for everything about the glyph (in the extended mode also
+  // its name, code, tags, note and export).
+  el.innerHTML = section('glyph', t('glyph'), `${head}
       ${sel.length === 1 ? composeNoteHTML(g) : ''}
+      ${app.extended && sel.length === 1 ? infoFieldsHTML(g) : ''}
       <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(sel.every((x) => x.color === g.color) ? g.color : undefined)}</div>
       ${groupFields(sel)}`)
-    + (app.extended ? (sel.length === 1 ? infoSection(g) : '') + batchSection(sel) : '')
+    + (app.extended ? batchSection(sel) : '')
     + transformSection()
     + section('actions', t('actions'), `
       ${sel.length === 1 ? `<button class="btn btn-primary btn-block" type="button" data-cmd="draw">${icon('pen', 15)}<span>${esc(t('drawGlyph'))}</span></button>` : ''}
       <button class="btn btn-block" type="button" data-cmd="importSvg">${icon('open', 15)}<span>${esc(t('importSvg'))}</span></button>
       <button class="btn btn-block" type="button" data-cmd="spacing">${icon('spacing', 15)}<span>${esc(t('autoSpacing'))}</span></button>
       <button class="btn btn-block" type="button" data-cmd="simplify">${icon('simplify', 15)}<span>${esc(t('simplify'))}</span></button>
+      ${app.extended ? `<button class="btn btn-block" type="button" data-cmd="duplicate">${icon('plus', 15)}<span>${esc(t(sel.length > 1 ? 'dupGlyphs' : 'dupGlyph'))}</span></button>` : ''}
       <button class="btn btn-block btn-danger" type="button" data-cmd="deleteGlyph">${icon('trash', 15)}<span>${esc(t('deleteGlyph'))}</span></button>`)
     + fontSection();
 }
@@ -944,7 +949,7 @@ function renderGlyphPanelBody() {
         data-pathop="${op.id}" data-tip="${esc(t(op.label))}" data-key="${esc(keyLabel(`op.${op.id}`))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
 `)
     // Extended mode: everyday point tools first, then parts, then the rest.
-    + (app.extended ? pointsSection() + componentsSection(g) + smartSection(g) + anchorsSection(g) + paintSection(g) + filtersSection() + backgroundSection(g) : '')
+    + (app.extended ? pointsSection() + componentsSection(g) + smartSection(g) + anchorsSection(g) + paintSection(g) + backgroundSection(g) : '')
     + alignSection()
     + transformSection()
     + variantsSection(g)
@@ -1117,7 +1122,7 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['info', 'inTitle'], ['batch', 'btTitleShort'], ['paint', 'pnTitle'], ['filters', 'flTitle'], ['components', 'cmTitle'], ['smart', 'smTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['batch', 'btTitleShort'], ['paint', 'pnTitle'], ['components', 'cmTitle'], ['smart', 'smTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
 initPanels({
@@ -1135,7 +1140,7 @@ initPanels({
   },
   onChange: () => renderMenus(),
   // Used now and then: opened from the menus as windows, not kept in the dock.
-  defaults: Object.fromEntries(['filters', 'paint', 'smart', 'anchors', 'background'].map((id) => [id, { place: 'float', hidden: true }])),
+  defaults: Object.fromEntries(['paint', 'smart', 'anchors', 'background'].map((id) => [id, { place: 'float', hidden: true }])),
 });
 watchResize();
 
@@ -1150,7 +1155,6 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
   dock.addEventListener('toggle', (e) => {
     const sec = e.target.dataset?.sec;
     if (sec) store.set(`spline.sec.${sec}`, e.target.open ? '1' : '0');
-    if (sec === 'filters') previewFilter();
   }, true);
   dock.addEventListener('change', (e) => {
     if (onVariantsChange(e)) return;
@@ -1164,7 +1168,6 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
       toast(t('btTagged', { tag }));
       return;
     }
-    if (e.target.dataset.fl !== undefined) { onFilterInput(e.target); return; }
     if (e.target.dataset.part) { setPart(e.target.dataset.part, e.target.value); return; }
     if (e.target.dataset.paintEdit !== undefined) {
       app.project.palette[Number(e.target.dataset.paintEdit)] = e.target.value.toUpperCase();
@@ -1203,7 +1206,6 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
   });
   dock.addEventListener('input', (e) => {
     if (e.target.dataset.cmprop) setCompProp(e.target.dataset.cmprop, Number(e.target.value), false);
-    if (e.target.dataset.fl !== undefined) onFilterInput(e.target);
     if (e.target.dataset.tf) liveTransform(false);
     if (e.target.dataset.ul === 'opacity') setUnderlayValue('opacity', Number(e.target.value), false);
   });
@@ -3252,14 +3254,12 @@ function setTags(g, text) {
   if (tags.length) g.tags = tags; else delete g.tags;
 }
 
-function infoSection(g) {
-  return section('info', t('inTitle'), `
-    <label class="prop"><span>${esc(t('tc_name'))}</span><input type="text" data-info="name" value="${esc(g.name)}" spellcheck="false"></label>
+function infoFieldsHTML(g) {
+  return `<label class="prop"><span>${esc(t('tc_name'))}</span><input type="text" data-info="name" value="${esc(g.name)}" spellcheck="false"></label>
     <label class="prop"><span>Unicode</span><input type="text" data-info="unicode" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></label>
     <label class="prop"><span>${esc(t('tc_tags'))}</span><input type="text" data-info="tags" value="${esc((g.tags || []).join(', '))}" placeholder="${esc(t('tagsPh'))}" spellcheck="false"></label>
-    <label class="field">${esc(t('tc_note'))}<textarea data-info="note" rows="2">${esc(g.note || '')}</textarea></label>
-    <label class="check" data-tip="${esc(t('exportTip'))}"><input type="checkbox" data-info="export" ${g.noExport ? '' : 'checked'}>${esc(t('exportIn'))}</label>
-    <button class="btn btn-block" type="button" data-cmd="duplicate">${icon('plus', 15)}<span>${esc(t('dupGlyph'))}</span></button>`, false);
+    <label class="prop"><span>${esc(t('tc_note'))}</span><input type="text" data-info="note" value="${esc(g.note || '')}"></label>
+    <label class="check" data-tip="${esc(t('exportTip'))}"><input type="checkbox" data-info="export" ${g.noExport ? '' : 'checked'}>${esc(t('exportIn'))}</label>`;
 }
 
 function onInfoChange(e) {
@@ -3307,8 +3307,7 @@ function batchSection(sel) {
     <div class="btn-row">${b('btMetrics', 'btMetrics')}${b('btDecompose', 'btDecompose')}</div>
     <button class="btn btn-block" type="button" data-cmd="tmOpen">${icon('spacing', 15)}<span>${esc(t('tmMenu'))}</span></button>
     ${sel.length > 1 ? `<label class="prop"><span>${esc(t('btTag'))}</span><input type="text" data-batch-tag placeholder="${esc(t('tagsPh'))}" spellcheck="false"></label>
-    <div class="btn-row">${b('btExportOff', 'btExportOff')}${b('btExportOn', 'btExportOn')}</div>
-    <button class="btn btn-block" type="button" data-cmd="duplicate">${icon('plus', 15)}<span>${esc(t('dupGlyphs'))}</span></button>` : ''}`, false);
+    <div class="btn-row">${b('btExportOff', 'btExportOff')}${b('btExportOn', 'btExportOn')}</div>` : ''}`, false);
 }
 
 function batch(op) {
@@ -3703,20 +3702,8 @@ const FILTERS = {
   fit: { min: 20, max: 100, def: 55, unit: '%' },
 };
 // `active`: the preview shows only after the user touches the filter.
-const filterState = { kind: 'offset', values: {}, overlap: true, active: false };
+const filterState = { kind: 'offset', values: {}, overlap: true, active: false, preview: true };
 const filterValue = (k) => filterState.values[k] ?? FILTERS[k].def;
-
-function filtersSection() {
-  const k = filterState.kind, f = FILTERS[k], v = filterValue(k);
-  const b = (id, cmd) => `<button type="button" role="radio" data-cmd="${cmd}" aria-checked="${k === id}" data-tip="${esc(t('fl_' + id + 'Tip'))}">${esc(t('fl_' + id))}</button>`;
-  return section('filters', t('flTitle'), `
-    <div class="seg seg-wrap" role="radiogroup">${b('offset', 'flOffset')}${b('round', 'flRound')}${b('stroke', 'flStroke')}${b('fit', 'flFit')}</div>
-    <label class="prop"><span>${esc(t('fl_' + k + 'Value'))}</span><span class="with-unit">
-      <input type="range" data-fl="value" min="${f.min}" max="${f.max}" step="1" value="${v}">
-      <input type="number" data-fl="value" min="${f.min}" max="${f.max}" step="1" value="${v}">${f.unit ? `<em>${f.unit}</em>` : ''}</span></label>
-    ${f.overlap && !hasMasters(app.project) ? `<label class="check"><input type="checkbox" data-fl="overlap" ${filterState.overlap ? 'checked' : ''}>${esc(t('flOverlap'))}</label>` : ''}
-    <button class="btn btn-primary btn-block" type="button" data-cmd="flApply" data-tip="${esc(t('flTarget'))}">${icon('check', 15)}<span>${esc(t('flApply'))}</span></button>`, false);
-}
 
 function filterInput(g) {
   const picked = new Set([...editor.sel].map((key) => Number(key.split(':')[0])));
@@ -3734,8 +3721,7 @@ function runFilter(contours) {
 
 function previewFilter() {
   const g = app.current;
-  const open = panelQuery('details[data-sec="filters"]')?.open;
-  if (!app.extended || app.mode !== 'editor' || !g || !open || !filterState.active) { editor.preview = null; editor.render(); return; }
+  if (!app.extended || app.mode !== 'editor' || !g || !filterState.active || !filterState.preview) { editor.preview = null; editor.render(); return; }
   const { contours } = filterInput(g);
   try { editor.preview = contours.length ? runFilter(contours) : null; } catch { editor.preview = null; }
   editor.render();
@@ -3743,33 +3729,45 @@ function previewFilter() {
 
 app.onPreviewCancel = () => { filterState.active = false; };
 
-// Filter menu: the Filters window with this filter picked.
-function openFilter(kind) {
+// Filter menu: each filter in its own dialog, as in Photoshop: its value,
+// Preview at the bottom, Cancel / Apply. The canvas shows the result live.
+async function openFilter(kind) {
+  endTransform();
+  if (app.mode !== 'editor' || !app.current) return;
+  const f = FILTERS[kind];
   filterState.kind = kind;
   filterState.active = true;
-  renderGlyphPanel();
-  openWindow('filters');
-  previewFilter();
-}
-
-function setFilter(kind) {
-  filterState.kind = kind;
-  filterState.active = true;
-  renderGlyphPanel();
-  previewFilter();
-}
-
-function onFilterInput(el) {
-  filterState.active = true;
-  if (el.dataset.fl === 'overlap') filterState.overlap = el.checked;
-  else {
-    const f = FILTERS[filterState.kind];
-    const v = Math.max(f.min, Math.min(f.max, Math.round(Number(el.value))));
-    if (!Number.isFinite(v)) return;
-    filterState.values[filterState.kind] = v;
-    panelQuery('details[data-sec="filters"]')?.querySelectorAll('[data-fl="value"]').forEach((x) => { if (x !== el) x.value = v; });
-  }
-  previewFilter();
+  const v = filterValue(kind);
+  const data = await showDialog({
+    title: t('fl_' + kind),
+    cls: 'filter-dlg',
+    body: `<label class="prop"><span>${esc(t('fl_' + kind + 'Value'))}</span><span class="with-unit">
+        <input type="range" data-fl="value" min="${f.min}" max="${f.max}" step="1" value="${v}">
+        <input type="number" data-fl="value" min="${f.min}" max="${f.max}" step="1" value="${v}">${f.unit ? `<em>${f.unit}</em>` : ''}</span></label>
+      ${f.overlap && !hasMasters(app.project) ? `<label class="check"><input type="checkbox" data-fl="overlap" ${filterState.overlap ? 'checked' : ''}>${esc(t('flOverlap'))}</label>` : ''}
+      <label class="check fl-preview"><input type="checkbox" data-fl="preview" ${filterState.preview ? 'checked' : ''}>${esc(t('flPreview'))}</label>`,
+    okLabel: t('flApply'),
+    onOpen: (dlg) => {
+      const on = (e) => {
+        const el = e.target;
+        if (el.dataset.fl === 'preview') { filterState.preview = el.checked; previewFilter(); return; }
+        if (el.dataset.fl === 'overlap') { filterState.overlap = el.checked; previewFilter(); return; }
+        if (el.dataset.fl !== 'value') return;
+        const x = Math.max(f.min, Math.min(f.max, Math.round(Number(el.value))));
+        if (!Number.isFinite(x)) return;
+        filterState.values[kind] = x;
+        dlg.querySelectorAll('[data-fl="value"]').forEach((o) => { if (o !== el) o.value = x; });
+        previewFilter();
+      };
+      dlg.addEventListener('input', on);
+      dlg.addEventListener('change', on);
+      previewFilter();
+    },
+  });
+  if (data) applyFilter();
+  filterState.active = false;
+  editor.preview = null;
+  editor.render();
 }
 
 function applyFilter() {
@@ -4757,8 +4755,7 @@ const COMMANDS = {
   ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
   ptBreak: breakContour, ptJoin: joinContours, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
   bgClear: () => backgroundOp('clear'),
-  ptEven: evenHandles, snapSave: saveSnapshot, flApply: applyFilter,
-  flOffset: () => setFilter('offset'), flRound: () => setFilter('round'), flStroke: () => setFilter('stroke'), flFit: () => setFilter('fit'), gvTiles: () => setGridView('tiles'), gvTable: () => setGridView('table'),
+  ptEven: evenHandles, snapSave: saveSnapshot, gvTiles: () => setGridView('tiles'), gvTable: () => setGridView('table'),
   duplicate: duplicateGlyphs, tmOpen: transformMetricsDialog, btExtremes: () => batch('extremes'), btRound: () => batch('round'), btMetrics: () => batch('metrics'),
   btDecompose: () => batch('decompose'), btExportOff: () => batch('exportOff'), btExportOn: () => batch('exportOn'), cmAdd: addComponentDialog, cmDecompose: decomposeCurrent,
   anAuto: autoAnchors, smAdd: addPropDialog,

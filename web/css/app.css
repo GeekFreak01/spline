@@ -759,3 +759,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .snap-menu[hidden] { display: none; }
 .snap-menu kbd { margin-left: auto; color: var(--text-3); font: var(--fs-s) var(--font-mono, monospace); }
 .snap-menu .check { width: 100%; }
+
+/* A filter dialog leaves the canvas visible: the result shows there. */
+.dialog.filter-dlg { width: 340px; margin: 96px 300px auto auto; }
+.dialog.filter-dlg::backdrop { background: transparent; }
+.dialog.filter-dlg .fl-preview { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
