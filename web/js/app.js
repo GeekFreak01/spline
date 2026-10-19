@@ -14,7 +14,7 @@ import { setDefaults, keyLabel, comboOf, comboLabel, actionFor, assign, resetAll
 import { initPanels, layoutPanels, setHidden, isHidden, resetPanels, recordOrder, watchResize } from './panels.js';
 import { recompose, composeInfo } from './compose.js';
 import { simplifyContours } from './simplify.js';
-import { KEY_FIELDS, isKey, outOfSync, updateMetrics } from './metrics.js';
+import { KEY_FIELDS, isKey, outOfSync, updateMetrics, setMetric } from './metrics.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -30,11 +30,11 @@ const MOD = isMac ? '⌘' : 'Ctrl+';
 setDefaults({
   simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [],
   undo: ['Ctrl+Z'], redo: ['Ctrl+Shift+Z', 'Ctrl+Y'], selectAll: ['Ctrl+A'], freeTransform: ['Ctrl+T'],
-  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], updateMetrics: ['Ctrl+Alt+M'],
+  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
   snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
-  'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
+  'tool.measure': ['M'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
   'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'],
   'op.unite': ['Ctrl+Alt+U'], 'op.subtract': ['Ctrl+Alt+M'], 'op.intersect': ['Ctrl+Alt+I'],
   'op.exclude': ['Ctrl+Alt+E'], 'op.divide': ['Ctrl+Alt+D'], 'op.removeOverlap': ['Ctrl+Alt+O'],
@@ -51,7 +51,9 @@ const TOOLS = [
   { id: 'ellipse', icon: 'ellipse', key: 'O' },
   { id: 'knife', icon: 'knife', key: 'K' },
   { id: 'hand', icon: 'hand', key: 'H' },
+  { id: 'measure', icon: 'ruler', key: 'M', ext: true },
 ];
+const visibleTools = () => TOOLS.filter((tl) => !tl.ext || app.extended);
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
 const toolName = (id) => t('tool' + cap(id));
 const toolTip = (id) => t('tip' + cap(id));
@@ -277,6 +279,10 @@ function menuDefs() {
       { label: 'addExtremes', key: keyLabel('addExtremes'), run: addExtremes, enabled: inEditor, ext: true },
       { label: 'makeFirst', key: keyLabel('makeFirst'), run: makeFirst, enabled: inEditor && editor.sel.size === 1, ext: true },
       { label: 'alignPoints', key: keyLabel('alignPoints'), run: alignPoints, enabled: inEditor && editor.sel.size > 1, ext: true },
+      { label: 'breakContour', key: keyLabel('breakContour'), run: breakContour, enabled: inEditor && editor.sel.size === 1, ext: true },
+      { label: 'joinContours', key: keyLabel('joinContours'), run: joinContours, enabled: inEditor && editor.sel.size > 0, ext: true },
+      { label: 'bgCopy', key: keyLabel('bgCopy'), run: () => backgroundOp('copy'), enabled: inEditor, ext: true },
+      { label: 'bgSwap', run: () => backgroundOp('swap'), enabled: inEditor, ext: true },
       { label: 'updateMetrics', key: keyLabel('updateMetrics'), run: updateAllMetrics, ext: true },
       '-',
       ...PATH_OPS.map((op) => ({ label: op.label, key: keyLabel(`op.${op.id}`), run: () => runPathOp(op.id), enabled: inEditor })),
@@ -770,6 +776,7 @@ function renderGlyphPanelBody() {
     + section('pathops', t('pathOps'), `<div class="op-row">${PATH_OPS.map((op) => `<button class="btn btn-icon" type="button"
         data-pathop="${op.id}" data-tip="${esc(t(op.label))}" data-key="${esc(keyLabel(`op.${op.id}`))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
 `)
+    + (app.extended ? pointsSection() + backgroundSection(g) : '')
     + alignSection()
     + transformSection()
     + variantsSection(g)
@@ -929,7 +936,7 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
 initPanels({
@@ -942,7 +949,7 @@ initPanels({
   icons: { dock: icon('panelDock', 14), close: icon('close', 14), collapse: icon('chevronRight', 14) },
   panelIcons: {
     glyph: icon('pen', 18), selection: icon('select', 18), pathops: icon('opUnite', 18), align: icon('alignHCenter', 18),
-    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), actions: icon('spacing', 18), font: icon('type', 18),
+    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), actions: icon('spacing', 18), font: icon('type', 18),
     kernPair: icon('kerning', 18), kernSpacing: icon('spacing', 18), kernSuggest: icon('check', 18), kernList: icon('search', 18),
   },
   onChange: () => renderMenus(),
@@ -964,6 +971,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
   dock.addEventListener('change', (e) => {
     if (onVariantsChange(e)) return;
     if (e.target.dataset.ul) { setUnderlayValue(e.target.dataset.ul, Number(e.target.value), true); return; }
+    if (e.target.id === 'bgShow') { editor.showBackground = e.target.checked; store.set('spline.showBackground', e.target.checked ? '1' : '0'); editor.render(); return; }
     if (e.target.dataset.kgroup) {
       const prop = e.target.dataset.kgroup;
       const v = cleanGroupName(e.target.value);
@@ -1291,7 +1299,7 @@ const KEY_GROUPS = [
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
   ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'simplify', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups', 'fontInfo']],
-  ['extTools', ['invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'updateMetrics']],
+  ['extTools', ['tool.measure', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'bgCopy', 'updateMetrics']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -1376,6 +1384,7 @@ function helpDialog() {
 
 const editor = new Editor(app, $('canvas'));
 editor.extended = app.extended;
+editor.showBackground = store.get('spline.showBackground', '1') === '1';
 document.documentElement.dataset.mode = app.extended ? 'extended' : 'simple';
 editor.showGuide = store.get('spline.showGuide', '1') === '1';
 editor.showGrid = store.get('spline.showGrid', '1') === '1';
@@ -1391,7 +1400,8 @@ if (!Number.isFinite(editor.stabilizer)) editor.stabilizer = 4;
 if (!TOOLS.some((x) => x.id === editor.tool)) editor.tool = 'brush';
 
 function renderToolbar() {
-  $('toolButtons').innerHTML = TOOLS.map((tl) => `<button type="button" class="tool" role="radio" data-tool="${tl.id}"
+  if (!app.extended && editor.tool === 'measure') editor.setTool('select');
+  $('toolButtons').innerHTML = visibleTools().map((tl) => `<button type="button" class="tool" role="radio" data-tool="${tl.id}"
       aria-checked="${editor.tool === tl.id}" aria-label="${esc(toolName(tl.id))}" data-tip="${esc(toolName(tl.id))}" data-key="${esc(keyLabel(`tool.${tl.id}`))}">
       ${icon(tl.icon, 18)}</button>`).join('');
   $('backBtn').dataset.tip = t('back');
@@ -1501,6 +1511,7 @@ function renderEditorOptions() {
     </div>`;
 }
 
+app.selectTool = (id) => setTool(id);
 function setTool(id) {
   editor.setTool(id);
   store.set('spline.tool', id);
@@ -1572,6 +1583,7 @@ window.addEventListener('popstate', (e) => {
 
 const kernView = new KernView(app, $('kernCanvas'));
 kernView.showGroupMembers = store.get('spline.kernShowGroups') === '1';
+kernView.showMetrics = store.get('spline.kernShowMetrics') === '1';
 
 function toggleKernGroups(on = !kernView.showGroupMembers) {
   kernView.showGroupMembers = on;
@@ -1663,6 +1675,7 @@ function renderKernOptions() {
       ${[...Object.keys(KERN_SAMPLES), 'letter'].map((k) => `<option value="${k}" ${kernView.sample === k ? 'selected' : ''}>${esc(t('sample_' + k))}</option>`).join('')}
     </select></label></div>
     <label class="check" data-tip="${esc(t('kernShowGroupsTip'))}" data-key="${esc(keyLabel('kernShowGroups'))}"><input type="checkbox" id="kernShowGroups" ${kernView.showGroupMembers ? 'checked' : ''}>${esc(t('kernShowGroups'))}</label>
+    ${app.extended ? `<label class="check" data-tip="${esc(t('kernShowMetricsTip'))}"><input type="checkbox" id="kernShowMetrics" ${kernView.showMetrics ? 'checked' : ''}>${esc(t('kernShowMetrics'))}</label>` : ''}
     <div class="glyph-nav"><label>${esc(t('previewSize'))}<input type="range" id="kernSize" min="40" max="400" value="${kernView.size}"></label></div>`;
 }
 
@@ -1754,7 +1767,8 @@ function kernSpacingHTML(pr) {
     return `<div class="kspace"><b>${esc(glyphLabel(g))}</b>
       ${f('lsb', t('lsb'), box ? Math.round(box.minX) : '', !box)}${f('advance', t('width'), Math.round(g.advance))}${f('rsb', t('rsb'), box ? Math.round(g.advance - box.maxX) : '', !box)}</div>`;
   };
-  return row('left', pr.left) + row('right', pr.right) + `<p class="hint">${esc(t('kernSpacingHint'))}</p>`;
+  return row('left', pr.left) + row('right', pr.right) + `<p class="hint">${esc(t('kernSpacingHint'))}</p>`
+    + (app.extended ? `<p class="hint">${esc(t('kernSpacingKeys'))}</p>` : '');
 }
 
 function kernListHTML(pr) {
@@ -2588,6 +2602,11 @@ $('optionsBar').addEventListener('input', (e) => {
 $('optionsBar').addEventListener('change', (e) => {
   if (e.target.id === 'kernSample' && e.target.value) setKernSample(e.target.value);
   if (e.target.id === 'kernShowGroups') toggleKernGroups(e.target.checked);
+  if (e.target.id === 'kernShowMetrics') {
+    kernView.showMetrics = e.target.checked;
+    store.set('spline.kernShowMetrics', e.target.checked ? '1' : '0');
+    kernView.render();
+  }
 });
 $('optionsBar').addEventListener('keydown', (e) => {
   if (e.target.id === 'kernText' && e.key === 'Enter') { e.preventDefault(); $('kernCanvas').focus(); }
@@ -2767,8 +2786,73 @@ function setExtended(on) {
   store.set('spline.extended', on ? '1' : '0');
   document.documentElement.dataset.mode = on ? 'extended' : 'simple';
   renderAll();
-  if (app.mode === 'editor') { renderGlyphPanel(); editor.render(); }
+  if (app.mode === 'editor') { renderToolbar(); renderEditorOptions(); renderGlyphPanel(); editor.render(); }
+  if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
   toast(t(on ? 'extOn' : 'extOff'));
+}
+
+function breakContour() {
+  endTransform();
+  if (app.mode === 'editor' && !editor.breakAt()) toast(t('breakHint'), 'error');
+}
+
+function joinContours() {
+  endTransform();
+  if (app.mode === 'editor' && !editor.joinEnds()) toast(t('joinHint'), 'error');
+}
+
+// Background layer: a copy of the outline to compare against while
+// redrawing. It is kept in the project but never exported.
+function backgroundOp(op) {
+  endTransform();
+  const g = app.current;
+  if (app.mode !== 'editor' || !g) return;
+  if (op === 'clear' && !g.background?.length) return;
+  app.history.push(g);
+  if (op === 'copy') g.background = structuredClone(g.contours);
+  if (op === 'swap') [g.contours, g.background] = [g.background || [], structuredClone(g.contours)];
+  if (op === 'clear' || !g.background?.length) delete g.background;
+  editor.sel.clear();
+  editor.showBackground = true;
+  store.set('spline.showBackground', '1');
+  editor.afterEdit(op === 'swap');
+  renderGlyphPanel();
+  if (op === 'copy') toast(t('bgCopied'));
+}
+
+function pointsSection() {
+  const b = (cmd, label, key) => `<button class="btn" type="button" data-cmd="${cmd}" data-tip="${esc(t(label + 'Tip'))}"${key ? ` data-key="${esc(keyLabel(key))}"` : ''}>${esc(t(label + 'Short'))}</button>`;
+  return section('points', t('ptTitle'), `
+    <div class="btn-row">${b('ptExtremes', 'addExtremes', 'addExtremes')}${b('ptAlign', 'alignPoints', 'alignPoints')}</div>
+    <div class="btn-row">${b('ptBreak', 'breakContour', 'breakContour')}${b('ptJoin', 'joinContours', 'joinContours')}</div>
+    <div class="btn-row">${b('ptFirst', 'makeFirst', 'makeFirst')}${b('ptInvert', 'invertSelection', 'invertSelection')}</div>
+    <p class="hint">${esc(t('ptHint'))}</p>`);
+}
+
+function backgroundSection(g) {
+  const has = !!g.background?.length;
+  return section('background', t('bgTitle'), `
+    <label class="check"><input type="checkbox" id="bgShow" ${editor.showBackground ? 'checked' : ''} ${has ? '' : 'disabled'}>${esc(t('bgShow'))}</label>
+    <button class="btn btn-block" type="button" data-cmd="bgCopy">${icon('layers', 15)}<span>${esc(t('bgCopy'))}</span></button>
+    <div class="btn-row">
+      <button class="btn" type="button" data-cmd="bgSwap" ${has ? '' : 'disabled'}>${esc(t('bgSwapShort'))}</button>
+      <button class="btn" type="button" data-cmd="bgClear" ${has ? '' : 'disabled'}>${esc(t('bgClear'))}</button>
+    </div>
+    <p class="hint">${esc(t(has ? 'bgHintHas' : 'bgHint'))}</p>`, false);
+}
+
+// Ctrl+arrows in the kerning line (extended mode).
+function spaceInLine(role, delta) {
+  kernView.layout();
+  const it = kernView.items[role === 'lsb' ? kernView.cursor : kernView.cursor - 1];
+  const g = it?.g;
+  const box = g && glyphBox(g);
+  if (!box) return;
+  app.history.push(g);
+  setMetric(g, role, (role === 'lsb' ? box.minX : g.advance - box.maxX) + delta);
+  markChanged();
+  kernView.render();
+  renderKernPanel();
 }
 
 function addExtremes() {
@@ -3349,6 +3433,9 @@ const COMMANDS = {
   xfReset, xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
   simplify: simplifyGlyphs, composeOff: () => setComposed(false), composeOn: () => setComposed(true),
   ulLoad: () => pickFiles('image'), ulRemove: removeUnderlay,
+  ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
+  ptBreak: breakContour, ptJoin: joinContours, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
+  bgClear: () => backgroundOp('clear'),
   ulFitCap: () => fitUnderlay('cap'), ulFitX: () => fitUnderlay('x'), ulFitAll: () => fitUnderlay('all'),
 };
 
@@ -3376,7 +3463,7 @@ const ACTIONS = {
   snapGrid: { run: () => toggleView('snapGrid'), always: true },
   snapGuides: { run: () => toggleView('snapGuides'), always: true },
   prev: { run: () => stepGlyph(-1), when: inEditorMode }, next: { run: () => stepGlyph(1), when: inEditorMode },
-  ...Object.fromEntries(TOOLS.map((tl) => [`tool.${tl.id}`, { run: () => setTool(tl.id), when: inEditorMode, label: () => toolName(tl.id) }])),
+  ...Object.fromEntries(TOOLS.map((tl) => [`tool.${tl.id}`, { run: () => setTool(tl.id), when: () => inEditorMode() && (!tl.ext || app.extended), label: () => toolName(tl.id) }])),
   ...Object.fromEntries(PATH_OPS.map((op) => [`op.${op.id}`, { run: () => runPathOp(op.id), when: inEditorMode, always: true, label: () => t(op.label) }])),
   autoSpacing: { run: () => glyphAction('spacing'), when: () => app.mode === 'editor' || app.selected.size > 0 },
   flipH: { run: () => applyTransform('flipH'), when: () => app.mode === 'editor' || app.selected.size > 0 },
@@ -3392,6 +3479,9 @@ const ACTIONS = {
   makeFirst: { run: makeFirst, when: () => app.extended && inEditorMode() },
   alignPoints: { run: alignPoints, when: () => app.extended && inEditorMode() },
   updateMetrics: { run: updateAllMetrics, when: () => app.extended },
+  breakContour: { run: breakContour, when: () => app.extended && inEditorMode() },
+  joinContours: { run: joinContours, when: () => app.extended && inEditorMode() },
+  bgCopy: { run: () => backgroundOp('copy'), when: () => app.extended && inEditorMode() },
   fontInfo: { run: editFontInfo }, groups: { run: () => groupsDialog(), label: () => t('kgTitle') }, shortcuts: { run: helpDialog, always: true },
 };
 
@@ -3413,6 +3503,13 @@ document.addEventListener('keydown', (e) => {
   if (app.mode === 'kern') {
     // The canvas works like a text line: type to add letters, arrows move
     // the cursor, Alt+arrows change the kerning (Shift: by 1).
+    // Extended mode: Ctrl+arrows change the left side of the letter after
+    // the cursor, Ctrl+Shift+arrows the right side of the letter before it.
+    if (app.extended && mod && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      spaceInLine(e.shiftKey ? 'rsb' : 'lsb', e.key === 'ArrowLeft' ? -10 : 10);
+      return;
+    }
     if (mod) return;
     if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault();

@@ -60,6 +60,7 @@ export class History {
     g.advance = s.advance;
     if (s.compose) g.compose = structuredClone(s.compose); else delete g.compose;
     if (s.composeOff) g.composeOff = true; else delete g.composeOff;
+    if (s.background) g.background = structuredClone(s.background); else delete g.background;
     return g.name;
   }
 }
@@ -73,4 +74,5 @@ const groupsSnap = (p) => ({
 const snap = (g) => ({
   name: g.name, advance: g.advance, contours: structuredClone(g.contours),
   compose: g.compose && structuredClone(g.compose), composeOff: !!g.composeOff,
+  background: g.background && structuredClone(g.background),
 });

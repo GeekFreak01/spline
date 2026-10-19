@@ -67,6 +67,8 @@ export function validateProject(p) {
     g.advance = Number.isFinite(g.advance) ? g.advance : 600;
     if (!(g.compose && typeof g.compose.base === 'string' && Array.isArray(g.compose.marks))) delete g.compose;
     if (g.composeOff !== true) delete g.composeOff;
+    if (!Array.isArray(g.background) || !g.background.length) delete g.background;
+    for (const k of ['lsbKey', 'rsbKey', 'widthKey']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];
     const im = g.image;
     if (!(im && typeof im.data === 'string' && im.data.startsWith('data:image/')
       && ['x', 'y', 'w', 'h'].every((k) => Number.isFinite(im[k])) && im.w > 0 && im.h > 0)) delete g.image;

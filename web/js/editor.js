@@ -1,7 +1,7 @@
 // Canvas glyph editor: select, pen, brush, eraser, rectangle, ellipse, hand.
 import {
   segments, pointAt, tracePath, flatten, polyBox, normalizeDirections, insertNode,
-  rectContour, ellipseContour, movePoint, charOf,
+  rectContour, ellipseContour, movePoint, charOf, reverseContour,
 } from './model.js';
 import { applyStroke } from './trace.js';
 import { unite, subtract, removeOverlap, shapesOf, pathOperation, knifeCut } from './boolean.js';
@@ -80,6 +80,7 @@ export class Editor {
     if (this.xform) this.commitTransform();
     this.finishPen();
     this.glyph = glyph;
+    this.measure = null;
     this.sel.clear();
     this.drag = null;
     this.fit();
@@ -276,6 +277,10 @@ export class Editor {
     } else if (tool === 'knife') {
       const sp = this.snap(p);
       this.drag = { kind: 'knife', start: sp, end: sp };
+    } else if (tool === 'measure') {
+      const sp = this.snap(p);
+      this.measure = { start: sp, end: sp };
+      this.drag = { kind: 'measure' };
     } else if (tool === 'select') {
       this.downSelect(e, sx, sy, p);
     } else if (tool === 'pen') {
@@ -400,6 +405,9 @@ export class Editor {
       case 'knife':
         d.end = e.shiftKey ? snap45(d.start, p) : this.snap(p);
         break;
+      case 'measure':
+        this.measure.end = e.shiftKey ? snap45(this.measure.start, p) : this.snap(p);
+        break;
       case 'guide': {
         let v = d.guide.axis === 'y' ? p.y : p.x;
         if (this.snapGrid) v = Math.round(v / this.gridStep) * this.gridStep;
@@ -425,6 +433,7 @@ export class Editor {
         if (!d.moved && Math.hypot(total.x, total.y) * this.view.scale < 2) break;
         if (dx || dy) {
           this.checkpoint();
+          if (this.extended && e.altKey && !d.duplicated) { this.duplicateSelection(); d.duplicated = true; d.cuspNode = null; }
           for (const n of this.selectedNodes()) movePoint(n, dx, dy, true);
           d.applied = total;
           d.moved = true;
@@ -1289,7 +1298,7 @@ export class Editor {
   selectAll() {
     this.sel = new Set();
     this.glyph.contours.forEach((c, ci) => c.nodes.forEach((_, ni) => this.sel.add(`${ci}:${ni}`)));
-    if (this.tool !== 'select') this.setTool('select');
+    if (this.tool !== 'select') (this.app.selectTool || ((id) => this.setTool(id)))('select');
     this.render();
   }
 
@@ -1336,7 +1345,7 @@ export class Editor {
     const n = cs[ci].nodes.length;
     ni = (ni + dir + n) % n;
     this.sel = new Set([`${ci}:${ni}`]);
-    if (this.tool !== 'select') this.setTool('select');
+    if (this.tool !== 'select') (this.app.selectTool || ((id) => this.setTool(id)))('select');
     this.render();
     return true;
   }
@@ -1345,7 +1354,7 @@ export class Editor {
     const all = new Set();
     this.glyph.contours.forEach((c, ci) => c.nodes.forEach((_, ni) => all.add(`${ci}:${ni}`)));
     this.sel = new Set([...all].filter((k) => !this.sel.has(k)));
-    if (this.tool !== 'select') this.setTool('select');
+    if (this.tool !== 'select') (this.app.selectTool || ((id) => this.setTool(id)))('select');
     this.render();
   }
 
@@ -1418,6 +1427,83 @@ export class Editor {
     return true;
   }
 
+  // Alt-drag: the contours with selected points are copied first and the
+  // copies are what moves.
+  duplicateSelection() {
+    const cs = this.glyph.contours;
+    const picked = [...new Set([...this.sel].map((k) => Number(k.split(':')[0])))].sort((a, b) => a - b);
+    const sel = new Set();
+    for (const ci of picked) {
+      cs.push(structuredClone(cs[ci]));
+      cs[cs.length - 1].nodes.forEach((_, ni) => sel.add(`${cs.length - 1}:${ni}`));
+    }
+    this.sel = sel;
+  }
+
+  // Opens a closed contour at the selected point: the point becomes both
+  // ends of the open path.
+  breakAt() {
+    if (this.sel.size !== 1) return false;
+    const [ci, ni] = [...this.sel][0].split(':').map(Number);
+    const c = this.glyph.contours[ci];
+    if (!c?.closed || c.nodes.length < 2) return false;
+    this.app.history.push(this.glyph);
+    const nodes = [...c.nodes.slice(ni), ...c.nodes.slice(0, ni)];
+    const end = structuredClone(nodes[0]);
+    delete nodes[0].in;
+    delete end.out;
+    nodes[0].smooth = false;
+    end.smooth = false;
+    c.nodes = [...nodes, end];
+    c.closed = false;
+    this.sel = new Set([`${ci}:0`, `${ci}:${c.nodes.length - 1}`]);
+    this.afterEdit(false);
+    return true;
+  }
+
+  // Closes an open contour, or joins two open contours at their selected
+  // ends into one.
+  joinEnds() {
+    const cs = this.glyph.contours;
+    const keys = [...this.sel].map((k) => k.split(':').map(Number));
+    const open = [...new Set(keys.map(([ci]) => ci))].filter((ci) => cs[ci] && !cs[ci].closed);
+    if (open.length === 1) {
+      const c = cs[open[0]];
+      if (c.nodes.length < 3) return false;
+      this.app.history.push(this.glyph);
+      const a = c.nodes[0], b = c.nodes[c.nodes.length - 1];
+      if (Math.hypot(a.x - b.x, a.y - b.y) < 1) { if (b.in) a.in = b.in; c.nodes.pop(); a.smooth = lined(a); }
+      c.closed = true;
+      this.sel.clear();
+      this.afterEdit();
+      return true;
+    }
+    if (open.length !== 2) return false;
+    const endOf = (ci) => {
+      const ni = keys.find(([c]) => c === ci)[1];
+      return ni === 0 ? 'start' : ni === cs[ci].nodes.length - 1 ? 'end' : null;
+    };
+    const [i1, i2] = open;
+    const e1 = endOf(i1), e2 = endOf(i2);
+    if (!e1 || !e2) return false;
+    this.app.history.push(this.glyph);
+    const A = structuredClone(cs[i1]), B = structuredClone(cs[i2]);
+    if (e1 === 'start') reverseContour(A); // A must end at the joined point
+    if (e2 === 'end') reverseContour(B); // B must start there
+    const a = A.nodes[A.nodes.length - 1], b = B.nodes[0];
+    let nodes;
+    if (Math.hypot(a.x - b.x, a.y - b.y) < 1) {
+      if (b.out) a.out = b.out;
+      a.smooth = lined(a);
+      nodes = [...A.nodes, ...B.nodes.slice(1)];
+    } else nodes = [...A.nodes, ...B.nodes];
+    this.glyph.contours = cs.filter((_, i) => i !== i1 && i !== i2);
+    this.glyph.contours.push({ closed: false, nodes });
+    this.sel.clear();
+    this.afterEdit(false);
+    return true;
+  }
+
   // Alt+arrows: move only the points, their handles stay.
   nudgeNodesOnly(dx, dy) {
     const nodes = this.selectedNodes();
@@ -1451,6 +1537,7 @@ export class Editor {
   // Returns true when Escape was used up by the editor.
   escape() {
     if (this.xform) { this.cancelTransform(); return true; }
+    if (this.measure) { this.measure = null; this.render(); return true; }
     if (this.penContour !== null) { this.finishPen(); return true; }
     if (this.sel.size) { this.sel.clear(); this.render(); return true; }
     return false;
@@ -1561,8 +1648,26 @@ export class Editor {
       ctx.fillText(ch, (x0 + xa) / 2 - w / 2, by);
     }
 
-    // Outline.
+    // Background layer (extended mode): a dashed outline to compare with.
     const v = this.view;
+    if (this.extended && this.showBackground && g.background?.length) {
+      ctx.save();
+      ctx.setTransform(dpr * v.scale, 0, 0, -dpr * v.scale, dpr * v.ox, dpr * v.oy);
+      ctx.beginPath();
+      tracePath(ctx, { contours: g.background }, true);
+      ctx.restore();
+      ctx.fillStyle = colors.accent;
+      ctx.globalAlpha = 0.1;
+      ctx.fill('nonzero');
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = colors.accent;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Outline.
     ctx.save();
     ctx.setTransform(dpr * v.scale, 0, 0, -dpr * v.scale, dpr * v.ox, dpr * v.oy);
     ctx.beginPath();
@@ -1670,10 +1775,67 @@ export class Editor {
     });
   }
 
+  // The measuring line: its length and angle, and where it crosses the
+  // outline, with the distance between each pair of crossings.
+  drawMeasure(colors) {
+    const m = this.measure;
+    if (!m || (m.start.x === m.end.x && m.start.y === m.end.y)) return;
+    const ctx = this.ctx;
+    const a = this.toScreen(m.start), b = this.toScreen(m.end);
+    const label = (text, x, y, strong) => {
+      ctx.font = `${strong ? 600 : 500} 11px ${getComputedStyle(document.documentElement).getPropertyValue('--font-mono') || 'monospace'}`;
+      const w = ctx.measureText(text).width + 8;
+      ctx.fillStyle = strong ? colors.accent : 'rgba(20,20,24,0.85)';
+      ctx.fillRect(x - w / 2, y - 9, w, 17);
+      ctx.fillStyle = strong ? '#111' : colors.accent;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x, y);
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+    };
+    ctx.strokeStyle = colors.accent;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    const hits = [0, 1];
+    const dxm = m.end.x - m.start.x, dym = m.end.y - m.start.y;
+    for (const c of this.glyph.contours) {
+      if (c.nodes.length < 2) continue;
+      const pts = flatten(c, 24);
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i], q = pts[(i + 1) % pts.length];
+        const ex = q.x - p.x, ey = q.y - p.y;
+        const den = dxm * ey - dym * ex;
+        if (Math.abs(den) < 1e-9) continue;
+        const t = ((p.x - m.start.x) * ey - (p.y - m.start.y) * ex) / den;
+        const u = ((p.x - m.start.x) * dym - (p.y - m.start.y) * dxm) / den;
+        if (t > 0.001 && t < 0.999 && u >= 0 && u < 1) hits.push(t);
+      }
+    }
+    hits.sort((x, y) => x - y);
+    const len = Math.hypot(dxm, dym);
+    for (let i = 1; i < hits.length; i++) {
+      const t0 = hits[i - 1], t1 = hits[i];
+      const seg = (t1 - t0) * len;
+      if (seg * this.view.scale < 24) continue;
+      const mx = a.x + (b.x - a.x) * (t0 + t1) / 2, my = a.y + (b.y - a.y) * (t0 + t1) / 2;
+      label(String(Math.round(seg)), mx, my - 12, false);
+    }
+    for (const t of hits.slice(1, -1)) {
+      const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = colors.accent; ctx.fill();
+    }
+    for (const pt of [a, b]) { ctx.beginPath(); ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2); ctx.fillStyle = colors.accent; ctx.fill(); }
+    const ang = Math.round(Math.atan2(dym, dxm) * 1800 / Math.PI) / 10;
+    label(`${Math.round(len)}  ·  ${ang}°  ·  Δx ${Math.round(dxm)}  Δy ${Math.round(dym)}`, b.x, b.y + 22, true);
+  }
+
   drawOverlay(colors) {
     const ctx = this.ctx;
     const d = this.drag;
     const tool = this.activeTool();
+    this.drawMeasure(colors);
     if (d?.kind === 'marquee') {
       const x = Math.min(d.start.sx, d.end.sx), y = Math.min(d.start.sy, d.end.sy);
       ctx.fillStyle = 'rgba(37,99,235,0.08)';
@@ -1774,4 +1936,11 @@ function extremeTs(a, b, c, d) {
   if (disc < 0) return [];
   const r = Math.sqrt(disc);
   return [(-B + r) / (2 * A), (-B - r) / (2 * A)];
+}
+
+// A point whose two handles lie on one line through it is smooth.
+function lined(n) {
+  if (!n.in || !n.out) return false;
+  const a = Math.atan2(n.y - n.in.y, n.x - n.in.x), b = Math.atan2(n.out.y - n.y, n.out.x - n.x);
+  return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < 0.05;
 }

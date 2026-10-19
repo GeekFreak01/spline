@@ -1,6 +1,6 @@
 // Kerning view: a line of text set with the font's own outlines. The cursor
 // sits between two letters; that pair is the one being kerned.
-import { tracePath, charOf } from './model.js';
+import { tracePath, charOf, glyphBox } from './model.js';
 
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -118,7 +118,7 @@ export class KernView {
     if (!this.w) this.w = this.canvas.parentElement.getBoundingClientRect().width || 800;
     const scale = this.size / info.unitsPerEm;
     const pad = 32;
-    const lineH = (info.ascender - info.descender) * scale * 1.35;
+    const lineH = (info.ascender - info.descender) * scale * 1.35 + (this.showMetrics ? 44 : 0);
     const items = [];
     const chars = Array.from(this.text);
     const advOf = (ch) => { const g = this.glyphFor(ch); return (g ? g.advance : info.unitsPerEm * 0.5) * scale; };
@@ -375,6 +375,37 @@ export class KernView {
         ctx.fillText(txt, it.x - tw / 2, bottom + 20);
       }
     });
+
+    // Spacing (extended mode): each letter's width box and its left and
+    // right sidebearings under it. The letters around the cursor are the
+    // ones Ctrl+arrows change, so their numbers are highlighted.
+    if (this.showMetrics) {
+      ctx.font = `11px ${css('--font-mono')}`;
+      let rowEnd = [-1e9, -1e9], rowLine = -1;
+      items.forEach((it, i) => {
+        if (!it.g) return;
+        const top = it.baseline - info.ascender * s, bottom = it.baseline - info.descender * s;
+        ctx.strokeStyle = line;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.strokeRect(Math.round(it.x) + 0.5, top + 0.5, Math.round(it.adv), bottom - top);
+        ctx.setLineDash([]);
+        const box = glyphBox(it.g);
+        if (!box || !it.ch.trim()) return;
+        const lsb = String(Math.round(box.minX)), rsb = String(Math.round(it.g.advance - box.maxX));
+        // Numbers that would touch the previous one drop to a second row.
+        const put = (txt, x, hot) => {
+          const w = ctx.measureText(txt).width;
+          const row = rowEnd[0] < x - 4 || rowEnd[1] >= x - 4 ? 0 : 1;
+          rowEnd[row] = x + w;
+          ctx.fillStyle = hot ? accent : muted;
+          ctx.fillText(txt, x, bottom + 38 + row * 13);
+        };
+        if (it.line !== rowLine) { rowLine = it.line; rowEnd = [-1e9, -1e9]; }
+        put(lsb, it.x + 2, i === this.cursor);
+        put(rsb, it.x + it.adv - ctx.measureText(rsb).width - 2, i === this.cursor - 1);
+      });
+    }
 
     // Cursor.
     const c = items[this.cursor] || items[this.cursor - 1];
