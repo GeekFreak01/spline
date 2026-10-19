@@ -171,7 +171,9 @@ export function layoutPanels() {
       if (!w.hidden) fitHeight(w);
       if (flyout && !hidden) iconIds.push([id, w.querySelector('.float-title').textContent]);
     }
-    iconIds.sort((a, b) => (order.get(a[0]) ?? 99) - (order.get(b[0]) ?? 99));
+    sortBox(dock);
+    sortBox(c.left);
+    iconIds.sort((a, b) => rankOf(a[0]) - rankOf(b[0]));
     c.icons.innerHTML = iconIds.map(([id, title]) => `<button type="button" class="panel-icon" data-panel-icon="${id}"
       aria-pressed="${openFlyout === id}" aria-label="${title}" data-tip="${title}">${panelIcons[id] || ''}</button>`).join('');
     if (openFlyout && present.has(openFlyout)) positionFlyout(openFlyout);
@@ -261,7 +263,11 @@ function startDrag(e, id, from, isWindow) {
     const target = dropTarget(id, ev);
     showHint(null);
     w?.classList.remove('dragging');
-    if (target) { setPlace(id, target.place); return; }
+    if (target) {
+      if (target.container) placeAt(id, target.container, target.before);
+      setPlace(id, target.place);
+      return;
+    }
     if (w) {
       clampWindow(w);
       const r = w.getBoundingClientRect();
@@ -293,14 +299,28 @@ function dropTarget(id, ev) {
   const iconsR = c.icons.childElementCount ? c.icons.getBoundingClientRect()
     : rect(rowR.right - STRIP, rowR.top, STRIP, rowR.height);
   if (inside(iconsR, x, y)) return { place: 'icons', box: iconsR };
-  if (inside(dockR, x, y)) return { place: 'right', box: dockR };
+  if (inside(dockR, x, y)) return insertion(id, 'right', c.dock, dockR, y);
   if (TOP_ALLOWED.has(id)) {
     const topR = c.top.childElementCount ? c.top.getBoundingClientRect() : rect(centerR.left, centerR.top, centerR.width, 40);
     if (inside(rect(centerR.left, centerR.top, centerR.width, Math.max(EDGE, topR.height)), x, y)) return { place: 'top', box: topR };
   }
   const leftR = c.left.childElementCount ? c.left.getBoundingClientRect() : rect(rowR.left, rowR.top, LEFT_W, rowR.height);
-  if (inside(rect(rowR.left, rowR.top, Math.max(EDGE, c.left.childElementCount ? leftR.width : 0), rowR.height), x, y)) return { place: 'left', box: leftR };
+  if (inside(rect(rowR.left, rowR.top, Math.max(EDGE, c.left.childElementCount ? leftR.width : 0), rowR.height), x, y)) {
+    return c.left.childElementCount ? insertion(id, 'left', c.left, leftR, y) : { place: 'left', box: leftR };
+  }
   return null;
+}
+
+// Inside a column the hint is a line between sections: the panel goes there.
+function insertion(id, place, box, r, y) {
+  const secs = [...box.querySelectorAll(':scope > details[data-sec]')].filter((d) => d.dataset.sec !== id && !d.hidden);
+  let before = null, lineY = r.top;
+  for (const d of secs) {
+    const b = d.getBoundingClientRect();
+    if (y < b.top + b.height / 2) { before = d.dataset.sec; lineY = b.top; break; }
+    lineY = b.bottom;
+  }
+  return { place, container: box, before, box: rect(r.left + 4, Math.max(r.top, lineY - 2), r.width - 8, 4) };
 }
 
 function showHint(target) {
@@ -313,10 +333,32 @@ function showHint(target) {
 
 // --- order
 
-// The section a returning panel goes before, to keep the original order.
+// Sort key of a section: where the user put it, else the render order.
+const rankOf = (id) => state[id]?.rank ?? (order.get(id) ?? 99);
+
+// The section a returning panel goes before, to keep the order.
 function nextIn(box, id) {
   return [...box.querySelectorAll(':scope > details[data-sec]')]
-    .find((x) => (order.get(x.dataset.sec) ?? 99) > (order.get(id) ?? 99)) || null;
+    .find((x) => rankOf(x.dataset.sec) > rankOf(id)) || null;
+}
+
+// Puts the sections of a column in the user's order (when there is one).
+function sortBox(box) {
+  const kids = [...box.querySelectorAll(':scope > details[data-sec]')];
+  if (!kids.some((d) => state[d.dataset.sec]?.rank !== undefined)) return;
+  const sorted = [...kids].sort((a, b) => rankOf(a.dataset.sec) - rankOf(b.dataset.sec));
+  if (sorted.every((d, i) => d === kids[i])) return;
+  const anchor = kids[kids.length - 1].nextSibling;
+  for (const d of sorted) box.insertBefore(d, anchor);
+}
+
+// Drops panel id into a column before section `before` (null = at the
+// end): every section there gets a rank, so the order stays.
+function placeAt(id, box, before) {
+  const ids = [...box.querySelectorAll(':scope > details[data-sec]')].map((d) => d.dataset.sec).filter((x) => x !== id);
+  const at = before ? ids.indexOf(before) : -1;
+  ids.splice(at < 0 ? ids.length : at, 0, id);
+  ids.forEach((x, i) => { st(x).rank = i; });
 }
 
 // Order of the sections in the dock, recorded on each render.

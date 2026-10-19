@@ -828,10 +828,10 @@ function colorPicker(current) {
   </div>`;
 }
 
-function section(id, title, body, open = true) {
+function section(id, title, body, open = true, tip = '') {
   const saved = store.get(`spline.sec.${id}`);
   const isOpen = saved === null ? open : saved === '1';
-  return `<details data-sec="${id}" ${isOpen ? 'open' : ''}><summary>${esc(title)}</summary><div class="section">${body}</div></details>`;
+  return `<details data-sec="${id}" ${isOpen ? 'open' : ''}><summary${tip ? ` data-tip="${esc(tip)}"` : ''}>${esc(title)}</summary><div class="section">${body}</div></details>`;
 }
 
 function transformSection() {
@@ -1433,8 +1433,7 @@ async function addGlyphs() {
     title: t('addGlyph').replace('…', ''),
     body: `<label class="field">${esc(t('addGlyphHint'))}<input type="text" name="chars" ${app.extended ? '' : 'required'} maxlength="500" autocomplete="off"></label>
       ${app.extended ? `<label class="field">${esc(t('agCodes'))}<input type="text" name="codes" id="agCodes" maxlength="500" autocomplete="off" placeholder="U+0400-045F, uni0490, А-Я"></label>
-      <div class="ag-presets">${AG_PRESETS.map(([id, codes]) => `<button class="btn" type="button" data-ag="${codes}">${esc(t('ag_' + id))}</button>`).join('')}</div>
-      <p class="hint">${esc(t('agHint'))}</p>` : ''}`,
+      <div class="ag-presets">${AG_PRESETS.map(([id, codes]) => `<button class="btn" type="button" data-ag="${codes}">${esc(t('ag_' + id))}</button>`).join('')}</div>` : ''}`,
     okLabel: t('add'),
     onOpen: (dlg) => dlg.querySelectorAll('[data-ag]').forEach((b) => b.addEventListener('click', () => {
       const f = dlg.querySelector('#agCodes');
@@ -2056,8 +2055,7 @@ function kernSpacingHTML(pr) {
     return `<div class="kspace"><b>${esc(glyphLabel(g))}</b>
       ${f('lsb', t('lsb'), box ? Math.round(box.minX) : '', !box)}${f('advance', t('width'), Math.round(g.advance))}${f('rsb', t('rsb'), box ? Math.round(g.advance - box.maxX) : '', !box)}</div>`;
   };
-  return row('left', pr.left) + row('right', pr.right) + `<p class="hint">${esc(t('kernSpacingHint'))}</p>`
-    + (app.extended ? `<p class="hint">${esc(t('kernSpacingKeys'))}</p>` : '');
+  return row('left', pr.left) + row('right', pr.right);
 }
 
 function kernListHTML(pr) {
@@ -2113,8 +2111,8 @@ function renderKernPanel() {
   const pr = kernView.pair();
   const n = kernPairs(app.project).length;
   $('kernPanel').innerHTML = section('kernPair', t('kernPair'), kernPairHTML(pr))
-    + (pr ? section('kernSpacing', t('kernSpacing'), kernSpacingHTML(pr)) : '')
-    + section('kernSuggest', t('ksTitle'), kernSuggestHTML())
+    + (pr ? section('kernSpacing', t('kernSpacing'), kernSpacingHTML(pr), true, t('kernSpacingHint') + (app.extended ? ' ' + t('kernSpacingKeys') : '')) : '')
+    + section('kernSuggest', t('ksTitle'), kernSuggestHTML(), true, t('ksHint'))
     + section('kernList', `${t('kernAll')} (${n})`, kernListHTML(pr))
     + groupDatalists();
   recordOrder($('kernPanel'));
@@ -2255,7 +2253,7 @@ async function specialFormDialog() {
       <b>${esc(t('sf_' + suf, { n: 1 }))}</b><small>${esc(t('sf_' + suf + 'Tip'))}</small></label>`).join('');
   const data = await showDialog({
     title: t('sfTitle', { c: glyphLabel(base) }),
-    body: `<p class="hint">${esc(t('sfHint'))}</p><div class="sf-grid">${cards}</div>
+    body: `<div class="sf-grid">${cards}</div>
       <label class="field sf-num">${esc(t('sfSet'))}<input type="number" name="n" min="1" max="20" value="1"></label>`,
     okLabel: t('create'),
   });
@@ -2329,7 +2327,6 @@ function variantsSection(g) {
   if (lig) {
     body = `<div class="sub-head">${esc(t('ligIs'))}</div>
       <label class="prop"><span>${esc(t('ligLetters'))}</span><input type="text" data-lig-seq value="${esc(glyphListText(lig.glyphs))}" spellcheck="false"></label>
-      <p class="hint">${esc(t('ligHint'))}</p>
       <button class="btn btn-block btn-danger" type="button" data-lig-del>${icon('close', 15)}<span>${esc(t('ligDelete'))}</span></button>`;
   } else if (base && app.extended && formOf(g.name) && !p.contextual.some((r) => r.use === g.name)) {
     body = `<div class="var-base">${glyphSVG(base, 'var-mini')}<span>${esc(t('varOf', { c: glyphLabel(base) }))}</span>
@@ -2346,8 +2343,7 @@ function variantsSection(g) {
         <button class="btn btn-icon" type="button" data-rule-del="${i}" aria-label="${esc(t('varRuleDelete'))}" data-tip="${esc(t('varRuleDelete'))}">${icon('close', 14)}</button>
         ${!r.prev.length && !r.next.length ? `<p class="hint warn">${esc(t('varEmptyRule'))}</p>` : ''}
       </div>`).join('')}
-      <button class="btn btn-block" type="button" data-rule-add>${icon('plus', 15)}<span>${esc(t('varRuleAdd'))}</span></button>
-      <p class="hint">${esc(t('varHint'))}</p>`;
+      <button class="btn btn-block" type="button" data-rule-add>${icon('plus', 15)}<span>${esc(t('varRuleAdd'))}</span></button>`;
   } else {
     const vars = variantsOf(g);
     const summary = (v) => {
@@ -2362,7 +2358,7 @@ function variantsSection(g) {
       <button class="btn btn-block" type="button" data-cmd="newVariant">${icon('plus', 15)}<span>${esc(t('varNew'))}</span></button>
       <button class="btn btn-block" type="button" data-cmd="newLigature">${icon('plus', 15)}<span>${esc(t('ligNew'))}</span></button>`;
   }
-  return section('variants', t('varTitle'), body);
+  return section('variants', t('varTitle'), body, true, t(ligatureOf(g) ? 'ligHint' : 'varHint'));
 }
 
 // Edits from the panel section.
@@ -2589,8 +2585,7 @@ function kernSuggestHTML() {
         <button type="button" class="btn btn-icon" data-ks-ok="${i}" aria-label="${esc(t('ksAccept'))}" data-tip="${esc(t('ksAccept'))}">${icon('check', 14)}</button>
         <button type="button" class="btn btn-icon" data-ks-no="${i}" aria-label="${esc(t('ksReject'))}" data-tip="${esc(t('ksReject'))}">${icon('close', 14)}</button>
       </div>`).join('')}</div>
-      <div class="btn-row"><button class="btn" type="button" data-ks-all>${esc(t('ksAcceptAll'))}</button><button class="btn" type="button" data-ks-clear>${esc(t('ksClear'))}</button></div>` : ''}
-    <p class="hint">${esc(t('ksHint'))}</p>`;
+      <div class="btn-row"><button class="btn" type="button" data-ks-all>${esc(t('ksAcceptAll'))}</button><button class="btn" type="button" data-ks-clear>${esc(t('ksClear'))}</button></div>` : ''}`;
 }
 
 function acceptSuggestions(list) {
@@ -3317,8 +3312,7 @@ function pointsSection() {
     <div class="btn-row">${b('ptBreak', 'breakContour', 'breakContour')}${b('ptJoin', 'joinContours', 'joinContours')}</div>
     <div class="btn-row">${b('ptEven', 'evenHandles', 'evenHandles')}${b('ptFirst', 'makeFirst', 'makeFirst')}</div>
     <div class="btn-row">${b('ptInvert', 'invertSelection', 'invertSelection')}</div>
-    <div class="parts">${partsHTML()}</div>
-    <p class="hint">${esc(t('ptHint'))}</p>`);
+    <div class="parts">${partsHTML()}</div>`, true, t('ptHint'));
 }
 
 // Corner details and brushes for the selection (see parts.js).
@@ -3400,14 +3394,13 @@ function backgroundSection(g) {
       <button class="btn" type="button" data-cmd="bgSwap" ${has ? '' : 'disabled'}>${esc(t('bgSwapShort'))}</button>
       <button class="btn" type="button" data-cmd="bgClear" ${has ? '' : 'disabled'}>${esc(t('bgClear'))}</button>
     </div>
-    <p class="hint">${esc(t(has ? 'bgHintHas' : 'bgHint'))}</p>
     <div class="sub-head">${esc(t('snapTitle'))}</div>
     ${(g.snapshots || []).map((sn, i) => `<div class="snap-row">
       <span>${esc(sn.name)}</span>
       <button class="btn" type="button" data-snap-restore="${i}" data-tip="${esc(t('snapRestoreTip'))}">${esc(t('snapRestore'))}</button>
       <button class="btn btn-icon" type="button" data-snap-delete="${i}" aria-label="${esc(t('snapDelete'))}" data-tip="${esc(t('snapDelete'))}">${icon('trash', 14)}</button>
-    </div>`).join('') || `<p class="hint">${esc(t('snapHint'))}</p>`}
-    <button class="btn btn-block" type="button" data-cmd="snapSave">${icon('plus', 15)}<span>${esc(t('snapSave'))}</span></button>`, false);
+    </div>`).join('')}
+    <button class="btn btn-block" type="button" data-cmd="snapSave" data-tip="${esc(t('snapHint'))}">${icon('plus', 15)}<span>${esc(t('snapSave'))}</span></button>`, false, t('bgHint'));
 }
 
 // ================================================================ filters
@@ -3429,13 +3422,11 @@ function filtersSection() {
   const b = (id, cmd) => `<button type="button" role="radio" data-cmd="${cmd}" aria-checked="${k === id}" data-tip="${esc(t('fl_' + id + 'Tip'))}">${esc(t('fl_' + id))}</button>`;
   return section('filters', t('flTitle'), `
     <div class="seg seg-wrap" role="radiogroup">${b('offset', 'flOffset')}${b('round', 'flRound')}${b('stroke', 'flStroke')}${b('fit', 'flFit')}</div>
-    <p class="hint">${esc(t('fl_' + k + 'Hint'))}</p>
     <label class="prop"><span>${esc(t('fl_' + k + 'Value'))}</span><span class="with-unit">
       <input type="range" data-fl="value" min="${f.min}" max="${f.max}" step="1" value="${v}">
       <input type="number" data-fl="value" min="${f.min}" max="${f.max}" step="1" value="${v}">${f.unit ? `<em>${f.unit}</em>` : ''}</span></label>
     ${f.overlap ? `<label class="check"><input type="checkbox" data-fl="overlap" ${filterState.overlap ? 'checked' : ''}>${esc(t('flOverlap'))}</label>` : ''}
-    <button class="btn btn-primary btn-block" type="button" data-cmd="flApply">${icon('check', 15)}<span>${esc(t('flApply'))}</span></button>
-    <p class="hint">${esc(t('flTarget'))}</p>`, false);
+    <button class="btn btn-primary btn-block" type="button" data-cmd="flApply" data-tip="${esc(t('flTarget'))}">${icon('check', 15)}<span>${esc(t('flApply'))}</span></button>`, false);
 }
 
 function filterInput(g) {
@@ -3509,7 +3500,7 @@ async function transformMetricsDialog() {
     <input type="number" name="${k}" step="1" value="0"></div>`;
   const data = await showDialog({
     title: t('tmTitle', { n: sel.length }),
-    body: `<p class="hint">${esc(t('tmHint'))}</p>${row('lsb')}${row('rsb')}${row('advance')}
+    body: `${row('lsb')}${row('rsb')}${row('advance')}
       <label class="check"><input type="checkbox" name="center">${esc(t('tmCenter'))}</label>`,
     okLabel: t('flApply'),
   });
@@ -3548,13 +3539,13 @@ function componentsSection(g) {
     </div>`).join('');
   const users = usedBy(app.project, g.name);
   return section('components', t('cmTitle'), `
-    ${rows || `<p class="hint">${esc(t('cmHint'))}</p>`}
+    ${rows}
     <div class="btn-row">
-      <button class="btn" type="button" data-cmd="cmAdd">${icon('plus', 15)}<span>${esc(t('cmAddShort'))}</span></button>
+      <button class="btn" type="button" data-cmd="cmAdd" data-tip="${esc(t('cmHint'))}">${icon('plus', 15)}<span>${esc(t('cmAddShort'))}</span></button>
       <button class="btn" type="button" data-cmd="cmDecompose" data-tip="${esc(t('cmDecomposeTip'))}" ${g.components?.length ? '' : 'disabled'}>${esc(t('cmDecompose'))}</button>
     </div>
     ${users.length ? `<div class="sub-head">${esc(t('cmUsedBy'))}</div><div class="cm-users">${users.map((u) => `<button class="btn" type="button" data-cm-open="${esc(u.name)}">${esc(charOf(u).trim() || u.name)}</button>`).join('')}</div>` : ''}`,
-  !!(g.components?.length || users.length));
+  !!(g.components?.length || users.length), t('cmHint'));
 }
 
 function componentClick(e) {
@@ -3591,7 +3582,7 @@ async function addComponentDialog() {
   const data = await showDialog({
     title: t('cmAddTitle'),
     body: `<label class="field">${esc(t('cmAddLabel'))}<input type="text" name="glyph" list="cmList" required autocomplete="off" placeholder="A, uni0410, grave"></label>
-      <datalist id="cmList">${opts}</datalist><p class="hint">${esc(t('cmAddHint'))}</p>`,
+      <datalist id="cmList">${opts}</datalist>`,
     okLabel: t('cmAddShort'),
   });
   if (!data) return;
@@ -3648,10 +3639,9 @@ function anchorsSection(g) {
     </div>`).join('');
   const add = suggestedAnchors(g).map((n) => `<button class="btn" type="button" data-an-add="${n}" data-tip="${esc(t(ANCHOR_LABEL[n] + 'Tip'))}">${esc(t(ANCHOR_LABEL[n]))}</button>`).join('');
   return section('anchors', t('anTitle'), `
-    ${rows || `<p class="hint">${esc(t('anHint'))}</p>`}
+    ${rows}
     ${add ? `<div class="sub-head">${esc(t('anAdd'))}</div><div class="ag-presets">${add}</div>` : ''}
-    <button class="btn btn-block" type="button" data-cmd="anAuto" data-tip="${esc(t('anAutoTip'))}">${icon('check', 15)}<span>${esc(t('anAuto'))}</span></button>
-    ${g.anchors?.length ? `<p class="hint">${esc(t('anDragHint'))}</p>` : ''}`, !!g.anchors?.length);
+    <button class="btn btn-block" type="button" data-cmd="anAuto" data-tip="${esc(t('anAutoTip'))}">${icon('check', 15)}<span>${esc(t('anAuto'))}</span></button>`, !!g.anchors?.length, t('anHint'));
 }
 
 function anchorsChanged(g) {
@@ -3973,8 +3963,7 @@ function underlaySection(g) {
     <button class="btn btn-block" type="button" data-cmd="ulFitAll">${esc(t('ulFitAll'))}</button>
     <button class="btn btn-block" type="button" data-cmd="ulLoad">${icon('image', 15)}<span>${esc(t('ulReplace'))}</span></button>
     <button class="btn btn-block btn-danger" type="button" data-cmd="ulRemove">${icon('trash', 15)}<span>${esc(t('ulRemove'))}</span></button>`
-    : `<p class="hint">${esc(t('ulHint'))}</p>
-    <button class="btn btn-block" type="button" data-cmd="ulLoad">${icon('image', 15)}<span>${esc(t('ulLoad'))}</span></button>`, !!im);
+    : `<button class="btn btn-block" type="button" data-cmd="ulLoad" data-tip="${esc(t('ulHint'))}">${icon('image', 15)}<span>${esc(t('ulLoad'))}</span></button>`, !!im);
 }
 
 // ================================================================ fonts: open TTF/OTF, install
