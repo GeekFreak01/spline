@@ -734,3 +734,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
 .part-row select { min-width: 0; }
 .mkeys-head { margin-top: 6px; cursor: help; }
+
+.dialog .ms-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px 90px; gap: 8px; align-items: center; margin-bottom: 6px; }
+.dialog .ms-head { color: var(--text-3); font-size: var(--fs-s); margin-bottom: 2px; }
+.compose-note.warn { border-color: var(--dot-orange); }
+.compose-note.warn p { color: var(--dot-orange); }
+.preview-feats input[type="range"] { width: 160px; vertical-align: middle; margin: 0 6px; }

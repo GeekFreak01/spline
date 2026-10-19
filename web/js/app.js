@@ -7,6 +7,7 @@ import {
 } from './model.js';
 import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
+import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt } from './masters.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
@@ -180,12 +181,13 @@ function markChanged() {
 }
 
 function autosave() {
-  store.set(AUTOSAVE_KEY, JSON.stringify({ fileName: app.fileName, project: serialize(app.project) }));
+  store.set(AUTOSAVE_KEY, JSON.stringify({ fileName: app.fileName, project: projectJSON() }));
 }
 
 // Editor callbacks.
 app.commitGlyph = (g) => {
   markChanged();
+  if (app.extended && hasMasters(app.project) && g) queueMicrotask(() => { if (app.current === g) renderGlyphPanel(); });
   if (editor.preview) queueMicrotask(previewFilter);
   updateMetricInputs();
   if (g && composeState(g) !== $('glyphPanel').querySelector('[data-compose]')?.dataset.compose) renderGlyphPanel();
@@ -238,6 +240,7 @@ function menuDefs() {
       { label: 'exportTTF', key: keyLabel('exportTTF'), run: () => exportFont('ttf') },
       { label: 'exportOTF', key: keyLabel('exportOTF'), run: () => exportFont('otf') },
       { label: 'exportWOFF', key: keyLabel('exportWOFF'), run: () => exportFont('woff'), ext: true },
+      { label: 'msExport', run: exportInstances, enabled: hasMasters(app.project || {}), ext: true },
       ...(app.platform?.canInstall ? [{ label: 'installFont', run: installFont }] : []),
       ...(app.platform?.canAssociate ? ['-', { label: 'associate', check: app.platform.associated, run: associateFiles }] : []),
     ] },
@@ -299,6 +302,7 @@ function menuDefs() {
       { label: 'bgSwap', run: () => backgroundOp('swap'), enabled: inEditor, ext: true },
       { label: 'cmAddMenu', run: addComponentDialog, enabled: inEditor, ext: true },
       { label: 'tmMenu', run: transformMetricsDialog, enabled: inEditor || app.selected.size > 0, ext: true },
+      { label: 'msMenu', run: mastersDialog, ext: true },
       { label: 'cmDecomposeMenu', run: decomposeCurrent, enabled: inEditor && !!app.current?.components?.length, ext: true },
       { label: 'updateMetrics', key: keyLabel('updateMetrics'), run: updateAllMetrics, ext: true },
       '-',
@@ -772,6 +776,7 @@ function renderGridOptions() {
     ${app.extended ? `<div class="sep"></div><div class="group"><div class="seg" role="radiogroup" aria-label="${esc(t('gvTitle'))}">
       <button type="button" role="radio" data-cmd="gvTiles" aria-checked="${app.gridView !== 'table'}">${icon('grid', 14)} ${esc(t('gvTiles'))}</button>
       <button type="button" role="radio" data-cmd="gvTable" aria-checked="${app.gridView === 'table'}">${icon('rows', 14)} ${esc(t('gvTable'))}</button></div></div>` : ''}
+    ${masterBarHTML()}
     <div class="glyph-nav"><label>${esc(t('tileSize'))}<input type="range" id="tileSize" min="56" max="200" value="${esc(size)}"></label></div>`;
   $('glyphGrid').style.setProperty('--tile', `${size}px`);
 }
@@ -814,6 +819,8 @@ $('optionsBar').addEventListener('change', (e) => {
   }
 });
 $('optionsBar').addEventListener('click', (e) => {
+  const m = e.target.closest('[data-master]');
+  if (m) { selectMaster(m.dataset.master); return; }
   const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
   if (cmd) COMMANDS[cmd]?.();
 });
@@ -1744,6 +1751,7 @@ function renderEditorOptions() {
         <button type="button" role="radio" data-cmd="pxDraw" aria-checked="${!editor.pixelErase}">${esc(t('pxDraw'))}</button>
         <button type="button" role="radio" data-cmd="pxErase" aria-checked="${editor.pixelErase}" data-tip="${esc(t('pxEraseTip'))}">${esc(t('pxErase'))}</button>
       </div></div><div class="sep"></div>` : ''}
+    ${masterBarHTML()}
     ${app.extended && editor.tool === 'select' ? `<div class="group"><span class="opt-label">${esc(t('selShape'))}</span>
       <div class="seg" role="radiogroup">
         <button type="button" role="radio" data-cmd="selRect" aria-checked="${editor.selectShape !== 'lasso'}" data-tip="${esc(t('selRectTip'))}">${esc(t('selRect'))}</button>
@@ -1903,6 +1911,12 @@ function previewAroundCurrent() {
   renderPreviewText();
 }
 $('previewCurrent').addEventListener('click', previewAroundCurrent);
+$('previewFeats').addEventListener('input', (e) => {
+  if (e.target.dataset.pfAxis === undefined) return;
+  app.previewLoc = Number(e.target.value);
+  e.target.nextElementSibling.textContent = e.target.value;
+  schedulePreview(120);
+});
 $('previewFeats').addEventListener('change', (e) => {
   if (e.target.dataset.pf) { if (e.target.checked) previewFeats.add(e.target.dataset.pf); else previewFeats.delete(e.target.dataset.pf); }
   if (e.target.dataset.pfLang !== undefined) previewLang = e.target.value;
@@ -3403,6 +3417,95 @@ function backgroundSection(g) {
     <button class="btn btn-block" type="button" data-cmd="snapSave" data-tip="${esc(t('snapHint'))}">${icon('plus', 15)}<span>${esc(t('snapSave'))}</span></button>`, false, t('bgHint'));
 }
 
+// ================================================================ masters
+
+function masterBarHTML() {
+  if (!app.extended) return '';
+  const p = app.project;
+  if (!hasMasters(p)) {
+    return `<div class="group"><button class="btn" type="button" data-cmd="mastersDialog" data-tip="${esc(t('msAddTip'))}">${icon('layers', 14)}<span>${esc(t('msMasters'))}</span></button></div><div class="sep"></div>`;
+  }
+  const act = activeId(p);
+  return `<div class="group"><div class="seg" role="radiogroup" aria-label="${esc(t('msMasters'))}">
+    ${p.masters.map((m) => `<button type="button" role="radio" data-master="${esc(m.id)}" aria-checked="${m.id === act}" data-tip="${esc(p.axis.tag)} ${m.loc}">${esc(m.name)}</button>`).join('')}
+    </div><button class="btn btn-icon" type="button" data-cmd="mastersDialog" aria-label="${esc(t('msMenu'))}" data-tip="${esc(t('msMenu'))}">${icon('settings', 14)}</button></div><div class="sep"></div>`;
+}
+
+function selectMaster(id) {
+  endTransform();
+  if (!switchMaster(app.project, id)) return;
+  // Undo steps hold outlines of the master they were made in.
+  app.history.clear();
+  refreshComponents(app.project);
+  recompose(app.project);
+  markChanged();
+  renderAll();
+  if (app.mode === 'editor') { renderEditorOptions(); renderGlyphPanel(); editor.sel.clear(); editor.render(); updateMetricInputs(); }
+  if (app.mode === 'grid') renderGridOptions();
+}
+
+async function mastersDialog() {
+  const p = app.project;
+  const ms = p.masters || [];
+  const rows = ms.map((m, i) => `<div class="field-row ms-row">
+      <input type="text" name="name${i}" value="${esc(m.name)}" aria-label="${esc(t('msName'))}" required maxlength="40">
+      <input type="number" name="loc${i}" value="${m.loc}" step="1" aria-label="${esc(t('msLoc'))}">
+      <label class="check"><input type="checkbox" name="del${i}" ${i === 0 ? 'disabled' : ''}>${esc(t('msDelete'))}</label></div>`).join('');
+  const data = await showDialog({
+    title: t('msMasters'),
+    body: `${ms.length ? `<div class="field-row ms-row ms-head"><span>${esc(t('msName'))}</span><span>${esc(t('msLoc'))}</span><span></span></div>${rows}` : ''}
+      <h3>${esc(t('msNew'))}</h3>
+      <div class="field-row ms-row">
+        <input type="text" name="newName" placeholder="${esc(ms.length ? 'Bold' : 'Bold')}" maxlength="40" aria-label="${esc(t('msName'))}">
+        <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}"><span></span></div>`,
+    okLabel: t('ok'),
+  });
+  if (!data) return;
+  ms.forEach((m, i) => {
+    m.name = String(data.get(`name${i}`) || m.name).trim() || m.name;
+    const v = Number(data.get(`loc${i}`));
+    if (Number.isFinite(v)) m.loc = Math.round(v);
+  });
+  for (const m of [...ms].reverse()) if (data.get(`del${ms.indexOf(m)}`)) deleteMaster(p, m.id);
+  const nn = String(data.get('newName') || '').trim();
+  if (nn) {
+    const loc = Number(data.get('newLoc'));
+    addMaster(p, nn, Number.isFinite(loc) && String(data.get('newLoc')).trim() !== '' ? Math.round(loc) : 700);
+  }
+  if (p.masters) {
+    p.axis.min = Math.min(...p.masters.map((m) => m.loc));
+    p.axis.max = Math.max(...p.masters.map((m) => m.loc));
+  }
+  app.history.clear();
+  markChanged();
+  renderAll();
+  if (app.mode === 'editor') { renderEditorOptions(); renderGlyphPanel(); }
+  if (app.mode === 'grid') renderGridOptions();
+  renderPreviewText();
+}
+
+// Instances: every master plus the steps between them, each a font file.
+async function exportInstances() {
+  const p = app.project;
+  if (!hasMasters(p)) return;
+  const ms = [...p.masters].sort((a, b) => a.loc - b.loc);
+  const names = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black' };
+  const locs = new Map(ms.map((m) => [m.loc, m.name]));
+  if (p.axis.tag === 'wght') for (let w = 100; w <= 900; w += 100) if (w > ms[0].loc && w < ms[ms.length - 1].loc && !locs.has(w)) locs.set(w, names[w]);
+  let n = 0;
+  for (const [loc, name] of [...locs].sort((a, b) => a[0] - b[0])) {
+    const q = instanceAt(p, loc, name);
+    refreshComponents(q); recompose(q);
+    try {
+      const r = await fetch('/api/export?format=ttf', { method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(q) });
+      if (!r.ok) throw new Error(await r.text());
+      download(await r.blob(), safeFileName(`-${name.replace(/\s+/g, '')}.ttf`));
+      n++;
+    } catch (err) { toast(`${name}: ${err.message}`, 'error'); }
+  }
+  toast(t('msExported', { n }));
+}
+
 // ================================================================ filters
 
 // Shape filters: a kind, its value, a live dashed preview on the canvas and
@@ -3425,7 +3528,7 @@ function filtersSection() {
     <label class="prop"><span>${esc(t('fl_' + k + 'Value'))}</span><span class="with-unit">
       <input type="range" data-fl="value" min="${f.min}" max="${f.max}" step="1" value="${v}">
       <input type="number" data-fl="value" min="${f.min}" max="${f.max}" step="1" value="${v}">${f.unit ? `<em>${f.unit}</em>` : ''}</span></label>
-    ${f.overlap ? `<label class="check"><input type="checkbox" data-fl="overlap" ${filterState.overlap ? 'checked' : ''}>${esc(t('flOverlap'))}</label>` : ''}
+    ${f.overlap && !hasMasters(app.project) ? `<label class="check"><input type="checkbox" data-fl="overlap" ${filterState.overlap ? 'checked' : ''}>${esc(t('flOverlap'))}</label>` : ''}
     <button class="btn btn-primary btn-block" type="button" data-cmd="flApply" data-tip="${esc(t('flTarget'))}">${icon('check', 15)}<span>${esc(t('flApply'))}</span></button>`, false);
 }
 
@@ -3438,7 +3541,8 @@ function filterInput(g) {
 function runFilter(contours) {
   const k = filterState.kind, v = filterValue(k);
   let out = { offset: () => offsetContours(contours, v), round: () => roundCorners(contours, v), stroke: () => strokeContours(contours, v), fit: () => fitCurves(contours, v) }[k]();
-  if (FILTERS[k].overlap && filterState.overlap) { try { out = removeOverlap(out); } catch { /* keep as is */ } }
+  // With masters the points must stay the same for blending, so overlaps stay.
+  if (FILTERS[k].overlap && filterState.overlap && !hasMasters(app.project)) { try { out = removeOverlap(out); } catch { /* keep as is */ } }
   return out;
 }
 
@@ -3484,6 +3588,12 @@ function applyFilter() {
   app.history.push(g);
   const keep = g.contours.filter((_, i) => !idx.includes(i));
   g.contours = [...keep, ...out];
+  // Weight on the whole glyph keeps its sidebearings: the width grows too.
+  if (filterState.kind === 'offset' && !keep.length) {
+    const d = filterValue('offset');
+    translateGlyph(g, d, 0);
+    g.advance = Math.max(0, g.advance + 2 * d);
+  }
   editor.sel.clear();
   editor.preview = null;
   filterState.active = false;
@@ -3773,7 +3883,16 @@ const glyphByChar = (ch) => app.project.glyphs.find((x) => x.unicode === ch.code
 const composeState = (g) => (g.compose ? 'auto' : g.composeOff ? 'manual' : 'none');
 
 // Й = И + ˘: tells how the letter is made and offers the other way.
+function mastersNoteHTML(g) {
+  const bad = app.extended ? problems(app.project, g) : [];
+  if (!bad.length) return '';
+  const name = (id) => app.project.masters.find((m) => m.id === id)?.name || id;
+  return `<div class="compose-note warn" data-tip="${esc(t('msIncompatTip'))}"><p>${esc(t('msIncompat', { list: bad.map((b) => `${name(b.id)} (${t('msWhy_' + b.why)})`).join(', ') }))}</p></div>`;
+}
+
 function composeNoteHTML(g) {
+  const ms = mastersNoteHTML(g);
+  if (ms) return ms;
   if (app.extended && (isCornerGlyph(g) || isBrushGlyph(g))) {
     return `<div class="compose-note"><p>${esc(t(isCornerGlyph(g) ? 'ptCornerGlyphHint' : 'ptBrushGlyphHint'))}</p></div>`;
   }
@@ -3993,7 +4112,7 @@ async function openFontFile(file, ask = false) {
 async function installFont() {
   try {
     const r = await fetch('/api/install-font', {
-      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(app.project),
+      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON(),
     });
     if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
     const { name } = await r.json();
@@ -4005,7 +4124,15 @@ async function installFont() {
 
 // ================================================================ files
 
-function projectBlob() { return new Blob([serialize(app.project)], { type: 'application/json' }); }
+// The project as JSON for saving and export: the default master in place,
+// components and composed letters rebuilt for it.
+function projectJSON(p = app.project) {
+  const q = saveForm(p);
+  if (q !== p) { refreshComponents(q); recompose(q); }
+  return serialize(q);
+}
+
+function projectBlob() { return new Blob([projectJSON()], { type: 'application/json' }); }
 
 function safeFileName(ext) {
   return (app.project.info.familyName || 'font').replace(/[\\/:*?"<>|]+/g, '_').trim() + ext;
@@ -4022,7 +4149,7 @@ function download(blob, name) {
 async function save(saveAs = false) {
   try {
     if (app.serverFile && !saveAs) {
-      const r = await fetch('/api/file', { method: 'PUT', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(app.project) });
+      const r = await fetch('/api/file', { method: 'PUT', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON() });
       if (!r.ok) throw new Error(await r.text());
       setDirty(false);
       toast(t('savedAs', { name: app.fileName }));
@@ -4208,7 +4335,7 @@ async function associateFiles() {
 async function exportFont(format) {
   try {
     const r = await fetch(`/api/export?format=${format}`, {
-      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(app.project),
+      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON(),
     });
     if (!r.ok) throw new Error(await r.text());
     const name = safeFileName('.' + format);
@@ -4342,6 +4469,7 @@ const COMMANDS = {
   selRect: () => setSelectShape('rect'), selLasso: () => setSelectShape('lasso'),
   pxDraw: () => { editor.pixelErase = false; renderEditorOptions(); }, pxErase: () => { editor.pixelErase = true; renderEditorOptions(); },
   newCorner: () => newPartGlyph('corner'), newBrush: () => newPartGlyph('brush'),
+  mastersDialog: () => mastersDialog(), exportInstances: () => exportInstances(),
   ulFitCap: () => fitUnderlay('cap'), ulFitX: () => fitUnderlay('x'), ulFitAll: () => fitUnderlay('all'),
 };
 
@@ -4492,8 +4620,14 @@ async function updatePreview() {
   }
   const seq = ++previewSeq;
   try {
+    let body = projectJSON();
+    if (app.extended && hasMasters(app.project) && app.previewLoc !== undefined) {
+      const q = instanceAt(app.project, app.previewLoc);
+      refreshComponents(q); recompose(q);
+      body = serialize(q);
+    }
     const r = await fetch('/api/export?format=ttf', {
-      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(app.project),
+      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body,
     });
     if (!r.ok) throw new Error(await r.text());
     const buf = await r.arrayBuffer();
@@ -4532,11 +4666,14 @@ function renderPreviewFeatures() {
   if (!bar) return;
   const found = new Map();
   if (app.extended) for (const g of app.project.glyphs) { const f = formOf(g.name); if (f && !found.has(f.tag + (f.lang || ''))) found.set(f.tag + (f.lang || ''), f); }
-  if (!found.size) { bar.innerHTML = ''; bar.hidden = true; return; }
+  const axis = app.extended && hasMasters(app.project) ? app.project.axis : null;
+  if (!found.size && !axis) { bar.innerHTML = ''; bar.hidden = true; return; }
   bar.hidden = false;
+  const loc = app.previewLoc ?? app.project.masters?.find((m) => m.id === activeId(app.project))?.loc;
+  const axisHTML = axis ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis.tag)}<input type="range" data-pf-axis min="${axis.min}" max="${axis.max}" step="1" value="${loc}"><output class="mono">${loc}</output></label>` : '';
   const tags = [...found.values()].filter((f) => f.tag !== 'locl');
   const langs = [...found.values()].filter((f) => f.tag === 'locl');
-  bar.innerHTML = `<span class="opt-label">${esc(t('pfTitle'))}</span>`
+  bar.innerHTML = axisHTML + (tags.length || langs.length ? `<span class="opt-label">${esc(t('pfTitle'))}</span>` : '')
     + tags.map((f) => `<label class="check" data-tip="${esc(f.tag)}"><input type="checkbox" data-pf="${f.tag}" ${previewFeats.has(f.tag) ? 'checked' : ''}>${esc(f.label)}</label>`).join('')
     + (langs.length ? `<label>${esc(t('pfLang'))}<select data-pf-lang><option value="">—</option>${langs.map((f) => `<option value="${f.lang}" ${previewLang === f.lang ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}</select></label>` : '');
 }

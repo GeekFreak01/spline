@@ -70,7 +70,14 @@ export function validateProject(p) {
     .map((l) => ({ glyphs: names(l.glyphs), use: l.use }));
   p.guides = (Array.isArray(p.guides) ? p.guides : [])
     .filter((g) => g && (g.axis === 'x' || g.axis === 'y') && Number.isFinite(g.pos));
+  // Masters (extended mode): at least two, each with an id, a name and a
+  // place on the axis; the file always holds the default one in contours.
+  if (!(Array.isArray(p.masters) && p.masters.length > 1 && p.masters.every((m) => m && typeof m.id === 'string' && Number.isFinite(m.loc)))) {
+    delete p.masters; delete p.axis;
+  } else p.axis = { tag: 'wght', min: 100, max: 900, ...(p.axis || {}) };
+  delete p.activeMaster;
   for (const g of p.glyphs) {
+    if (!p.masters || !g.layers || typeof g.layers !== 'object') delete g.layers;
     g.contours = Array.isArray(g.contours) ? g.contours : [];
     g.advance = Number.isFinite(g.advance) ? g.advance : 600;
     if (!(g.compose && typeof g.compose.base === 'string' && Array.isArray(g.compose.marks))) delete g.compose;
