@@ -117,6 +117,7 @@ type Master struct {
 	ID   string  `json:"id"`
 	Name string  `json:"name"`
 	Loc  float64 `json:"loc"`
+	Loc2 float64 `json:"loc2,omitempty"` // on the second axis, when there is one
 }
 
 // Anchor is a named point of a glyph.
@@ -216,6 +217,7 @@ type Project struct {
 	Ligatures []Ligature `json:"ligatures,omitempty"`
 	// Masters along one axis (extended mode): a variable font.
 	Axis    *Axis    `json:"axis,omitempty"`
+	Axis2   *Axis    `json:"axis2,omitempty"` // a second axis, e.g. width
 	Masters []Master `json:"masters,omitempty"`
 	// Palette of a colour font: "#RRGGBB" or "#RRGGBBAA" (extended mode).
 	Palette []string `json:"palette,omitempty"`

@@ -412,9 +412,12 @@ func buildName(fd *fontData) []byte {
 		recs = append(recs, rec{16, n.typoFamily}, rec{17, n.typoStyle})
 	}
 	if vf := fd.vf; vf != nil {
-		recs = append(recs, rec{25, n.ps[:strings.IndexByte(n.ps+"-", '-')]}, rec{256, axisName(vf.axis.Tag)})
+		recs = append(recs, rec{25, n.ps[:strings.IndexByte(n.ps+"-", '-')]})
+		for k, a := range vf.axes {
+			recs = append(recs, rec{uint16(256 + k), axisName(a.Tag)})
+		}
 		for i, name := range vf.names {
-			recs = append(recs, rec{uint16(257 + i), name})
+			recs = append(recs, rec{uint16(256 + len(vf.axes) + i), name})
 		}
 	}
 	sort.Slice(recs, func(i, j int) bool { return recs[i].id < recs[j].id })

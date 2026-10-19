@@ -75,6 +75,8 @@ export function validateProject(p) {
   if (!(Array.isArray(p.masters) && p.masters.length > 1 && p.masters.every((m) => m && typeof m.id === 'string' && Number.isFinite(m.loc)))) {
     delete p.masters; delete p.axis;
   } else p.axis = { tag: 'wght', min: 100, max: 900, ...(p.axis || {}) };
+  if (!p.masters || !p.axis2 || typeof p.axis2 !== 'object') delete p.axis2;
+  else for (const m of p.masters) if (!Number.isFinite(m.loc2)) m.loc2 = 100;
   delete p.activeMaster;
   p.palette = (Array.isArray(p.palette) ? p.palette : []).filter((c) => typeof c === 'string' && /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(c)).slice(0, 64);
   if (!p.palette.length) delete p.palette;

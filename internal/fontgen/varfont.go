@@ -2,6 +2,7 @@ package fontgen
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -24,13 +25,18 @@ type varGlyph struct {
 }
 
 type varData struct {
-	axis    project.Axis
+	axes    []project.Axis   // min/max from the masters
+	defs    []float64        // default location on each axis
 	masters []project.Master // [0] is the default
-	norm    []float64        // normalized location of each master
+	norm    [][]float64      // normalized location of each master
+	order   []int            // masters in the order their deltas are worked out
+	regions [][]region       // by master: per axis, peak 0 = not used
 	glyphs  []varGlyph       // by glyph id
-	names   []string         // instance names, from name ID 257
-	locs    []float64        // instance locations
+	names   []string         // instance names, name IDs after the axis names
+	locs    [][]float64      // instance locations
 }
+
+type region struct{ start, peak, end float64 }
 
 func normLoc(loc, def, min, max float64) float64 {
 	switch {
@@ -40,6 +46,89 @@ func normLoc(loc, def, min, max float64) float64 {
 		return math.Min(1, (loc-def)/(max-def))
 	}
 	return 0
+}
+
+// scalar is how much a (normalized) location is inside a region.
+func scalar(reg []region, nl []float64) float64 {
+	s := 1.0
+	for k, r := range reg {
+		if r.peak == 0 {
+			continue
+		}
+		v := nl[k]
+		if v == r.peak {
+			continue
+		}
+		lo, hi := math.Min(r.start, r.end), math.Max(r.start, r.end)
+		if v < lo || v > hi {
+			return 0
+		}
+		if (r.peak > 0 && v < r.peak) || (r.peak < 0 && v > r.peak) {
+			s *= (v - r.start) / (r.peak - r.start)
+		} else {
+			s *= (r.end - v) / (r.end - r.peak)
+		}
+	}
+	return s
+}
+
+func nonZero(v []float64) (n int) {
+	for _, x := range v {
+		if x != 0 {
+			n++
+		}
+	}
+	return
+}
+
+// model sets the regions and their order, as fontTools' VariationModel
+// does for masters on the axes and in the corners.
+func (vf *varData) model() {
+	n := len(vf.masters)
+	vf.regions = make([][]region, n)
+	for i := 1; i < n; i++ {
+		if nonZero(vf.norm[i]) > 0 {
+			vf.order = append(vf.order, i)
+		}
+	}
+	sort.SliceStable(vf.order, func(a, b int) bool {
+		x, y := vf.norm[vf.order[a]], vf.norm[vf.order[b]]
+		if nonZero(x) != nonZero(y) {
+			return nonZero(x) < nonZero(y)
+		}
+		sx, sy := 0.0, 0.0
+		for k := range x {
+			sx += math.Abs(x[k])
+			sy += math.Abs(y[k])
+		}
+		return sx < sy
+	})
+	for _, i := range vf.order {
+		nl := vf.norm[i]
+		reg := make([]region, len(nl))
+		for k, pk := range nl {
+			if pk == 0 {
+				continue
+			}
+			start, end := 0.0, pk
+			if nonZero(nl) == 1 { // on one axis: neighbours split it
+				for _, j := range vf.order {
+					o := vf.norm[j]
+					if j == i || nonZero(o) != 1 || o[k] == 0 || (o[k] > 0) != (pk > 0) {
+						continue
+					}
+					if math.Abs(o[k]) < math.Abs(pk) && math.Abs(o[k]) > math.Abs(start) {
+						start = o[k]
+					}
+					if math.Abs(o[k]) > math.Abs(pk) && (end == pk || math.Abs(o[k]) < math.Abs(end)) {
+						end = o[k]
+					}
+				}
+			}
+			reg[k] = region{start, pk, end}
+		}
+		vf.regions[i] = reg
+	}
 }
 
 // sameShape tells whether two outlines can be blended point by point.
@@ -66,15 +155,37 @@ func prepareVar(p *project.Project, fd *fontData, src []project.Glyph) error {
 	if len(p.Masters) < 2 || p.Axis == nil {
 		return errors.New("a variable font needs at least two masters")
 	}
-	def := p.Masters[0].Loc
-	min, max := def, def
-	for _, m := range p.Masters {
-		min, max = math.Min(min, m.Loc), math.Max(max, m.Loc)
+	axes := []*project.Axis{p.Axis}
+	if p.Axis2 != nil {
+		axes = append(axes, p.Axis2)
 	}
-	vf := &varData{axis: project.Axis{Tag: p.Axis.Tag, Min: min, Max: max}, masters: p.Masters}
-	for _, m := range p.Masters {
-		vf.norm = append(vf.norm, normLoc(m.Loc, def, min, max))
+	locOf := func(m project.Master, k int) float64 {
+		if k == 0 {
+			return m.Loc
+		}
+		if m.Loc2 == 0 {
+			return 100
+		}
+		return m.Loc2
 	}
+	vf := &varData{masters: p.Masters}
+	for k, a := range axes {
+		def := locOf(p.Masters[0], k)
+		lo, hi := def, def
+		for _, m := range p.Masters {
+			lo, hi = math.Min(lo, locOf(m, k)), math.Max(hi, locOf(m, k))
+		}
+		vf.axes = append(vf.axes, project.Axis{Tag: a.Tag, Min: lo, Max: hi})
+		vf.defs = append(vf.defs, def)
+	}
+	for _, m := range p.Masters {
+		nl := make([]float64, len(axes))
+		for k := range axes {
+			nl[k] = normLoc(locOf(m, k), vf.defs[k], vf.axes[k].Min, vf.axes[k].Max)
+		}
+		vf.norm = append(vf.norm, nl)
+	}
+	vf.model()
 	for i, g := range src {
 		vg := varGlyph{}
 		if i > 0 { // .notdef does not vary
@@ -121,29 +232,45 @@ func prepareVar(p *project.Project, fd *fontData, src []project.Glyph) error {
 		}
 		vf.glyphs = append(vf.glyphs, vg)
 	}
-	// Instances: the masters, plus the usual weights in between.
+	// Instances: the masters, plus the usual weights in between (at the
+	// default of the second axis).
 	names := map[int]string{100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular", 500: "Medium", 600: "SemiBold", 700: "Bold", 800: "ExtraBold", 900: "Black"}
-	seen := map[float64]bool{}
+	seen := map[string]bool{}
 	type inst struct {
 		name string
-		loc  float64
+		loc  []float64
 	}
 	var list []inst
+	key := func(l []float64) string { return fmt.Sprint(l) }
 	for _, m := range p.Masters {
-		if !seen[m.Loc] {
-			seen[m.Loc] = true
-			list = append(list, inst{m.Name, m.Loc})
+		l := []float64{m.Loc}
+		if len(axes) > 1 {
+			l = append(l, locOf(m, 1))
+		}
+		if !seen[key(l)] {
+			seen[key(l)] = true
+			list = append(list, inst{m.Name, l})
 		}
 	}
 	if strings.EqualFold(p.Axis.Tag, "wght") {
 		for w := 100; w <= 900; w += 100 {
-			if float64(w) > min && float64(w) < max && !seen[float64(w)] {
-				seen[float64(w)] = true
-				list = append(list, inst{names[w], float64(w)})
+			l := []float64{float64(w)}
+			if len(axes) > 1 {
+				l = append(l, vf.defs[1])
+			}
+			if float64(w) > vf.axes[0].Min && float64(w) < vf.axes[0].Max && !seen[key(l)] {
+				seen[key(l)] = true
+				list = append(list, inst{names[w], l})
 			}
 		}
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].loc < list[j].loc })
+	sort.SliceStable(list, func(i, j int) bool {
+		a, b := list[i].loc, list[j].loc
+		if len(a) > 1 && a[1] != b[1] {
+			return a[1] > b[1]
+		}
+		return a[0] < b[0]
+	})
 	for _, x := range list {
 		vf.names = append(vf.names, x.name)
 		vf.locs = append(vf.locs, x.loc)
@@ -234,29 +361,7 @@ func packDeltas(w *writer, ds []int) {
 // default points of each glyph, as written to 'glyf'.
 func buildGvar(fd *fontData) []byte {
 	vf := fd.vf
-	n := len(vf.masters)
-	// Region of each master on the axis: from its neighbour towards the
-	// default to its own place, then down to the next master outwards.
-	type region struct{ start, peak, end float64 }
-	regions := make([]region, n)
-	for i := 1; i < n; i++ {
-		pk := vf.norm[i]
-		start, end := 0.0, pk
-		for j := 1; j < n; j++ {
-			o := vf.norm[j]
-			if j == i || (o > 0) != (pk > 0) {
-				continue
-			}
-			if math.Abs(o) < math.Abs(pk) && math.Abs(o) > math.Abs(start) {
-				start = o
-			}
-			if math.Abs(o) > math.Abs(pk) && (end == pk || math.Abs(o) < math.Abs(end)) {
-				end = o
-			}
-		}
-		regions[i] = region{start, pk, end}
-	}
-
+	nAxes := len(vf.axes)
 	var data [][]byte
 	for gi, vg := range vf.glyphs {
 		if vg.masters == nil || len(fd.glyphs[gi].contours) == 0 {
@@ -264,46 +369,74 @@ func buildGvar(fd *fontData) []byte {
 			continue
 		}
 		mp := varPoints(vg)
+		// Points of every master as numbers (x, y, then 4 phantom points).
+		flatPts := func(mi int) []float64 {
+			var out []float64
+			for _, c := range mp[mi] {
+				for _, p := range c {
+					out = append(out, float64(p.x), float64(p.y))
+				}
+			}
+			adv := float64(vg.advance[mi])
+			return append(out, 0, 0, adv, 0, 0, 0, 0, 0)
+		}
+		base := flatPts(0)
+		deltas := map[int][]float64{}
 		var tuples [][]byte
 		var headers []byte
-		for mi := 1; mi < n; mi++ {
-			if vf.norm[mi] == 0 {
-				continue
+		for oi, mi := range vf.order {
+			d := flatPts(mi)
+			for k := range d {
+				d[k] -= base[k]
 			}
-			var dx, dy []int
-			any := false
-			for ci, c := range mp[0] {
-				for k, p0 := range c {
-					q := mp[mi][ci][k]
-					dx, dy = append(dx, q.x-p0.x), append(dy, q.y-p0.y)
-					if q.x != p0.x || q.y != p0.y {
-						any = true
+			// Minus what the masters before it already give at its place.
+			for _, mj := range vf.order[:oi] {
+				if sc := scalar(vf.regions[mj], vf.norm[mi]); sc != 0 {
+					for k := range d {
+						d[k] -= sc * deltas[mj][k]
 					}
 				}
 			}
-			// Phantom points: origin, advance, and two vertical ones.
-			adv := vg.advance[mi] - vg.advance[0]
-			dx = append(dx, 0, adv, 0, 0)
-			dy = append(dy, 0, 0, 0, 0)
-			if !any && adv == 0 {
+			deltas[mi] = d
+			var dx, dy []int
+			any := false
+			for k := 0; k < len(d); k += 2 {
+				x, y := int(math.Round(d[k])), int(math.Round(d[k+1]))
+				dx, dy = append(dx, x), append(dy, y)
+				if x != 0 || y != 0 {
+					any = true
+				}
+			}
+			if !any {
 				continue
 			}
 			body := &writer{}
 			packDeltas(body, dx)
 			packDeltas(body, dy)
-			r := regions[mi]
+			reg := vf.regions[mi]
 			h := &writer{}
 			h.u16(uint16(len(body.buf)))
 			flags := uint16(0x8000) // embedded peak
-			inter := !(r.start == 0 && r.end == r.peak)
+			inter := false
+			for _, r := range reg {
+				if r.peak != 0 && !(r.start == 0 && r.end == r.peak) {
+					inter = true
+				}
+			}
 			if inter {
 				flags |= 0x4000 // intermediate region
 			}
 			h.u16(flags)
-			h.u16(f2dot14(r.peak))
+			for _, r := range reg {
+				h.u16(f2dot14(r.peak))
+			}
 			if inter {
-				h.u16(f2dot14(math.Min(r.start, r.end)))
-				h.u16(f2dot14(math.Max(r.start, r.end)))
+				for _, r := range reg {
+					h.u16(f2dot14(math.Min(r.start, r.end)))
+				}
+				for _, r := range reg {
+					h.u16(f2dot14(math.Max(r.start, r.end)))
+				}
 			}
 			headers = append(headers, h.buf...)
 			tuples = append(tuples, body.buf)
@@ -328,7 +461,7 @@ func buildGvar(fd *fontData) []byte {
 	w := &writer{}
 	w.u16(1)
 	w.u16(0)
-	w.u16(1) // axisCount
+	w.u16(uint16(nAxes))
 	w.u16(0) // sharedTupleCount
 	glyphCount := len(fd.glyphs)
 	head := 20 + 4*(glyphCount+1)
@@ -352,60 +485,94 @@ func buildGvar(fd *fontData) []byte {
 // instance names are name IDs 256 and 257...
 func buildFvar(fd *fontData) []byte {
 	vf := fd.vf
+	n := len(vf.axes)
 	w := &writer{}
 	w.u16(1)
 	w.u16(0)
 	w.u16(16) // axes right after the header
 	w.u16(2)  // reserved
-	w.u16(1)  // axisCount
+	w.u16(uint16(n))
 	w.u16(20) // axisSize
 	w.u16(uint16(len(vf.names)))
-	w.u16(4 + 4) // instanceSize: subfamilyNameID, flags, one coordinate
+	w.u16(uint16(4 + 4*n)) // instanceSize
 	fixed := func(v float64) { w.u32(uint32(int32(math.Round(v * 65536)))) }
-	w.bytes([]byte(padTag(vf.axis.Tag)))
-	fixed(vf.axis.Min)
-	fixed(vf.masters[0].Loc)
-	fixed(vf.axis.Max)
-	w.u16(0)
-	w.u16(256)
-	for i, loc := range vf.locs {
-		w.u16(uint16(257 + i))
+	for k, a := range vf.axes {
+		w.bytes([]byte(padTag(a.Tag)))
+		fixed(a.Min)
+		fixed(vf.defs[k])
+		fixed(a.Max)
 		w.u16(0)
-		fixed(loc)
+		w.u16(uint16(256 + k))
+	}
+	for i, loc := range vf.locs {
+		w.u16(uint16(256 + n + i))
+		w.u16(0)
+		for _, v := range loc {
+			fixed(v)
+		}
 	}
 	return w.buf
 }
 
-// buildSTAT describes the styles along the axis for font menus.
+// buildSTAT describes the styles along the axes for font menus: the
+// instance names on the first axis, the master names on the second.
 func buildSTAT(fd *fontData) []byte {
 	vf := fd.vf
+	n := len(vf.axes)
+	type value struct {
+		axis   int
+		name   uint16
+		v      float64
+		elided bool
+	}
+	var vals []value
+	seen := map[float64]bool{}
+	for i, loc := range vf.locs {
+		if n > 1 && loc[1] != vf.defs[1] {
+			continue
+		}
+		if !seen[loc[0]] {
+			seen[loc[0]] = true
+			vals = append(vals, value{0, uint16(256 + n + i), loc[0], loc[0] == vf.defs[0]})
+		}
+	}
+	if n > 1 {
+		seen2 := map[float64]bool{vf.defs[1]: true}
+		for i, loc := range vf.locs {
+			if !seen2[loc[1]] {
+				seen2[loc[1]] = true
+				vals = append(vals, value{1, uint16(256 + n + i), loc[1], false})
+			}
+		}
+	}
 	w := &writer{}
 	w.u16(1)
-	w.u16(1)  // version 1.1
-	w.u16(8)  // designAxisSize
-	w.u16(1)  // designAxisCount
+	w.u16(1) // version 1.1
+	w.u16(8) // designAxisSize
+	w.u16(uint16(n))
 	w.u32(20) // designAxesOffset
-	w.u16(uint16(len(vf.locs)))
-	w.u32(uint32(20 + 8)) // offsetToAxisValueOffsets
-	w.u16(2)              // elidedFallbackNameID: "Regular"
-	w.bytes([]byte(padTag(vf.axis.Tag)))
-	w.u16(256)
-	w.u16(0)
-	// Axis value offsets (from the offsets array), then format 1 tables.
-	base := 2 * len(vf.locs)
-	for i := range vf.locs {
+	w.u16(uint16(len(vals)))
+	w.u32(uint32(20 + 8*n)) // offsetToAxisValueOffsets
+	w.u16(2)                // elidedFallbackNameID: "Regular"
+	for k, a := range vf.axes {
+		w.bytes([]byte(padTag(a.Tag)))
+		w.u16(uint16(256 + k))
+		w.u16(uint16(k))
+	}
+	base := 2 * len(vals)
+	for i := range vals {
 		w.u16(uint16(base + 12*i))
 	}
-	for i, loc := range vf.locs {
+	for _, v := range vals {
 		w.u16(1) // format 1
-		w.u16(0) // axis 0
+		w.u16(uint16(v.axis))
 		var flags uint16
-		if loc == vf.masters[0].Loc {
+		if v.elided {
 			flags = 0x0002 // ELIDABLE_AXIS_VALUE_NAME
 		}
 		w.u16(flags)
-		w.u16(uint16(257 + i))
-		w.u32(uint32(int32(math.Round(loc * 65536))))
+		w.u16(v.name)
+		w.u32(uint32(int32(math.Round(v.v * 65536))))
 	}
 	return w.buf
 }

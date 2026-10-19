@@ -750,3 +750,4 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .sm-slider input[type="range"] { flex: 1; min-width: 0; }
 .sm-slider .with-unit { display: flex; align-items: center; gap: 6px; }
 .seg.sm-states { grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); }
+.dialog .ms-row.two { grid-template-columns: minmax(0, 1fr) 110px 110px 80px; }

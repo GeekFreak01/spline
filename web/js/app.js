@@ -8,7 +8,7 @@ import {
 import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { isSmart, editingState, editState, saveSmart, addProp, removeProp, smartProblems } from './smart.js';
-import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour } from './masters.js';
+import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis } from './masters.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
@@ -1930,7 +1930,9 @@ function previewAroundCurrent() {
 $('previewCurrent').addEventListener('click', previewAroundCurrent);
 $('previewFeats').addEventListener('input', (e) => {
   if (e.target.dataset.pfAxis === undefined) return;
-  app.previewLoc = Number(e.target.value);
+  if (e.target.dataset.pfAxis === '2') app.previewLoc2 = Number(e.target.value);
+  else app.previewLoc = Number(e.target.value);
+  app.previewLoc ??= app.project.masters?.find((m) => m.id === activeId(app.project))?.loc;
   e.target.nextElementSibling.textContent = e.target.value;
   schedulePreview(120);
 });
@@ -3444,7 +3446,7 @@ function masterBarHTML() {
   }
   const act = activeId(p);
   return `<div class="group"><div class="seg" role="radiogroup" aria-label="${esc(t('msMasters'))}">
-    ${p.masters.map((m) => `<button type="button" role="radio" data-master="${esc(m.id)}" aria-checked="${m.id === act}" data-tip="${esc(p.axis.tag)} ${m.loc}">${esc(m.name)}</button>`).join('')}
+    ${p.masters.map((m) => `<button type="button" role="radio" data-master="${esc(m.id)}" aria-checked="${m.id === act}" data-tip="${esc(p.axis.tag)} ${m.loc}${p.axis2 ? ` · ${esc(p.axis2.tag)} ${m.loc2}` : ''}">${esc(m.name)}</button>`).join('')}
     </div><button class="btn btn-icon" type="button" data-cmd="mastersDialog" aria-label="${esc(t('msMenu'))}" data-tip="${esc(t('msMenu'))}">${icon('settings', 14)}</button></div><div class="sep"></div>`;
 }
 
@@ -3464,17 +3466,21 @@ function selectMaster(id) {
 async function mastersDialog() {
   const p = app.project;
   const ms = p.masters || [];
-  const rows = ms.map((m, i) => `<div class="field-row ms-row">
+  const w2 = !!p.axis2;
+  const loc2 = (name, v) => (w2 ? `<input type="number" name="${name}" value="${v ?? ''}" step="1" placeholder="100" aria-label="${esc(t('msLoc2'))}">` : '');
+  const rows = ms.map((m, i) => `<div class="field-row ms-row${w2 ? ' two' : ''}">
       <input type="text" name="name${i}" value="${esc(m.name)}" aria-label="${esc(t('msName'))}" required maxlength="40">
       <input type="number" name="loc${i}" value="${m.loc}" step="1" aria-label="${esc(t('msLoc'))}">
+      ${loc2(`loc2_${i}`, m.loc2)}
       <label class="check"><input type="checkbox" name="del${i}" ${i === 0 ? 'disabled' : ''}>${esc(t('msDelete'))}</label></div>`).join('');
   const data = await showDialog({
     title: t('msMasters'),
-    body: `${ms.length ? `<div class="field-row ms-row ms-head"><span>${esc(t('msName'))}</span><span>${esc(t('msLoc'))}</span><span></span></div>${rows}` : ''}
+    body: `${ms.length ? `<div class="field-row ms-row ms-head${w2 ? ' two' : ''}"><span>${esc(t('msName'))}</span><span>${esc(t('msLoc'))}</span>${w2 ? `<span>${esc(t('msLoc2'))}</span>` : ''}<span></span></div>${rows}` : ''}
       <h3>${esc(t('msNew'))}</h3>
-      <div class="field-row ms-row">
-        <input type="text" name="newName" placeholder="${esc(ms.length ? 'Bold' : 'Bold')}" maxlength="40" aria-label="${esc(t('msName'))}">
-        <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}"><span></span></div>`,
+      <div class="field-row ms-row${w2 ? ' two' : ''}">
+        <input type="text" name="newName" placeholder="Bold" maxlength="40" aria-label="${esc(t('msName'))}">
+        <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}">${loc2('newLoc2', '')}<span></span></div>
+      ${ms.length ? `<label class="check"><input type="checkbox" name="axis2" ${w2 ? 'checked' : ''}>${esc(t('msAxis2'))}</label>` : ''}`,
     okLabel: t('ok'),
   });
   if (!data) return;
@@ -3482,16 +3488,25 @@ async function mastersDialog() {
     m.name = String(data.get(`name${i}`) || m.name).trim() || m.name;
     const v = Number(data.get(`loc${i}`));
     if (Number.isFinite(v)) m.loc = Math.round(v);
+    const v2 = Number(data.get(`loc2_${i}`));
+    if (w2 && Number.isFinite(v2) && String(data.get(`loc2_${i}`)).trim() !== '') m.loc2 = Math.round(v2);
   });
+  if (ms.length) setWidthAxis(p, !!data.get('axis2'));
   for (const m of [...ms].reverse()) if (data.get(`del${ms.indexOf(m)}`)) deleteMaster(p, m.id);
   const nn = String(data.get('newName') || '').trim();
   if (nn) {
     const loc = Number(data.get('newLoc'));
-    addMaster(p, nn, Number.isFinite(loc) && String(data.get('newLoc')).trim() !== '' ? Math.round(loc) : 700);
+    const l2 = Number(data.get('newLoc2'));
+    addMaster(p, nn, Number.isFinite(loc) && String(data.get('newLoc')).trim() !== '' ? Math.round(loc) : 700,
+      p.axis2 && String(data.get('newLoc2') || '').trim() !== '' && Number.isFinite(l2) ? Math.round(l2) : undefined);
   }
   if (p.masters) {
     p.axis.min = Math.min(...p.masters.map((m) => m.loc));
     p.axis.max = Math.max(...p.masters.map((m) => m.loc));
+    if (p.axis2) {
+      p.axis2.min = Math.min(...p.masters.map((m) => m.loc2));
+      p.axis2.max = Math.max(...p.masters.map((m) => m.loc2));
+    }
   }
   app.history.clear();
   markChanged();
@@ -3519,7 +3534,7 @@ function variableJSON() {
   const out = { ...q, glyphs: q.glyphs.map((g) => ({ ...g, layers: {} })) };
   const byName = new Map(out.glyphs.map((g) => [g.name, g]));
   for (const m of p.masters.slice(1)) {
-    const inst = instanceAt(p, m.loc);
+    const inst = instanceAt(p, m.loc, undefined, m.loc2);
     refreshComponents(inst); recompose(inst);
     for (const g of inst.glyphs) {
       const base = def.get(g.name) || [];
@@ -3552,11 +3567,17 @@ async function exportInstances() {
   if (!hasMasters(p)) return;
   const ms = [...p.masters].sort((a, b) => a.loc - b.loc);
   const names = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black' };
-  const locs = new Map(ms.map((m) => [m.loc, m.name]));
-  if (p.axis.tag === 'wght') for (let w = 100; w <= 900; w += 100) if (w > ms[0].loc && w < ms[ms.length - 1].loc && !locs.has(w)) locs.set(w, names[w]);
+  const def2 = p.masters[0].loc2;
+  const list = ms.map((m) => [m.loc, m.name, m.loc2]);
+  const seen = new Set(list.map(([l, , l2]) => `${l}/${l2}`));
+  if (p.axis.tag === 'wght') {
+    for (let w = 100; w <= 900; w += 100) {
+      if (w > ms[0].loc && w < ms[ms.length - 1].loc && !seen.has(`${w}/${def2}`)) { seen.add(`${w}/${def2}`); list.push([w, names[w], def2]); }
+    }
+  }
   let n = 0;
-  for (const [loc, name] of [...locs].sort((a, b) => a[0] - b[0])) {
-    const q = instanceAt(p, loc, name);
+  for (const [loc, name, loc2] of list.sort((a, b) => a[0] - b[0])) {
+    const q = instanceAt(p, loc, name, loc2);
     refreshComponents(q); recompose(q);
     try {
       const r = await fetch('/api/export?format=ttf', { method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(q) });
@@ -4844,7 +4865,7 @@ async function updatePreview() {
   try {
     let body = projectJSON();
     if (app.extended && hasMasters(app.project) && app.previewLoc !== undefined) {
-      const q = instanceAt(app.project, app.previewLoc);
+      const q = instanceAt(app.project, app.previewLoc, undefined, app.previewLoc2);
       refreshComponents(q); recompose(q);
       body = serialize(q);
     }
@@ -4892,7 +4913,10 @@ function renderPreviewFeatures() {
   if (!found.size && !axis) { bar.innerHTML = ''; bar.hidden = true; return; }
   bar.hidden = false;
   const loc = app.previewLoc ?? app.project.masters?.find((m) => m.id === activeId(app.project))?.loc;
-  const axisHTML = axis ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis.tag)}<input type="range" data-pf-axis min="${axis.min}" max="${axis.max}" step="1" value="${loc}"><output class="mono">${loc}</output></label>` : '';
+  const axis2 = axis && app.project.axis2;
+  const loc2 = app.previewLoc2 ?? app.project.masters?.find((m) => m.id === activeId(app.project))?.loc2;
+  const axisHTML = (axis ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis.tag)}<input type="range" data-pf-axis="1" min="${axis.min}" max="${axis.max}" step="1" value="${loc}"><output class="mono">${loc}</output></label>` : '')
+    + (axis2 && axis2.min < axis2.max ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis2.tag)}<input type="range" data-pf-axis="2" min="${axis2.min}" max="${axis2.max}" step="1" value="${loc2}"><output class="mono">${loc2}</output></label>` : '');
   const tags = [...found.values()].filter((f) => f.tag !== 'locl');
   const langs = [...found.values()].filter((f) => f.tag === 'locl');
   bar.innerHTML = axisHTML + (tags.length || langs.length ? `<span class="opt-label">${esc(t('pfTitle'))}</span>` : '')

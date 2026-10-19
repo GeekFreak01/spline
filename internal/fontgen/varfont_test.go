@@ -78,3 +78,29 @@ func TestVariableFontIntermediate(t *testing.T) {
 		os.WriteFile(out+".3.ttf", data, 0o644)
 	}
 }
+
+// Two axes: Regular, Bold (wght 700), Condensed (wdth 75) and Bold
+// Condensed in the corner, drawn on purpose not as the sum of the others.
+func TestVariableFontTwoAxes(t *testing.T) {
+	p := varProject(t)
+	p.Axis = &project.Axis{Tag: "wght", Min: 400, Max: 700}
+	p.Axis2 = &project.Axis{Tag: "wdth", Min: 75, Max: 100}
+	p.Masters = []project.Master{
+		{ID: "m0", Name: "Regular", Loc: 400, Loc2: 100},
+		{ID: "m1", Name: "Bold", Loc: 700, Loc2: 100},
+		{ID: "m2", Name: "Condensed", Loc: 400, Loc2: 75},
+		{ID: "m3", Name: "Bold Condensed", Loc: 700, Loc2: 75},
+	}
+	for i := range p.Glyphs {
+		g := &p.Glyphs[i]
+		l := g.Layers["m1"]
+		g.Layers["m3"] = project.Layer{Contours: l.Contours, Advance: g.Advance * 0.95}
+	}
+	data, err := Build(p, VarTTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := os.Getenv("SPLINE_FONT_OUT"); out != "" {
+		os.WriteFile(out+".2d.ttf", data, 0o644)
+	}
+}
