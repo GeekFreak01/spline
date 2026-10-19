@@ -3,13 +3,15 @@
 // is interpolated: instances for export, a variable font, the preview.
 //
 //   project.axis    = { tag: 'wght', min, max }
-//   project.masters = [{ id, name, loc }]   the first one is the default
+//   project.masters = [{ id, name, loc, kerning? }]   the first one is the default
 //   glyph.layers    = { [masterId]: { contours, advance } } for the others
 //
 // While a master other than the default is edited, its outlines sit in
 // glyph.contours (so every tool works unchanged) and the default's in
-// glyph.layers[defaultId]. serialize() always writes the default in
-// glyph.contours, see saveForm().
+// glyph.layers[defaultId]. Kerning the same way: the edited master's in
+// project.kerning, the others' in master.kerning (none = the default's).
+// serialize() always writes the default in glyph.contours and
+// project.kerning, see saveForm().
 import { normalizeDirections, reverseContour } from './model.js';
 
 const clone = (o) => structuredClone(o);
@@ -38,6 +40,12 @@ export function switchMaster(p, id) {
     g.advance = next.advance;
     delete g.layers[id];
   }
+  // Kerning: a master without its own starts as a copy of the default's.
+  const master = (x) => p.masters.find((m) => m.id === x);
+  const defKern = cur === defaultId(p) ? p.kerning : master(defaultId(p)).kerning;
+  master(cur).kerning = p.kerning || {};
+  p.kerning = master(id).kerning || clone(defKern || {});
+  delete master(id).kerning;
   p.activeMaster = id === defaultId(p) ? undefined : id;
   if (!p.activeMaster) delete p.activeMaster;
   return true;
@@ -53,6 +61,14 @@ export function saveForm(p) {
     delete layers[defaultId(p)];
     return { ...g, contours: def ? def.contours : g.contours, advance: def ? def.advance : g.advance, layers };
   }) };
+  const defMaster = p.masters.find((m) => m.id === defaultId(p));
+  q.kerning = defMaster.kerning || {};
+  q.masters = p.masters.map((m) => {
+    const c = { ...m };
+    if (m.id === p.activeMaster) c.kerning = p.kerning || {};
+    if (m === defMaster) delete c.kerning;
+    return c;
+  });
   delete q.activeMaster;
   return q;
 }
@@ -245,7 +261,34 @@ export function instanceAt(p, loc, styleName, loc2) {
     delete copy.layers;
     return copy;
   });
+  q.kerning = blendKerning(src, order, scal);
   return q;
+}
+
+// Kerning at a location: every entry of every master, blended like the
+// outlines (an entry a master lacks counts as 0 there).
+function blendKerning(src, order, scal) {
+  const def = src.masters[0];
+  const kernOf = (m) => (m.id === def.id ? src.kerning : m.kerning ?? src.kerning) || {};
+  const keys = new Set();
+  for (const m of src.masters) for (const [a, row] of Object.entries(kernOf(m))) for (const b of Object.keys(row)) keys.add(`${a}\u0000${b}`);
+  const out = {};
+  for (const key of keys) {
+    const [a, b] = key.split('\u0000');
+    const val = (m) => kernOf(m)[a]?.[b] ?? 0;
+    const base = val(def);
+    // order holds { id, i, nl, region }: the master itself is src.masters[i].
+    const deltas = [];
+    let v = base;
+    order.forEach((m, i) => {
+      let d = val(src.masters[m.i]) - base;
+      for (let j = 0; j < i; j++) d -= scalarAt(order[j].region, m.nl) * deltas[j];
+      deltas.push(d);
+      v += scal[i] * d;
+    });
+    (out[a] ||= {})[b] = Math.round(v); // a 0 still cancels a group pair
+  }
+  return out;
 }
 
 // Turns the width axis on (every master at 100) or off.

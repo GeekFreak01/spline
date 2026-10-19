@@ -2128,6 +2128,7 @@ function renderKernOptions() {
   $('optionsBar').innerHTML = `
     <div class="opt-tool">${icon('kerning', 16)}<span>${esc(t('viewKerning'))}</span></div>
     <div class="sep"></div>
+    ${hasMasters(app.project) ? masterBarHTML() : ''}
     <div class="group"><label>${esc(t('kernText'))}<input class="kern-text" id="kernText" value="${esc(kernView.text)}" spellcheck="false"></label></div>
     <div class="group"><label>${esc(t('kernSamples'))}<select id="kernSample">
       <option value="">—</option>
@@ -3596,6 +3597,8 @@ function selectMaster(id) {
   renderAll();
   if (app.mode === 'editor') { renderEditorOptions(); renderGlyphPanel(); editor.sel.clear(); editor.render(); updateMetricInputs(); }
   if (app.mode === 'grid') renderGridOptions();
+  // Kerning belongs to the master too.
+  if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
 }
 
 async function mastersDialog() {

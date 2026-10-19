@@ -118,6 +118,9 @@ type Master struct {
 	Name string  `json:"name"`
 	Loc  float64 `json:"loc"`
 	Loc2 float64 `json:"loc2,omitempty"` // on the second axis, when there is one
+	// Kerning of this master (not the default's, which is Project.Kerning);
+	// nil means the same as the default.
+	Kerning map[string]map[string]float64 `json:"kerning,omitempty"`
 }
 
 // Anchor is a named point of a glyph.
@@ -302,10 +305,16 @@ func (p *Project) Validate() error {
 		}
 	}
 
-	for left, rights := range p.Kerning {
-		for right, v := range rights {
-			if !finite(v) || math.Abs(v) > 5000 {
-				return fmt.Errorf("invalid kerning value for %q %q", left, right)
+	kernings := []map[string]map[string]float64{p.Kerning}
+	for _, m := range p.Masters {
+		kernings = append(kernings, m.Kerning)
+	}
+	for _, k := range kernings {
+		for left, rights := range k {
+			for right, v := range rights {
+				if !finite(v) || math.Abs(v) > 5000 {
+					return fmt.Errorf("invalid kerning value for %q %q", left, right)
+				}
 			}
 		}
 	}

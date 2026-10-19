@@ -104,3 +104,39 @@ func TestVariableFontTwoAxes(t *testing.T) {
 		os.WriteFile(out+".2d.ttf", data, 0o644)
 	}
 }
+
+// Kerning per master: the varying pairs get deltas in the GDEF variation
+// store and a device offset in GPOS; the old 'kern' table is left out.
+func TestVariableKerning(t *testing.T) {
+	p := varProject(t)
+	p.Kerning = map[string]map[string]float64{"A": {"V": -50}, "T": {"o": -60}}
+	p.Masters[1].Kerning = map[string]map[string]float64{"A": {"V": -150}, "T": {"o": -60}, "V": {"A": -40}}
+	data, err := Build(p, VarTTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gdef := tableOf(t, data, "GDEF")
+	if len(gdef) < 18 || gdef[2] != 0 || gdef[3] != 3 {
+		t.Fatalf("GDEF is not version 1.3: % x", gdef[:min(len(gdef), 18)])
+	}
+	if tableOf(t, data, "kern") != nil {
+		t.Error("a variable font with kerning per master has a 'kern' table")
+	}
+	fd := prepare(p, TTF)
+	if err := prepareVar(p, fd, fd.src); err != nil {
+		t.Fatal(err)
+	}
+	varyKerning(p, fd)
+	rows := 0
+	for _, kp := range fd.kern {
+		if kp.row > 0 {
+			rows++
+		}
+	}
+	if rows != 2 || len(fd.kernRows) != 2 { // A V and V A vary, T o does not
+		t.Errorf("varying pairs %d, rows %d", rows, len(fd.kernRows))
+	}
+	if out := os.Getenv("SPLINE_FONT_OUT"); out != "" {
+		os.WriteFile(out, data, 0o644)
+	}
+}

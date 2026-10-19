@@ -188,7 +188,9 @@ func TestSubstitutions(t *testing.T) {
 func TestFractions(t *testing.T) {
 	p := testProject()
 	h := p.Glyphs[1].Contours
-	add := func(name string, u int) { p.Glyphs = append(p.Glyphs, project.Glyph{Name: name, Unicode: u, Advance: 500, Contours: h}) }
+	add := func(name string, u int) {
+		p.Glyphs = append(p.Glyphs, project.Glyph{Name: name, Unicode: u, Advance: 500, Contours: h})
+	}
 	for i, n := range []string{"one", "two", "three"} {
 		add(n, '1'+i)
 		add(n+".numr", 0)

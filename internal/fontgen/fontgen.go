@@ -61,8 +61,10 @@ type fontData struct {
 	glyphs []glyphData    // glyph 0 is .notdef
 	gid    map[string]int // project glyph name -> glyph id
 	kern   []kernPair
-	calt   []caltRule
-	ligs   []ligRule
+	// kernRows: deltas of the varying kerning pairs (variable fonts).
+	kernRows [][]int16
+	calt     []caltRule
+	ligs     []ligRule
 	// anchors by glyph id (extended mode): mark, mkmk and curs.
 	anchors map[int]glyphAnchors
 	// forms: alternate glyphs named by suffix (a.sc, one.onum, ...).
@@ -106,6 +108,7 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 		if err := prepareVar(p, fd, fd.src); err != nil {
 			return nil, err
 		}
+		varyKerning(p, fd)
 		fd.names = makeNames(p.Info)
 	}
 
@@ -141,7 +144,9 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 	if gdef := buildGDEF(fd); gdef != nil {
 		tables["GDEF"] = gdef
 	}
-	if len(fd.kern) > 0 {
+	// The old 'kern' table cannot vary: a variable font with kerning per
+	// master keeps only GPOS.
+	if len(fd.kern) > 0 && len(fd.kernRows) == 0 {
 		if k := buildKern(fd.kern); k != nil {
 			tables["kern"] = k
 		}

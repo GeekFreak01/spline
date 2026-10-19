@@ -314,9 +314,13 @@ func buildGPOS(fd *fontData) ([]byte, error) {
 // buildGDEF marks the mark glyphs (class 3) and the rest (class 1), so
 // shapers attach marks and skip them where they should. Returns nil when
 // there are no marks.
+//
+// A variable font with kerning per master also gets the variation store
+// of the kerning deltas (GDEF 1.3).
 func buildGDEF(fd *fontData) []byte {
 	marks := sortedIDs(fd.anchors, func(_ int, a glyphAnchors) bool { return isMark(a) })
-	if len(marks) == 0 {
+	store := buildVarStore(fd)
+	if len(marks) == 0 && store == nil {
 		return nil
 	}
 	isM := map[int]bool{}
@@ -324,23 +328,42 @@ func buildGDEF(fd *fontData) []byte {
 		isM[id] = true
 	}
 	class := &writer{}
-	class.u16(1) // ClassDef format 1: one class per glyph from glyph 1
-	class.u16(1)
-	class.u16(uint16(len(fd.glyphs) - 1))
-	for id := 1; id < len(fd.glyphs); id++ {
-		if isM[id] {
-			class.u16(3)
-		} else {
-			class.u16(1)
+	if len(marks) > 0 {
+		class.u16(1) // ClassDef format 1: one class per glyph from glyph 1
+		class.u16(1)
+		class.u16(uint16(len(fd.glyphs) - 1))
+		for id := 1; id < len(fd.glyphs); id++ {
+			if isM[id] {
+				class.u16(3)
+			} else {
+				class.u16(1)
+			}
 		}
+	}
+	header := 12
+	if store != nil {
+		header = 18
 	}
 	w := &writer{}
 	w.u16(1)
-	w.u16(0)
-	w.u16(12) // glyphClassDef right after the header
-	w.u16(0)  // attachList
-	w.u16(0)  // ligCaretList
-	w.u16(0)  // markAttachClassDef
+	if store != nil {
+		w.u16(3)
+	} else {
+		w.u16(0)
+	}
+	if len(marks) > 0 {
+		w.u16(uint16(header)) // glyphClassDef right after the header
+	} else {
+		w.u16(0)
+	}
+	w.u16(0) // attachList
+	w.u16(0) // ligCaretList
+	w.u16(0) // markAttachClassDef
+	if store != nil {
+		w.u16(0) // markGlyphSetsDef
+		w.u32(uint32(header + len(class.buf)))
+	}
 	w.bytes(class.buf)
+	w.bytes(store)
 	return w.buf
 }
