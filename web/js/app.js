@@ -14,6 +14,7 @@ import { setDefaults, keyLabel, comboOf, comboLabel, actionFor, assign, resetAll
 import { initPanels, layoutPanels, setHidden, isHidden, resetPanels, recordOrder, watchResize } from './panels.js';
 import { recompose, composeInfo } from './compose.js';
 import { simplifyContours } from './simplify.js';
+import { KEY_FIELDS, isKey, outOfSync, updateMetrics } from './metrics.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -29,6 +30,7 @@ const MOD = isMac ? '⌘' : 'Ctrl+';
 setDefaults({
   simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [],
   undo: ['Ctrl+Z'], redo: ['Ctrl+Shift+Z', 'Ctrl+Y'], selectAll: ['Ctrl+A'], freeTransform: ['Ctrl+T'],
+  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], updateMetrics: ['Ctrl+Alt+M'],
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
   snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
@@ -56,6 +58,9 @@ const toolTip = (id) => t('tip' + cap(id));
 
 const app = {
   project: null,
+  // Extended mode adds the tools of the "Ultimate" update; the simple mode
+  // stays as it was. Kept in the settings, not in the project.
+  extended: (() => { try { return localStorage.getItem('spline.extended') === '1'; } catch { return false; } })(),
   history: new History(),
   selected: new Set(), // glyph names
   anchor: null,
@@ -229,6 +234,7 @@ function menuDefs() {
       { label: 'paste', key: `${MOD}V`, run: pasteFromMenu },
       '-',
       { label: 'selectAll', key: keyLabel('selectAll'), run: selectAll },
+      { label: 'invertSelection', key: keyLabel('invertSelection'), run: () => editor.invertSelection(), enabled: inEditor, ext: true },
       { label: 'freeTransform', key: keyLabel('freeTransform'), run: startTransform, enabled: inEditor },
       { label: 'delete', key: 'Del', run: deleteSelection, enabled: hasSel },
     ] },
@@ -248,6 +254,8 @@ function menuDefs() {
       { label: 'snapGrid', key: keyLabel('snapGrid'), check: editor.snapGrid, run: () => toggleView('snapGrid') },
       { label: 'snapGuides', key: keyLabel('snapGuides'), check: editor.snapGuides, run: () => toggleView('snapGuides') },
       '-',
+      { label: 'extendedMode', check: app.extended, run: () => setExtended(!app.extended) },
+      '-',
       { label: 'themeDark', check: theme === 'dark', run: () => setTheme('dark') },
       { label: 'themeLight', check: theme === 'light', run: () => setTheme('light') },
       '-',
@@ -265,6 +273,11 @@ function menuDefs() {
       { label: 'flipV', key: keyLabel('flipV'), run: () => applyTransform('flipV'), enabled: inEditor || app.selected.size > 0 },
       { label: 'clear', run: () => glyphAction('clear'), enabled: inEditor },
       { label: 'ulMenu', run: () => pickFiles('image'), enabled: inEditor || app.selected.size === 1 },
+      '-',
+      { label: 'addExtremes', key: keyLabel('addExtremes'), run: addExtremes, enabled: inEditor, ext: true },
+      { label: 'makeFirst', key: keyLabel('makeFirst'), run: makeFirst, enabled: inEditor && editor.sel.size === 1, ext: true },
+      { label: 'alignPoints', key: keyLabel('alignPoints'), run: alignPoints, enabled: inEditor && editor.sel.size > 1, ext: true },
+      { label: 'updateMetrics', key: keyLabel('updateMetrics'), run: updateAllMetrics, ext: true },
       '-',
       ...PATH_OPS.map((op) => ({ label: op.label, key: keyLabel(`op.${op.id}`), run: () => runPathOp(op.id), enabled: inEditor })),
       '-',
@@ -295,8 +308,14 @@ function menuDefs() {
 
 let openMenu = null; // index of the open menu
 
+// Menu items marked `ext` exist only in the extended mode.
+function visibleItems(items) {
+  const out = items.filter((it) => it === '-' || !it.ext || app.extended);
+  return out.filter((it, i) => it !== '-' || (i > 0 && out[i - 1] !== '-' && i < out.length - 1));
+}
+
 function renderMenus() {
-  const defs = menuDefs();
+  const defs = menuDefs().map((m) => ({ ...m, items: visibleItems(m.items) }));
   $('menus').innerHTML = defs.map((m, i) => `<div class="menu-root">
     <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="${openMenu === i}" data-menu="${i}">${esc(t(m.id))}</button>
     <div class="menu" role="menu" ${openMenu === i ? '' : 'hidden'}>
@@ -322,7 +341,7 @@ $('menus').addEventListener('click', (e) => {
   const item = e.target.closest('[data-item]');
   if (!item || item.disabled) return;
   const [i, j] = item.dataset.item.split(':').map(Number);
-  const def = menuDefs()[i].items[j];
+  const def = visibleItems(menuDefs()[i].items)[j];
   setMenu(null);
   def.run();
 });
@@ -457,7 +476,7 @@ function metricInputs(g) {
     <label><span>${esc(t('lsb'))}</span><input type="number" step="1" data-metric="lsb" value="${box ? Math.round(box.minX) : ''}" ${box ? '' : 'disabled'}></label>
     <label><span>${esc(t('width'))}</span><input type="number" step="1" min="0" data-metric="advance" value="${Math.round(g.advance)}"></label>
     <label><span>${esc(t('rsb'))}</span><input type="number" step="1" data-metric="rsb" value="${box ? Math.round(g.advance - box.maxX) : ''}" ${box ? '' : 'disabled'}></label>
-  </div>`;
+  </div>${app.extended ? metricKeysHTML(g) : ''}`;
 }
 
 function renderSideMetrics() {
@@ -466,6 +485,36 @@ function renderSideMetrics() {
   el.innerHTML = sel.length === 1
     ? `<div class="sub-head">${esc(charOf(sel[0]).trim() || sel[0].name)} · ${esc(sel[0].name)}</div>${metricInputs(sel[0])}`
     : '';
+}
+
+// Extended mode: keys under the numbers (=n, =o+10, =|o). A key that no
+// longer matches its glyph is marked; "Update Metrics" applies it.
+function metricKeysHTML(g) {
+  const stale = new Set(outOfSync(app.project, g));
+  const f = (role) => `<input type="text" data-mkey="${role}" value="${esc(g[KEY_FIELDS[role]] || '')}" placeholder="=n"
+    class="${stale.has(role) ? 'stale' : ''}" data-tip="${esc(t(stale.has(role) ? 'mkStale' : 'mkTip'))}" spellcheck="false" autocomplete="off">`;
+  return `<div class="metrics-widget mkeys">${f('lsb')}${f('advance')}${f('rsb')}</div>`;
+}
+
+function onMetricKeyChange(e) {
+  const role = e.target.dataset.mkey;
+  const g = app.mode === 'editor' ? app.current : selectedGlyphs()[0];
+  if (!role || !g) return;
+  const v = e.target.value.trim();
+  if (v && !isKey(v)) { toast(t('mkBad'), 'error'); e.target.value = g[KEY_FIELDS[role]] || ''; return; }
+  app.history.push(g);
+  if (v) g[KEY_FIELDS[role]] = v; else delete g[KEY_FIELDS[role]];
+  updateMetrics(app.project, [g]);
+  if (app.mode === 'editor') { editor.afterEdit(false); renderGlyphPanel(); } else { markChanged(); updateTile(g); renderSideMetrics(); renderInspector(); }
+}
+
+function updateAllMetrics() {
+  const changed = updateMetrics(app.project, app.project.glyphs, (g) => app.history.push(g));
+  if (changed.length) {
+    markChanged();
+    if (app.mode === 'editor') { editor.render(); renderGlyphPanel(); } else { changed.forEach(updateTile); renderSideMetrics(); renderInspector(); }
+  }
+  toast(changed.length ? t('mkUpdated', { n: changed.length }) : t('mkNothing'));
 }
 
 function applyMetric(g, role, v) {
@@ -478,6 +527,7 @@ function applyMetric(g, role, v) {
 }
 
 function onMetricChange(e) {
+  if (e.target.dataset.mkey) { onMetricKeyChange(e); return; }
   const role = e.target.dataset.metric;
   if (!role) return;
   const g = app.mode === 'editor' ? app.current : selectedGlyphs()[0];
@@ -1241,6 +1291,7 @@ const KEY_GROUPS = [
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
   ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'simplify', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups', 'fontInfo']],
+  ['extTools', ['invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'updateMetrics']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -1324,6 +1375,8 @@ function helpDialog() {
 // ================================================================ editor
 
 const editor = new Editor(app, $('canvas'));
+editor.extended = app.extended;
+document.documentElement.dataset.mode = app.extended ? 'extended' : 'simple';
 editor.showGuide = store.get('spline.showGuide', '1') === '1';
 editor.showGrid = store.get('spline.showGrid', '1') === '1';
 editor.brushRadius = Number(store.get('spline.brush', '40')) || 40;
@@ -2706,6 +2759,35 @@ function applyHistory(name) {
   }
 }
 
+// ================================================================ extended mode
+
+function setExtended(on) {
+  app.extended = on;
+  editor.extended = on;
+  store.set('spline.extended', on ? '1' : '0');
+  document.documentElement.dataset.mode = on ? 'extended' : 'simple';
+  renderAll();
+  if (app.mode === 'editor') { renderGlyphPanel(); editor.render(); }
+  toast(t(on ? 'extOn' : 'extOff'));
+}
+
+function addExtremes() {
+  endTransform();
+  if (app.mode !== 'editor') return;
+  const n = editor.addExtremes();
+  toast(n ? t('extremesAdded', { n }) : t('extremesNone'));
+}
+
+function makeFirst() {
+  endTransform();
+  if (app.mode === 'editor' && !editor.makeFirst()) toast(t('makeFirstHint'), 'error');
+}
+
+function alignPoints() {
+  endTransform();
+  if (app.mode === 'editor' && !editor.alignPoints()) toast(t('alignPointsHint'), 'error');
+}
+
 // ================================================================ letters from parts
 
 const glyphByChar = (ch) => app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
@@ -3305,6 +3387,11 @@ const ACTIONS = {
   newVariant: { run: newVariant, when: () => app.mode === 'editor' || app.selected.size === 1, label: () => t('varNewMenu') },
   newLigature: { run: newLigature, label: () => t('ligNewMenu') },
   shapeGroups: { run: shapeGroupsDialog, label: () => t('sgMenu') },
+  invertSelection: { run: () => editor.invertSelection(), when: () => app.extended && inEditorMode() },
+  addExtremes: { run: addExtremes, when: () => app.extended && inEditorMode() },
+  makeFirst: { run: makeFirst, when: () => app.extended && inEditorMode() },
+  alignPoints: { run: alignPoints, when: () => app.extended && inEditorMode() },
+  updateMetrics: { run: updateAllMetrics, when: () => app.extended },
   fontInfo: { run: editFontInfo }, groups: { run: () => groupsDialog(), label: () => t('kgTitle') }, shortcuts: { run: helpDialog, always: true },
 };
 
@@ -3344,6 +3431,19 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault();
       deleteSelectedGlyphs();
     }
+    return;
+  }
+  if (app.extended && e.key === 'Tab' && !mod && !e.altKey && !editor.xform) {
+    e.preventDefault();
+    editor.selectStep(e.shiftKey ? -1 : 1);
+    return;
+  }
+  if (app.extended && (mod || e.altKey) && !(mod && e.altKey) && /^arrow/.test(key)) {
+    // Ctrl+arrows: by 100; Alt+arrows: points without their handles.
+    const st = mod ? 100 : e.shiftKey ? 10 : 1;
+    const d = { arrowleft: [-st, 0], arrowright: [st, 0], arrowup: [0, st], arrowdown: [0, -st] }[key];
+    const ok = editor.xform ? editor.nudgeTransform(...d) : mod ? editor.nudge(...d) : editor.nudgeNodesOnly(...d);
+    if (ok) e.preventDefault();
     return;
   }
   if (mod || e.altKey) return;

@@ -671,3 +671,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Extended mode: metric keys under the sidebearing numbers. */
+.mkeys { margin-top: 4px; }
+.mkeys input { width: 100%; font: var(--fs-s) var(--font-mono, monospace); text-align: center; }
+.mkeys input.stale { border-color: var(--dot-orange); color: var(--dot-orange); }

@@ -1324,6 +1324,110 @@ export class Editor {
     return true;
   }
 
+  // ---------------------------------------------------------------- extended mode
+
+  // Tab / Shift+Tab: the next or previous point of the contour.
+  selectStep(dir) {
+    const cs = this.glyph.contours;
+    if (!cs.some((c) => c.nodes.length)) return false;
+    let ci = 0, ni = dir > 0 ? -1 : 0;
+    if (this.sel.size) [ci, ni] = [...this.sel].pop().split(':').map(Number);
+    else ci = cs.findIndex((c) => c.nodes.length);
+    const n = cs[ci].nodes.length;
+    ni = (ni + dir + n) % n;
+    this.sel = new Set([`${ci}:${ni}`]);
+    if (this.tool !== 'select') this.setTool('select');
+    this.render();
+    return true;
+  }
+
+  invertSelection() {
+    const all = new Set();
+    this.glyph.contours.forEach((c, ci) => c.nodes.forEach((_, ni) => all.add(`${ci}:${ni}`)));
+    this.sel = new Set([...all].filter((k) => !this.sel.has(k)));
+    if (this.tool !== 'select') this.setTool('select');
+    this.render();
+  }
+
+  // Contours with a selected point, or every contour.
+  pickedContours() {
+    const set = new Set([...this.sel].map((k) => Number(k.split(':')[0])));
+    return this.glyph.contours.filter((_, i) => !set.size || set.has(i));
+  }
+
+  // Adds points where a curve is horizontal or vertical (its extremes):
+  // fonts render and hint best with them.
+  addExtremes() {
+    const targets = this.pickedContours();
+    const copy = structuredClone(this.glyph.contours);
+    let added = 0;
+    for (const c of copy) {
+      if (!targets.includes(this.glyph.contours[copy.indexOf(c)])) continue;
+      for (const s of segments(c).reverse()) {
+        if (s.line) continue;
+        const ts = [...extremeTs(s.p0.x, s.c1.x, s.c2.x, s.p3.x), ...extremeTs(s.p0.y, s.c1.y, s.c2.y, s.p3.y)]
+          .filter((t) => t > 0.02 && t < 0.98).sort((a, b) => b - a)
+          .filter((t, i, a) => i === 0 || a[i - 1] - t > 0.02);
+        // Split from the end: the part before each split keeps its shape,
+        // only its parameter shrinks.
+        let seg = s, prev = 1;
+        for (const t of ts) {
+          const node = insertNode(c, seg, t / prev);
+          node.x = Math.round(node.x); node.y = Math.round(node.y);
+          // The handles of an extreme are exactly horizontal or vertical.
+          const flat = Math.abs(node.out.y - node.in.y) < Math.abs(node.out.x - node.in.x);
+          for (const h of [node.in, node.out]) { if (flat) h.y = node.y; else h.x = node.x; h.x = Math.round(h.x); h.y = Math.round(h.y); }
+          added++;
+          seg = segments(c)[s.i];
+          prev = t;
+        }
+      }
+    }
+    if (!added) return 0;
+    this.app.history.push(this.glyph);
+    this.glyph.contours = copy;
+    this.sel.clear();
+    this.afterEdit(false);
+    return added;
+  }
+
+  // Makes the selected point the start of its contour.
+  makeFirst() {
+    if (this.sel.size !== 1) return false;
+    const [ci, ni] = [...this.sel][0].split(':').map(Number);
+    const c = this.glyph.contours[ci];
+    if (!c?.closed || ni === 0) return false;
+    this.app.history.push(this.glyph);
+    c.nodes = [...c.nodes.slice(ni), ...c.nodes.slice(0, ni)];
+    this.sel = new Set([`${ci}:0`]);
+    this.afterEdit(false);
+    return true;
+  }
+
+  // Lines up the selected points: same y when they are spread wider than
+  // tall, otherwise same x (at their average).
+  alignPoints() {
+    const nodes = this.selectedNodes();
+    if (nodes.length < 2) return false;
+    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+    const horiz = Math.max(...xs) - Math.min(...xs) >= Math.max(...ys) - Math.min(...ys);
+    const avg = Math.round((horiz ? ys : xs).reduce((a, b) => a + b, 0) / nodes.length);
+    this.app.history.push(this.glyph);
+    for (const n of nodes) movePoint(n, horiz ? 0 : avg - n.x, horiz ? avg - n.y : 0, true);
+    this.afterEdit();
+    return true;
+  }
+
+  // Alt+arrows: move only the points, their handles stay.
+  nudgeNodesOnly(dx, dy) {
+    const nodes = this.selectedNodes();
+    if (!nodes.length) return false;
+    this.app.history.push(this.glyph);
+    for (const n of nodes) movePoint(n, dx, dy, false);
+    this.afterEdit();
+    return true;
+  }
+
   // Contours to copy: the selected ones, or the whole glyph.
   copyContours() {
     const set = new Set([...this.sel].map((k) => Number(k.split(':')[0])));
@@ -1529,6 +1633,9 @@ export class Editor {
 
   drawPoints(colors) {
     const ctx = this.ctx;
+    // Extended mode: points lying exactly on a font line get a ring.
+    const fi = this.app.project.info;
+    const lines = this.extended ? new Set([0, fi.xHeight, fi.capHeight, fi.ascender, fi.descender]) : null;
     this.glyph.contours.forEach((c, ci) => {
       c.nodes.forEach((n, ni) => {
         const s = this.toScreen(n);
@@ -1552,6 +1659,13 @@ export class Editor {
         ctx.lineWidth = 2;
         ctx.strokeStyle = first ? colors.accent : colors.primary;
         ctx.stroke();
+        if (lines?.has(n.y)) {
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, r + 4, 0, Math.PI * 2);
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = colors.accent;
+          ctx.stroke();
+        }
       });
     });
   }
@@ -1650,4 +1764,14 @@ export function imageOf(data, onload) {
     images.set(data, im);
   }
   return im.complete && im.naturalWidth ? im : null;
+}
+
+// Parameters (0..1) where one coordinate of a cubic has a zero derivative.
+function extremeTs(a, b, c, d) {
+  const A = -a + 3 * b - 3 * c + d, B = 2 * (a - 2 * b + c), C = b - a;
+  if (Math.abs(A) < 1e-9) return Math.abs(B) < 1e-9 ? [] : [-C / B];
+  const disc = B * B - 4 * A * C;
+  if (disc < 0) return [];
+  const r = Math.sqrt(disc);
+  return [(-B + r) / (2 * A), (-B - r) / (2 * A)];
 }
