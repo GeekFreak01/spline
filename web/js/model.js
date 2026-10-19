@@ -76,6 +76,8 @@ export function validateProject(p) {
     delete p.masters; delete p.axis;
   } else p.axis = { tag: 'wght', min: 100, max: 900, ...(p.axis || {}) };
   delete p.activeMaster;
+  p.palette = (Array.isArray(p.palette) ? p.palette : []).filter((c) => typeof c === 'string' && /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(c)).slice(0, 64);
+  if (!p.palette.length) delete p.palette;
   for (const g of p.glyphs) {
     if (!p.masters || !g.layers || typeof g.layers !== 'object') delete g.layers;
     g.contours = Array.isArray(g.contours) ? g.contours : [];

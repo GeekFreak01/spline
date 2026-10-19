@@ -740,3 +740,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .compose-note.warn { border-color: var(--dot-orange); }
 .compose-note.warn p { color: var(--dot-orange); }
 .preview-feats input[type="range"] { width: 160px; vertical-align: middle; margin: 0 6px; }
+
+.pn-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pn-sw { position: relative; }
+.pn-sw input[type="color"] { position: absolute; right: -4px; bottom: -4px; width: 14px; height: 14px; padding: 0; border: 1px solid var(--line); border-radius: 50%; overflow: hidden; cursor: pointer; opacity: 0.9; }
+.pn-sw input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.pn-sw input[type="color"]::-webkit-color-swatch { border: 0; }

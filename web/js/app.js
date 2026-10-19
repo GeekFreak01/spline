@@ -9,7 +9,7 @@ import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour } from './masters.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
-import { removeOverlap } from './boolean.js';
+import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
 import { History, KERNING, GROUPS } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
@@ -126,12 +126,15 @@ async function confirmDialog(msg, okLabel, danger = true) {
 
 function glyphSVG(g, cls = 'glyph') {
   const { ascender: asc, descender: desc } = app.project.info;
+  const pal = app.project.palette;
+  const painted = pal?.length && g.contours.some((c) => c.paint);
   const b = glyphBox(g);
   const minX = Math.min(0, b ? b.minX : 0), maxX = Math.max(g.advance, b ? b.maxX : 0, 1);
   const top = Math.max(asc, b ? b.maxY : 0), bottom = Math.min(desc, b ? b.minY : 0);
   const pad = 30;
   return `<svg class="${cls}" viewBox="${minX - pad} ${-top - pad} ${maxX - minX + 2 * pad} ${top - bottom + 2 * pad}" aria-hidden="true">
-    <path transform="scale(1 -1)" d="${svgPath(g)}" fill="currentColor"/></svg>`;
+    ${painted ? paintGroups(g).map(([paint, cs]) => `<path transform="scale(1 -1)" d="${svgPath({ contours: cs })}" fill="${paint ? esc(pal[paint - 1]) : 'currentColor'}"/>`).join('')
+      : `<path transform="scale(1 -1)" d="${svgPath(g)}" fill="currentColor"/>`}</svg>`;
 }
 
 const findGlyph = (name) => app.project.glyphs.find((g) => g.name === name);
@@ -924,7 +927,7 @@ function renderGlyphPanelBody() {
         data-pathop="${op.id}" data-tip="${esc(t(op.label))}" data-key="${esc(keyLabel(`op.${op.id}`))}" aria-label="${esc(t(op.label))}">${icon(op.icon, 18)}</button>`).join('')}</div>
 `)
     // Extended mode: everyday point tools first, then parts, then the rest.
-    + (app.extended ? pointsSection() + componentsSection(g) + anchorsSection(g) + filtersSection() + backgroundSection(g) : '')
+    + (app.extended ? pointsSection() + componentsSection(g) + anchorsSection(g) + paintSection(g) + filtersSection() + backgroundSection(g) : '')
     + alignSection()
     + transformSection()
     + variantsSection(g)
@@ -1097,7 +1100,7 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
-const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['info', 'inTitle'], ['batch', 'btTitleShort'], ['filters', 'flTitle'], ['components', 'cmTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
+const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['align', 'alignment'], ['transform', 'transform'], ['info', 'inTitle'], ['batch', 'btTitleShort'], ['paint', 'pnTitle'], ['filters', 'flTitle'], ['components', 'cmTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
 initPanels({
@@ -1110,7 +1113,7 @@ initPanels({
   icons: { dock: icon('panelDock', 14), close: icon('close', 14), collapse: icon('chevronRight', 14) },
   panelIcons: {
     glyph: icon('pen', 18), selection: icon('select', 18), pathops: icon('opUnite', 18), align: icon('alignHCenter', 18),
-    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), components: icon('components', 18), anchors: icon('anchor', 18), info: icon('type', 18), batch: icon('check', 18), filters: icon('filter', 18), actions: icon('spacing', 18), font: icon('type', 18),
+    transform: icon('transform', 18), variants: icon('variants', 18), underlay: icon('image', 18), points: icon('points', 18), background: icon('layers', 18), components: icon('components', 18), anchors: icon('anchor', 18), info: icon('type', 18), batch: icon('check', 18), filters: icon('filter', 18), paint: icon('palette', 18), actions: icon('spacing', 18), font: icon('type', 18),
     kernPair: icon('kerning', 18), kernSpacing: icon('spacing', 18), kernSuggest: icon('check', 18), kernList: icon('search', 18),
   },
   onChange: () => renderMenus(),
@@ -1144,6 +1147,13 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
     }
     if (e.target.dataset.fl !== undefined) { onFilterInput(e.target); return; }
     if (e.target.dataset.part) { setPart(e.target.dataset.part, e.target.value); return; }
+    if (e.target.dataset.paintEdit !== undefined) {
+      app.project.palette[Number(e.target.dataset.paintEdit)] = e.target.value.toUpperCase();
+      markChanged();
+      editor.render();
+      renderGlyphPanel();
+      return;
+    }
     if (e.target.dataset.cmpos) { moveComponent(e.target.dataset.cmpos, Number(e.target.value)); return; }
     if (e.target.dataset.anpos) { setAnchorValue(e.target.dataset.anpos, e.target.value); return; }
     if (e.target.dataset.ul) { setUnderlayValue(e.target.dataset.ul, Number(e.target.value), true); return; }
@@ -1183,6 +1193,7 @@ for (const dock of [$('inspector'), $('glyphPanel'), $('floatLayer'), ...documen
     if (snapshotClick(e)) return;
     if (componentClick(e)) return;
     if (anchorClick(e)) return;
+    if (paintClick(e)) return;
     const sw = e.target.closest('[data-role="colorPick"] [data-color]');
     if (sw) { setColor(sw.dataset.color); return; }
     const al = e.target.closest('[data-align]');
@@ -3543,6 +3554,65 @@ async function exportInstances() {
     } catch (err) { toast(`${name}: ${err.message}`, 'error'); }
   }
   toast(t('msExported', { n }));
+}
+
+// ================================================================ colour fonts
+
+// Contours of g by colour, in the order the colours first appear (as the
+// font draws them): [[paint, contours], ...]; 0 is the text colour.
+function paintGroups(g) {
+  const map = new Map();
+  if (g.refContours?.length) map.set(0, [...g.refContours]);
+  for (const c of g.contours) {
+    const k = c.paint && c.paint <= (app.project.palette?.length || 0) ? c.paint : 0;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(c);
+  }
+  return [...map];
+}
+app.paintGroups = paintGroups;
+
+const DEFAULT_PALETTE = ['#E53935', '#FB8C00', '#FDD835', '#43A047', '#1E88E5', '#8E24AA'];
+
+function paintSection(g) {
+  const pal = app.project.palette || [];
+  const sw = (i) => `<div class="pn-sw">
+      <button type="button" class="swatch" data-paint="${i + 1}" style="background:${esc(pal[i])}" aria-label="${esc(t('pnUse'))} ${esc(pal[i])}" data-tip="${esc(t('pnUse'))}"></button>
+      <input type="color" data-paint-edit="${i}" value="${esc(pal[i].slice(0, 7))}" aria-label="${esc(t('pnEdit'))}" data-tip="${esc(t('pnEdit'))}"></div>`;
+  return section('paint', t('pnTitle'), `
+    <div class="pn-row">
+      <button type="button" class="swatch none" data-paint="0" aria-label="${esc(t('pnNone'))}" data-tip="${esc(t('pnNone'))}"></button>
+      ${pal.map((_, i) => sw(i)).join('')}
+      <button type="button" class="btn btn-icon" data-paint-add aria-label="${esc(t('pnAdd'))}" data-tip="${esc(t('pnAdd'))}">${icon('plus', 14)}</button>
+    </div>`, !!g.contours.some((c) => c.paint), t('pnHint'));
+}
+
+// Paints the shapes with selected points (with their holes), or the whole
+// glyph. paint 0 = the text colour.
+function setPaint(paint) {
+  const g = app.current;
+  if (!g || !g.contours.length) return;
+  const picked = new Set([...editor.sel].map((k) => Number(k.split(':')[0])));
+  const idx = picked.size ? shapesOf(g.contours, picked).flat() : g.contours.map((_, i) => i);
+  app.history.push(g);
+  for (const i of idx) { if (paint) g.contours[i].paint = paint; else delete g.contours[i].paint; }
+  editor.afterEdit(false);
+  renderGlyphPanel();
+}
+
+function paintClick(e) {
+  const b = e.target.closest('[data-paint]'), add = e.target.closest('[data-paint-add]');
+  if (add) {
+    const pal = (app.project.palette ||= []);
+    pal.push(DEFAULT_PALETTE[pal.length % DEFAULT_PALETTE.length]);
+    markChanged();
+    renderGlyphPanel();
+    return true;
+  }
+  if (!b) return false;
+  if (!app.project.palette?.length && Number(b.dataset.paint) > 0) return true;
+  setPaint(Number(b.dataset.paint));
+  return true;
 }
 
 // ================================================================ filters

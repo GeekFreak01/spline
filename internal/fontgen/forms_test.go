@@ -71,3 +71,23 @@ func TestNoExport(t *testing.T) {
 		t.Error("a glyph marked noExport is in the font")
 	}
 }
+
+func TestColorFont(t *testing.T) {
+	p := formsProject()
+	p.Palette = []string{"#E53935", "#1E88E5"}
+	for i := range p.Glyphs {
+		if p.Glyphs[i].Name == "O" {
+			p.Glyphs[i].Contours[0].Paint = 1 // the ring red, the counter in the text colour
+		}
+	}
+	data, err := Build(p, TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data[:400], []byte("COLR")) || !bytes.Contains(data[:400], []byte("CPAL")) {
+		t.Error("no COLR/CPAL")
+	}
+	if out := os.Getenv("SPLINE_FONT_OUT"); out != "" {
+		os.WriteFile(out+".color.ttf", data, 0o644)
+	}
+}

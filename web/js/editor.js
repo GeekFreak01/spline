@@ -1760,10 +1760,26 @@ export class Editor {
     tracePath(ctx, g, true);
     ctx.restore();
     const points = this.showsPoints();
-    ctx.fillStyle = colors.ink;
-    ctx.globalAlpha = points ? 0.22 : 0.92;
-    ctx.fill('nonzero');
-    ctx.globalAlpha = 1;
+    const pal = this.app.project.palette;
+    if (pal?.length && g.contours.some((c) => c.paint)) {
+      // Colour font: each colour group in its own colour, as the font draws it.
+      ctx.save();
+      ctx.setTransform(dpr * v.scale, 0, 0, -dpr * v.scale, dpr * v.ox, dpr * v.oy);
+      ctx.globalAlpha = points ? 0.35 : 0.95;
+      for (const [paint, cs] of this.app.paintGroups(g)) {
+        const path = new Path2D();
+        tracePath(path, { contours: cs }, true);
+        ctx.fillStyle = paint ? pal[paint - 1] : colors.ink;
+        ctx.fill(path, 'nonzero');
+      }
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = colors.ink;
+      ctx.globalAlpha = points ? 0.22 : 0.92;
+      ctx.fill('nonzero');
+      ctx.globalAlpha = 1;
+    }
     // A filter's result before it is applied: a dashed outline.
     if (this.preview?.length) {
       ctx.save();

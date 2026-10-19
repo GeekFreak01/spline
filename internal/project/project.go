@@ -55,6 +55,9 @@ type Contour struct {
 	// Brush names a brush glyph drawn along this open line; the line itself
 	// is only its spine and is not part of the font.
 	Brush string `json:"brush,omitempty"`
+	// Paint is a palette colour (index + 1, 0 = the text colour) for colour
+	// fonts (extended mode).
+	Paint int `json:"paint,omitempty"`
 }
 
 // Glyph is one character of the font.
@@ -214,6 +217,8 @@ type Project struct {
 	// Masters along one axis (extended mode): a variable font.
 	Axis    *Axis    `json:"axis,omitempty"`
 	Masters []Master `json:"masters,omitempty"`
+	// Palette of a colour font: "#RRGGBB" or "#RRGGBBAA" (extended mode).
+	Palette []string `json:"palette,omitempty"`
 }
 
 // Alternate replaces Glyph with Use when the glyph before it is one of

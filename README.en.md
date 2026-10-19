@@ -214,7 +214,7 @@ The simple mode stays simple. Everything for serious type work switches on in **
       <br>
       <sub>Special Form…: pick what the copy is for and the OpenType feature appears by itself.</sub>
       <h3>🔠 OpenType without code</h3>
-      Special Form…: small caps, figure styles, superscript and subscript, slashed zero, swash, stylistic sets, Bulgarian and Serbian forms · feature checkboxes in the preview · font info: rights, weight, slant, line gap · masters (Regular, Bold…) with a slider in the preview · export of styles, a variable font and WOFF.
+      Special Form…: small caps, figure styles, superscript and subscript, slashed zero, swash, stylistic sets, Bulgarian and Serbian forms · feature checkboxes in the preview · font info: rights, weight, slant, line gap · masters (Regular, Bold…) with a slider in the preview · colour fonts (COLR/CPAL) · export of styles, a variable font and WOFF.
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/en/ext-table.png" alt="The glyph table: name, Unicode, width, sidebearings, tags “ready” and “check”, a note “the spur is too short”, Export checkboxes; the With a note filter and tags on the left" width="100%">

@@ -65,7 +65,8 @@ type fontData struct {
 	// forms: alternate glyphs named by suffix (a.sc, one.onum, ...).
 	forms []formFeature
 	src   []project.Glyph // the exported glyphs, by glyph id
-	vf    *varData        // variable font data, nil for static fonts
+	colr  map[int][]colorLayer
+	vf    *varData // variable font data, nil for static fonts
 	names names
 	bbox  box
 	now   time.Time
@@ -145,6 +146,10 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 	if gsub != nil {
 		tables["GSUB"] = gsub
 	}
+	if len(fd.colr) > 0 {
+		tables["COLR"] = buildCOLR(fd)
+		tables["CPAL"] = buildCPAL(p.Palette)
+	}
 	if fd.vf != nil {
 		tables["fvar"] = buildFvar(fd)
 		tables["gvar"] = buildGvar(fd)
@@ -183,6 +188,10 @@ func prepare(p *project.Project, f Format) *fontData {
 			src = append(src, g)
 		}
 	}
+	// Colour fonts: coloured glyphs get layer glyphs after all others.
+	extra, layers := colorLayers(p, src, len(src))
+	src = append(src, extra...)
+	fd.colr = layers
 	fd.src = src
 	usedNames := map[string]bool{}
 	for i, g := range src {
