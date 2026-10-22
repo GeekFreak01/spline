@@ -171,13 +171,13 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 }
 .menu-root > button:hover, .menu-root > button[aria-expanded="true"] { background: var(--bg-raised); }
 .menu {
-  position: absolute; left: 0; top: 100%; z-index: 40; min-width: 260px; padding: 4px 0;
+  position: absolute; left: 0; top: 100%; z-index: 40; min-width: 260px; width: max-content; max-width: calc(100vw - 16px); padding: 4px 0;
   background: var(--bg-panel-2); border-radius: 0 0 var(--radius) var(--radius); box-shadow: var(--shadow-pop);
 }
 .menu[hidden] { display: none; }
 .menu [role^="menuitem"] {
   display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px;
-  width: 100%; height: 28px; padding: 0 14px 0 8px; border: 0; background: transparent; text-align: left; color: var(--text);
+  width: 100%; height: 28px; padding: 0 14px 0 8px; border: 0; background: transparent; text-align: left; color: var(--text); white-space: nowrap;
 }
 .menu [role^="menuitem"]:hover, .menu [role^="menuitem"]:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
 .menu [role^="menuitem"]:disabled { color: var(--text-3); background: transparent; cursor: default; }
@@ -292,7 +292,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .kg-chip.sel { border-color: var(--accent); background: var(--accent-soft); }
 .kg-new { flex-direction: row; align-items: center; justify-content: center; gap: 6px; border-style: dashed; color: var(--text-3); min-height: 38px; }
 .kspace { display: grid; grid-template-columns: 26px repeat(3, minmax(0, 1fr)); gap: 6px; align-items: end; }
-.kspace b { font: 400 22px/1 var(--font-guide); padding-bottom: 4px; }
+.kspace b { font: 400 22px/1 var(--font-guide); padding-bottom: 4px; min-width: 0; overflow: hidden; }
+/* A glyph name where one character is expected: small, cut with an ellipsis. */
+.mark-name { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px/1.6 var(--font-ui); }
 .kspace label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--text-3); text-align: center; }
 .kspace input { text-align: center; padding: 0 4px; width: 100%; }
 .var-mini { width: 34px; height: 34px; flex: none; color: var(--text); background: var(--bg-input); border-radius: 3px; }
@@ -362,13 +364,20 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 /* ------------------------------------------------------------- options bar */
 .optionsbar {
   display: flex; align-items: center; gap: 10px; padding: 0 10px; min-width: 0; overflow-x: auto;
-  background: var(--bg-panel); border-bottom: 1px solid var(--line);
+  background: var(--bg-panel); border-bottom: 1px solid var(--line); container-type: inline-size;
 }
 .optionsbar .group { display: flex; align-items: center; gap: 6px; flex: none; }
 .optionsbar .sep { width: 1px; height: 20px; background: var(--line-soft); flex: none; }
 .optionsbar label { display: flex; align-items: center; gap: 6px; color: var(--text-2); flex: none; }
 .optionsbar input[type="number"] { width: 64px; }
 .optionsbar input[type="range"] { width: 120px; }
+/* When the bar is narrow: shorter sliders, button texts go (tooltips stay). */
+@container (max-width: 1320px) {
+  .optionsbar .opt-text { display: none; }
+  .optionsbar input[type="range"] { width: 72px; }
+  .optionsbar input[type="number"] { width: 54px; }
+  .optionsbar .glyph-nav .cur { min-width: 72px; }
+}
 .optionsbar input[type="search"] { width: 220px; }
 .opt-tool { display: flex; align-items: center; gap: 6px; font-weight: 600; flex: none; }
 .glyph-nav { display: flex; align-items: center; gap: 4px; margin-left: auto; flex: none; }
@@ -559,7 +568,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .compose-note p { margin: 0; color: var(--text-2); font-size: var(--fs-s); line-height: 1.4; }
 .tile .ref { flex: 1; min-height: 0; width: 100%; object-fit: contain; opacity: 0.45; filter: grayscale(1); }
 .btn-row .btn, .btn-block { overflow: hidden; }
-.btn-row .btn { padding: 0 6px; gap: 5px; }
+.btn-row .btn { padding: 0 4px; gap: 4px; }
 .btn span { overflow: hidden; text-overflow: ellipsis; }
 .check { display: flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }

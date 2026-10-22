@@ -276,7 +276,7 @@ function menuDefs() {
     { id: 'menuFile', items: [
       { label: 'new', key: keyLabel('new'), run: newFontDialog },
       { label: 'open', key: keyLabel('open'), run: openDialog },
-      { label: 'openFont', run: () => pickFiles('font') },
+      { label: 'openFont', tip: 'openFontTip', run: () => pickFiles('font') },
       '-',
       { label: 'importSvg', key: keyLabel('importSvg'), run: () => pickFiles('svg') },
       { label: 'importSp', run: () => pickFiles('import') },
@@ -287,8 +287,8 @@ function menuDefs() {
       { label: 'exportTTF', key: keyLabel('exportTTF'), run: () => exportFont('ttf') },
       { label: 'exportOTF', key: keyLabel('exportOTF'), run: () => exportFont('otf') },
       { label: 'exportWOFF2', key: keyLabel('exportWOFF2'), run: () => exportFont('woff2'), ext: true },
-      { label: 'exportUFO', run: () => exportFont('ufo'), ext: true },
       { label: 'exportWOFF', key: keyLabel('exportWOFF'), run: () => exportFont('woff'), ext: true },
+      { label: 'exportUFO', tip: 'exportUFOTip', run: () => exportFont('ufo'), ext: true },
       { label: 'msExport', run: exportInstances, enabled: hasMasters(app.project || {}), ext: true },
       { label: 'vfExport', run: exportVariable, enabled: hasMasters(app.project || {}), ext: true },
       ...(app.platform?.canInstall ? [{ label: 'installFont', run: installFont }] : []),
@@ -415,7 +415,7 @@ function renderMenus() {
     <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="${openMenu === i}" data-menu="${i}">${esc(t(m.id))}</button>
     <div class="menu" role="menu" ${openMenu === i ? '' : 'hidden'}>
       ${m.items.map((it, j) => (it === '-' ? '<hr>' : `<button type="button" role="${it.check !== undefined ? 'menuitemcheckbox' : 'menuitem'}"
-        ${it.check !== undefined ? `aria-checked="${!!it.check}"` : ''} data-item="${i}:${j}" ${it.enabled === false ? 'disabled' : ''}>
+        ${it.check !== undefined ? `aria-checked="${!!it.check}"` : ''} data-item="${i}:${j}" ${it.enabled === false ? 'disabled' : ''}${it.tip ? ` data-tip="${esc(t(it.tip))}"` : ''}>
         <span>${it.check ? icon('check', 14) : ''}</span><span>${esc(it.text || t(it.label))}</span><kbd>${esc(it.key || '')}</kbd></button>`)).join('')}
     </div></div>`).join('');
 }
@@ -611,7 +611,7 @@ function renderSideMetrics() {
   const el = $('sideMetrics');
   const sel = selectedGlyphs();
   el.innerHTML = sel.length === 1
-    ? `<div class="sub-head">${esc(charOf(sel[0]).trim() || sel[0].name)} · ${esc(sel[0].name)}</div>${metricInputs(sel[0])}`
+    ? `<div class="sub-head">${esc(glyphMark(sel[0]))} · ${esc(sel[0].name)}</div>${metricInputs(sel[0])}`
     : '';
 }
 
@@ -954,7 +954,7 @@ function renderInspectorBody() {
   const g = sel[0];
   const head = sel.length === 1
     ? `<div class="big-glyph">${hasOutline(g) ? glyphSVG(g) : `<span class="ghost">${esc(charOf(g))}</span>`}</div>
-       <div class="title-row"><b>${esc(charOf(g).trim() || g.name)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>`
+       <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>`
     : `<div class="title-row"><b>${sel.length}</b><small>${esc(t('glyphs'))}: ${esc(sel.slice(0, 24).map((x) => charOf(x) || x.name).join(' '))}</small></div>`;
   // One section for everything about the glyph (in the extended mode also
   // its name, code, tags, note and export).
@@ -985,7 +985,7 @@ function renderGlyphPanelBody() {
   const g = app.current;
   if (!g) return;
   $('glyphPanel').innerHTML = section('glyph', t('glyph'), `
-      <div class="title-row"><b>${esc(charOf(g).trim() || '␣')}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>
+      <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>
       ${composeNoteHTML(g)}
       ${metricInputs(g)}
       <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(g.color)}</div>
@@ -1873,11 +1873,7 @@ function drawEditorOptions() {
       <label>${esc(t('gridStep'))}<input type="number" data-opt="gridStep" min="1" max="500" step="1" value="${editor.gridStep}"></label>
     </div>
     <div class="sep"></div>
-    ${app.extended ? snapButtonHTML() : `<div class="group">
-      <span class="opt-label">${esc(t('snap'))}</span>
-      <label class="check" data-tip="${esc(t('snapGridTip'))}" data-key="${esc(keyLabel('snapGrid'))}"><input type="checkbox" data-opt="snapGrid" ${editor.snapGrid ? 'checked' : ''}>${esc(t('snapGrid'))}</label>
-      <label class="check" data-tip="${esc(t('snapGuidesTip'))}" data-key="${esc(keyLabel('snapGuides'))}"><input type="checkbox" data-opt="snapGuides" ${editor.snapGuides ? 'checked' : ''}>${esc(t('snapGuides'))}</label>
-    </div>`}
+    ${snapButtonHTML()}
     <div class="sep"></div>
     <div class="group">
       <button class="btn btn-icon" type="button" data-cmd="undo" data-tip="${esc(t('undo'))}" data-key="${esc(keyLabel('undo'))}" aria-label="${esc(t('undo'))}">${icon('undo', 15)}</button>
@@ -1889,7 +1885,7 @@ function drawEditorOptions() {
       <button class="btn btn-icon" type="button" data-cmd="zoomIn" data-tip="${esc(t('zoomIn'))}" data-key="${esc(keyLabel('zoomIn'))}" aria-label="${esc(t('zoomIn'))}">${icon('zoomIn', 15)}</button>
       <div class="sep"></div>
       <button class="btn btn-icon" type="button" data-cmd="prev" data-tip="${esc(t('prev'))}" data-key="${esc(keyLabel('prev'))}" aria-label="${esc(t('prev'))}">${icon('chevronLeft', 15)}</button>
-      <div class="cur"><b>${esc(charOf(g).trim() || '␣')}</b><small>${esc(g.name)}</small></div>
+      <div class="cur"><b>${markHTML(g)}</b><small>${esc(g.name)}</small></div>
       <button class="btn btn-icon" type="button" data-cmd="next" data-tip="${esc(t('next'))}" data-key="${esc(keyLabel('next'))}" aria-label="${esc(t('next'))}">${icon('chevronRight', 15)}</button>
     </div>`;
 }
@@ -2258,10 +2254,23 @@ function renderKernOptions() {
 function kernKeyLabel(key) {
   if (isGroup(key)) return key;
   const g = findGlyph(key);
-  return g ? (charOf(g).trim() || g.name) : key;
+  return g ? glyphMark(g) : key;
 }
 
-const glyphLabel = (g) => charOf(g).trim() || g.name;
+// What shows for a glyph: its character; ␣ for a space or another
+// invisible character; the name for a glyph without a code.
+function glyphMark(g) {
+  const ch = charOf(g);
+  if (ch && ch.trim() && !/^[\p{Cf}\p{Cc}]$/u.test(ch)) return ch;
+  return g.unicode ? '␣' : g.name;
+}
+const glyphLabel = glyphMark;
+// A name in a box made for one character: smaller, cut with "…", the full
+// name in the tooltip.
+const markHTML = (g) => {
+  const m = glyphMark(g);
+  return [...m].length > 2 ? `<span class="mark-name" data-tip="${esc(g.name)}">${esc(m)}</span>` : esc(m);
+};
 
 // Glyphs a kerning key stands for: the glyph itself, or the members of the
 // group (the left key of a pair uses right-side groups and vice versa).
@@ -2299,12 +2308,11 @@ function kernPairHTML(pr) {
     const name = glyph[prop];
     const members = name ? groupMembers(p, name, gside) : [];
     const useGroup = kernView.useGroups[which] && !!name;
-    const ch = glyphLabel(glyph);
     const MAX = 6;
     const more = members.length > MAX
       ? ` <button type="button" class="kp-more" data-kg-open="${gside}:${esc(name)}" data-tip="${esc(t('kgOpenAll'))}">+${members.length - MAX}</button>` : '';
     return `<div class="kp-side">
-      <div class="kp-letter">${esc(ch)}</div>
+      <div class="kp-letter">${markHTML(glyph)}</div>
       <label class="kp-field"><span>${esc(t(which === 'left' ? 'kpGroupRight' : 'kpGroupLeft'))}</span>
         <input type="text" data-pair-group="${which}" list="${prop}List" value="${esc(name || '')}" placeholder="${esc(t('kernNoGroup'))}" spellcheck="false"></label>
       ${name ? `<div class="seg seg-sm" role="radiogroup" aria-label="${esc(t('kernScopeLabel'))}">
@@ -2339,7 +2347,7 @@ function kernSpacingHTML(pr) {
   const row = (which, g) => {
     const box = glyphBox(g);
     const f = (role, label, v, dis) => `<label><span>${esc(label)}</span><input type="number" step="1" data-kmetric="${which}:${role}" value="${v}" ${dis ? 'disabled' : ''}></label>`;
-    return `<div class="kspace"><b>${esc(glyphLabel(g))}</b>
+    return `<div class="kspace"><b>${markHTML(g)}</b>
       ${f('lsb', t('lsb'), box ? Math.round(box.minX) : '', !box)}${f('advance', t('width'), Math.round(g.advance))}${f('rsb', t('rsb'), box ? Math.round(g.advance - box.maxX) : '', !box)}</div>`;
   };
   return row('left', pr.left) + row('right', pr.right);
@@ -3513,7 +3521,8 @@ function batchSection(sel) {
   const b = (cmd, label) => `<button class="btn" type="button" data-cmd="${cmd}" data-tip="${esc(t(label + 'Tip'))}">${esc(t(label))}</button>`;
   return section('batch', t('btTitle', { n: sel.length }), `
     <div class="btn-row">${b('btExtremes', 'btExtremes')}${b('btRound', 'btRound')}</div>
-    <div class="btn-row">${b('btMetrics', 'btMetrics')}${b('btDecompose', 'btDecompose')}</div>
+    <button class="btn btn-block" type="button" data-cmd="btMetrics" data-tip="${esc(t('btMetricsTip'))}">${esc(t('btMetrics'))}</button>
+    <button class="btn btn-block" type="button" data-cmd="btDecompose" data-tip="${esc(t('btDecomposeTip'))}">${esc(t('btDecompose'))}</button>
     <button class="btn btn-block" type="button" data-cmd="tmOpen">${icon('spacing', 15)}<span>${esc(t('tmMenu'))}</span></button>
     ${sel.length > 1 ? `<label class="prop"><span>${esc(t('btTag'))}</span><input type="text" data-batch-tag placeholder="${esc(t('tagsPh'))}" spellcheck="false"></label>
     <div class="btn-row">${b('btExportOff', 'btExportOff')}${b('btExportOn', 'btExportOn')}</div>` : ''}`, false);
@@ -3695,7 +3704,7 @@ function masterBarHTML() {
   if (!app.extended) return '';
   const p = app.project;
   if (!hasMasters(p)) {
-    return `<div class="group"><button class="btn" type="button" data-cmd="mastersDialog" data-tip="${esc(t('msAddTip'))}">${icon('layers', 14)}<span>${esc(t('msMasters'))}</span></button></div><div class="sep"></div>`;
+    return `<div class="group"><button class="btn" type="button" data-cmd="mastersDialog" data-tip="${esc(t('msAddTip'))}" aria-label="${esc(t('msMasters'))}">${icon('layers', 14)}<span class="opt-text">${esc(t('msMasters'))}</span></button></div><div class="sep"></div>`;
   }
   const act = activeId(p);
   // In the editor: show the other masters, and edit them all at once.
@@ -4093,7 +4102,7 @@ async function transformMetricsDialog() {
 // ================================================================ components
 
 function componentsSection(g) {
-  const label = (name) => { const x = findGlyph(name); return x ? (charOf(x).trim() || x.name) : name; };
+  const label = (name) => { const x = findGlyph(name); return x ? glyphMark(x) : name; };
   const rows = (g.components || []).map((k, i) => `<div class="cm-row">
       <button class="btn cm-name" type="button" data-cm-open="${esc(k.glyph)}" data-tip="${esc(t('cmOpenTip'))}">${esc(label(k.glyph))}</button>
       <label><span>X</span><input type="number" step="1" data-cmpos="${i}:x" value="${Math.round(k.x)}"></label>

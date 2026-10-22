@@ -100,6 +100,10 @@ export class KernView {
     this.render();
   }
 
+  // Sidebearing numbers under the line: an extended-mode option, so they
+  // go away with the simple mode even when the box stays ticked.
+  metricsShown() { return !!(this.app.extended && this.showMetrics); }
+
   glyphFor(ch) {
     const cp = ch.codePointAt(0);
     return this.app.project.glyphs.find((g) => g.unicode === cp) || null;
@@ -118,7 +122,7 @@ export class KernView {
     if (!this.w) this.w = this.canvas.parentElement.getBoundingClientRect().width || 800;
     const scale = this.size / info.unitsPerEm;
     const pad = 32;
-    const lineH = (info.ascender - info.descender) * scale * 1.35 + (this.showMetrics ? 44 : 0);
+    const lineH = (info.ascender - info.descender) * scale * 1.35 + (this.metricsShown() ? 44 : 0);
     const items = [];
     const chars = Array.from(this.text);
     const advOf = (ch) => { const g = this.glyphFor(ch); return (g ? g.advance : info.unitsPerEm * 0.5) * scale; };
@@ -379,7 +383,7 @@ export class KernView {
     // Spacing (extended mode): each letter's width box and its left and
     // right sidebearings under it. The letters around the cursor are the
     // ones Ctrl+arrows change, so their numbers are highlighted.
-    if (this.showMetrics) {
+    if (this.metricsShown()) {
       ctx.font = `11px ${css('--font-mono')}`;
       let rowEnd = [-1e9, -1e9], rowLine = -1;
       items.forEach((it, i) => {

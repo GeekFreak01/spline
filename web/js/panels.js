@@ -300,7 +300,7 @@ const escHTML = (x) => String(x).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<'
 function setTabs(el, ids, active, titleOf) {
   el.classList.add('tabs');
   el.setAttribute('role', 'tablist');
-  el.innerHTML = ids.map((x) => `<span class="tab" role="tab" data-tab="${x}" aria-selected="${x === active}">${escHTML(titleOf(x))}</span>`).join('');
+  el.innerHTML = ids.map((x) => `<span class="tab" role="tab" data-tab="${x}" aria-selected="${x === active}" data-tip="${escHTML(titleOf(x))}">${escHTML(titleOf(x))}</span>`).join('');
 }
 
 // --- icon strip and flyouts

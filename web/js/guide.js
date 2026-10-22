@@ -109,7 +109,7 @@ const S = [
     items: [
       ['download', { ru: 'TTF и OTF', en: 'TTF and OTF' }, '', { ru: 'TrueType и OpenType (CFF) с кернингом, вариантами, лигатурами и формами.', en: 'TrueType and OpenType (CFF) with kerning, alternates, ligatures and forms.' }],
       ['download', { ru: 'WOFF2 и WOFF', en: 'WOFF2 and WOFF' }, '', { ru: 'Для сайтов: WOFF2 меньше всего, WOFF — для старых браузеров.', en: 'For websites: WOFF2 is the smallest, WOFF is for old browsers.' }, true],
-      ['open', { ru: 'UFO', en: 'UFO' }, '', { ru: 'Обмен с Glyphs, FontLab, RoboFont и fontmake: «Экспорт UFO» и «Открыть … UFO как проект». С мастерами — .zip с UFO на каждый мастер и .designspace.', en: 'Exchange with Glyphs, FontLab, RoboFont and fontmake: Export UFO and Open … UFO as a Project. With masters it is a .zip with a UFO per master and a .designspace.' }, true],
+      ['open', { ru: 'UFO', en: 'UFO' }, '', { ru: 'Обмен с Glyphs, FontLab, RoboFont и fontmake: «Экспорт UFO» и «Открыть шрифт как проект». С мастерами — .zip с UFO на каждый мастер и .designspace.', en: 'Exchange with Glyphs, FontLab, RoboFont and fontmake: Export UFO and Open Font as Project. With masters it is a .zip with a UFO per master and a .designspace.' }, true],
       ['layers', { ru: 'Начертания и вариативный шрифт', en: 'Styles and a variable font' }, '', { ru: 'Из мастеров: отдельные TTF (Light, Medium…) или один вариативный, где меняются контуры и кернинг.', en: 'From the masters: separate TTFs (Light, Medium…) or one variable font where outlines and kerning vary.' }, true],
       ['check', { ru: 'Установить в систему', en: 'Install in the system' }, '', { ru: 'Шрифт сразу появляется в Word, Figma и Photoshop.', en: 'The font shows up in Word, Figma and Photoshop right away.' }],
     ],
