@@ -39,6 +39,12 @@ function pointInQuad(p, q) {
   return inside;
 }
 
+// A theme colour (#RRGGBB) with transparency, for fills on the canvas.
+function alpha(c, a) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec((c || '').trim());
+  return m ? `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${a})` : c;
+}
+
 // Integer coordinates for a new point and its handles.
 function roundNode(n) {
   n.x = Math.round(n.x); n.y = Math.round(n.y);
@@ -2335,7 +2341,7 @@ export class Editor {
     if (tool === 'pixel') this.drawPixelGrid(colors);
     if (d?.kind === 'pixel') {
       const ctx2 = this.ctx, sz = this.pixelSize * this.view.scale;
-      ctx2.fillStyle = d.erase ? 'rgba(220,60,60,0.45)' : colors.primary;
+      ctx2.fillStyle = d.erase ? alpha(colors.danger, 0.45) : colors.primary;
       ctx2.globalAlpha = d.erase ? 1 : 0.6;
       for (const [cx, cy] of d.cells.values()) {
         const s0 = this.toScreen({ x: cx * this.pixelSize, y: (cy + 1) * this.pixelSize });
@@ -2344,7 +2350,7 @@ export class Editor {
       ctx2.globalAlpha = 1;
     }
     if (d?.kind === 'marquee' && d.lasso) {
-      ctx.fillStyle = 'rgba(37,99,235,0.08)';
+      ctx.fillStyle = alpha(colors.primary, 0.08);
       ctx.strokeStyle = colors.primary;
       ctx.setLineDash([5, 4]);
       ctx.lineWidth = 1;
@@ -2356,7 +2362,7 @@ export class Editor {
       ctx.setLineDash([]);
     } else if (d?.kind === 'marquee') {
       const x = Math.min(d.start.sx, d.end.sx), y = Math.min(d.start.sy, d.end.sy);
-      ctx.fillStyle = 'rgba(37,99,235,0.08)';
+      ctx.fillStyle = alpha(colors.primary, 0.08);
       ctx.strokeStyle = colors.primary;
       ctx.setLineDash([5, 4]);
       ctx.lineWidth = 1;
@@ -2384,7 +2390,7 @@ export class Editor {
     }
     if (d?.kind === 'knife') {
       const p = this.toScreen(d.start), q = this.toScreen(d.end);
-      ctx.strokeStyle = '#F26B6B';
+      ctx.strokeStyle = colors.danger;
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
       ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
@@ -2396,7 +2402,7 @@ export class Editor {
     if (this.xform) this.drawTransform(colors);
     this.drawKeyObject(colors);
     if (d?.kind === 'stroke') {
-      ctx.strokeStyle = d.erase ? 'rgba(220,38,38,0.35)' : colors.ink;
+      ctx.strokeStyle = d.erase ? alpha(colors.danger, 0.35) : colors.ink;
       ctx.globalAlpha = d.erase ? 1 : 0.92;
       ctx.lineWidth = this.brushRadius * 2 * this.view.scale;
       ctx.lineCap = 'round';
@@ -2415,7 +2421,7 @@ export class Editor {
       ctx.beginPath();
       ctx.arc(s.x, s.y, Math.max(2, this.brushRadius * this.view.scale), 0, Math.PI * 2);
       ctx.lineWidth = 1.5;
-      ctx.strokeStyle = tool === 'eraser' ? '#DC2626' : colors.primary;
+      ctx.strokeStyle = tool === 'eraser' ? colors.danger : colors.primary;
       ctx.stroke();
     }
     if (tool === 'pen' && this.penContour !== null && this.hover && !d) {

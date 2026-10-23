@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -42,12 +41,29 @@ var webFS embed.FS
 
 const maxBody = 64 << 20
 
+// readBody reads a request body of at most limit bytes. Too large: 413 with
+// the limit in the message (not a JSON error about a cut-off body).
+func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	var tooBig *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooBig):
+		http.Error(w, fmt.Sprintf("the project is too large (over %d MB)", limit>>20), http.StatusRequestEntityTooLarge)
+		return nil, false
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return nil, false
+	}
+	return body, true
+}
+
 type server struct {
 	mu       sync.Mutex
 	filePath string // project opened from the command line, saved in place
 	port     int
 	dev      bool
 	lastPing time.Time
+	stamp    string // the file on disk as this window last read or wrote it
 }
 
 func main() {
@@ -71,7 +87,7 @@ func main() {
 	if flag.NArg() > 0 {
 		p, err := filepath.Abs(flag.Arg(0))
 		if err != nil {
-			log.Fatal(err)
+			fatal("Spline cannot open the file: " + err.Error())
 		}
 		s.filePath = p
 	}
@@ -87,7 +103,7 @@ func main() {
 		}
 	}
 	if ln == nil {
-		log.Fatalf("cannot start: %v", err)
+		fatal(fmt.Sprintf("Spline cannot start: no free port between 7878 and 7897 (%v). Close other copies of Spline or reboot the computer.", err))
 	}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/", s.port)
@@ -114,7 +130,7 @@ func main() {
 		openBrowser(url)
 		go s.watchdog()
 	}
-	log.Fatal(<-serveErr)
+	fatal("Spline stopped: " + (<-serveErr).Error())
 }
 
 // watchdog stops the program a while after the last open editor page went
@@ -213,6 +229,9 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	if path != "" {
 		info.FilePath = path
 		info.FileName = filepath.Base(path)
+		s.mu.Lock()
+		s.stamp = fileStamp(path)
+		s.mu.Unlock()
 		data, err := os.ReadFile(path)
 		switch {
 		case errors.Is(err, os.ErrNotExist):
@@ -244,9 +263,8 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	body, ok := readBody(w, r, maxBody)
+	if !ok {
 		return
 	}
 	data, status, err := buildFont(body, format)
@@ -260,11 +278,14 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 // exportUFO answers /api/export?format=ufo: a .ufoz, or a .zip with a
 // .designspace and a UFO per master; X-File-Ext names which.
 func exportUFO(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	body, ok := readBody(w, r, maxBody)
+	if !ok {
 		return
 	}
+	writeUFO(w, body)
+}
+
+func writeUFO(w http.ResponseWriter, body []byte) {
 	p, err := project.Parse(body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -295,6 +316,11 @@ func handleImportFont(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "font file is too large", http.StatusRequestEntityTooLarge)
 		return
 	}
+	importFont(w, data)
+}
+
+// importFont turns a font file (TTF/OTF, or a zip with UFO) into a project.
+func importFont(w http.ResponseWriter, data []byte) {
 	// A zip is a UFO (.ufoz, or UFOs with a .designspace).
 	if ufo.IsZip(data) {
 		p, skipped, err := ufo.Import(data)
@@ -320,9 +346,8 @@ func (s *server) handleInstallFont(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	body, ok := readBody(w, r, maxBody)
+	if !ok {
 		return
 	}
 	p, err := project.Parse(body)
@@ -406,26 +431,76 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no file was opened from disk", http.StatusConflict)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	body, ok := readBody(w, r, maxBody)
+	if !ok {
 		return
 	}
 	if _, err := project.Parse(body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	tmp := s.filePath + ".tmp"
-	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+	// Changed on disk since this window read or wrote it (another window,
+	// another program): the page asks before overwriting.
+	if st := fileStamp(s.filePath); st != s.stamp && st != "" && r.Header.Get("X-Spline-Overwrite") != "1" {
+		http.Error(w, "the file was changed by another window or program", http.StatusConflict)
+		return
+	}
+	if err := saveFile(s.filePath, body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := os.Rename(tmp, s.filePath); err != nil {
-		os.Remove(tmp)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	s.stamp = fileStamp(s.filePath)
 	writeJSON(w, map[string]string{"filePath": s.filePath})
+}
+
+// fileStamp identifies a version of a file on disk ("" when it is missing).
+func fileStamp(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d-%d", fi.Size(), fi.ModTime().UnixNano())
+}
+
+// saveFile writes data to path safely: a temporary file flushed to the disk,
+// the old version kept as path.bak, then the new one moved into place. A
+// crash or a full disk leaves either the old file or the new one, never a
+// cut-off one.
+func saveFile(path string, data []byte) error {
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if _, err := os.Stat(path); err == nil {
+		bak := path + ".bak"
+		if err := os.Rename(path, bak); err != nil {
+			os.Remove(tmp)
+			return err
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			os.Rename(bak, path) // put the old version back
+			os.Remove(tmp)
+			return err
+		}
+		return nil
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

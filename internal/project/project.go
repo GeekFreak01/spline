@@ -405,6 +405,20 @@ func (p *Project) Validate() error {
 				}
 			}
 		}
+		// The other masters: the same limits as the default one.
+		for id, l := range g.Layers {
+			if !finite(l.Advance) || l.Advance < 0 || l.Advance > maxCoord || len(l.Contours) > maxContours {
+				return fmt.Errorf("glyph %q is invalid in master %q", g.Name, id)
+			}
+			for _, c := range l.Contours {
+				nodes += len(c.Nodes)
+				for _, n := range c.Nodes {
+					if !okCoord(n.X) || !okCoord(n.Y) || (n.In != nil && (!okCoord(n.In.X) || !okCoord(n.In.Y))) || (n.Out != nil && (!okCoord(n.Out.X) || !okCoord(n.Out.Y))) {
+						return fmt.Errorf("glyph %q has a point out of range in master %q", g.Name, id)
+					}
+				}
+			}
+		}
 		if nodes > maxNodes*10 {
 			return errors.New("project is too large")
 		}

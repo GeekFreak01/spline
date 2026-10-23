@@ -207,7 +207,10 @@ function setProject(p, { fileName = null, fileHandle = null, serverFile = null }
   schedulePreview(0);
 }
 
+// Counts edits, so a save knows whether something changed while it ran.
+let editCount = 0;
 function setDirty(v) {
+  if (v) editCount++;
   app.dirty = v;
   $('dirtyDot').hidden = !v;
   updateTitle();
@@ -4750,9 +4753,21 @@ function download(blob, name) {
 async function save(saveAs = false) {
   try {
     if (app.serverFile && !saveAs) {
-      const r = await fetch('/api/file', { method: 'PUT', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON() });
-      if (!r.ok) throw new Error(await r.text());
-      setDirty(false);
+      const body = projectJSON();
+      const at = editCount;
+      const put = (overwrite) => fetch('/api/file', {
+        method: 'PUT', body,
+        headers: { 'X-Spline': '1', 'Content-Type': 'application/json', ...(overwrite ? { 'X-Spline-Overwrite': '1' } : {}) },
+      });
+      let r = await put(false);
+      // Changed on disk by another window or program since it was opened.
+      if (r.status === 409) {
+        if (!(await confirmDialog(t('saveConflict', { name: app.fileName }), t('saveOverwrite')))) return;
+        r = await put(true);
+      }
+      if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+      // Edits made while the file was being written are not in it.
+      if (editCount === at) setDirty(false);
       autosave();
       toast(t('savedAs', { name: app.fileName }));
       return;
@@ -5519,6 +5534,18 @@ async function offerUnsaved(filePath, fileName) {
     renderAll();
   } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
 }
+
+// Errors nobody caught: a short message instead of a silent failure.
+// At most one every few seconds; noise from the browser itself is skipped.
+let lastErrorToast = 0;
+function reportError(err) {
+  const msg = String(err?.message || err || '').trim();
+  if (!msg || /ResizeObserver loop|Script error\.?$/i.test(msg) || Date.now() - lastErrorToast < 5000) return;
+  lastErrorToast = Date.now();
+  toast(t('unexpectedError', { err: msg.slice(0, 160) }), 'error');
+}
+window.addEventListener('error', (e) => { if (!e.filename || e.filename.startsWith(location.origin)) reportError(e.error || e.message); });
+window.addEventListener('unhandledrejection', (e) => reportError(e.reason));
 
 // The website (a browser tab): the browser's own "Leave site?" question.
 window.addEventListener('beforeunload', (e) => {

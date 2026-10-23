@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -184,4 +185,17 @@ func openWindow(url string) (opened, blocked bool) {
 	w.Navigate(url)
 	w.Run()
 	return true, true
+}
+
+var procMessageBoxW = user32.NewProc("MessageBoxW")
+
+// fatal reports an error that stops the program. The Windows build has no
+// console, so it is a message box, not a line nobody sees.
+func fatal(msg string) {
+	fmt.Fprintln(os.Stderr, msg)
+	text, _ := syscall.UTF16PtrFromString(msg)
+	title, _ := syscall.UTF16PtrFromString("Spline")
+	const mbIconError = 0x10
+	procMessageBoxW.Call(0, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), mbIconError)
+	os.Exit(1)
 }
