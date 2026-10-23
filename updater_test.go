@@ -23,3 +23,14 @@ func TestNewer(t *testing.T) {
 
 // Downloads the real installer of the latest release; needs network, so it
 // only runs with SPLINE_NET_TEST=1.
+
+func TestSafeFileName(t *testing.T) {
+	for in, want := range map[string]string{
+		`MyFont-Bold`: "MyFont-Bold", `..\..\Windows\evil`: "Windows_evil", `a:stream`: "a_stream",
+		`../x`: "x", `...`: "SplineFont", `Font.v2`: "Font.v2",
+	} {
+		if got := safeFileName(in); got != want {
+			t.Errorf("safeFileName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

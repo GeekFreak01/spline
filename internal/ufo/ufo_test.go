@@ -3,6 +3,7 @@ package ufo
 import (
 	"math"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/GeekFreak01/spline/internal/project"
@@ -130,5 +131,13 @@ func TestDesignspace(t *testing.T) {
 		if !ok || math.Abs(l.Contours[0].Nodes[0].X-g.Contours[0].Nodes[0].X-20) > 0.01 {
 			t.Fatalf("%s: bold layer %v", g.Name, ok)
 		}
+	}
+}
+
+// A plist nested millions deep is an error, not a crash.
+func TestDeepPlist(t *testing.T) {
+	deep := strings.Repeat("<array>", 3_000_000) + strings.Repeat("</array>", 3_000_000)
+	if _, err := parsePlist([]byte("<plist>" + deep + "</plist>")); err == nil {
+		t.Fatal("no error for a deeply nested plist")
 	}
 }

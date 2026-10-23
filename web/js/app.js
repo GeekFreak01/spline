@@ -27,7 +27,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
+  set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } }, // false: full or unavailable
 };
 const AUTOSAVE_KEY = 'spline.autosave';
 const isMac = /Mac/.test(navigator.platform);
@@ -130,7 +130,8 @@ function dragDialog(dlg, cls) {
 }
 
 // Modal dialog. Resolves with FormData (OK) or null (cancel).
-function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true, onOpen = null, cls = '' }) {
+// extra: a third button between Cancel and OK; the promise then gives 'extra'.
+function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true, onOpen = null, cls = '', extra = '' }) {
   const dlg = $('dialog');
   dlg.className = `dialog ${cls}`.trim();
   dlg.removeAttribute('style');
@@ -139,13 +140,17 @@ function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', c
     <div class="body">${body}</div>
     <div class="actions">
       ${cancel ? `<button class="btn" value="cancel" formnovalidate>${esc(t('cancel'))}</button>` : ''}
+      ${extra ? `<button class="btn" value="extra" formnovalidate>${esc(extra)}</button>` : ''}
       <button class="btn ${okClass}" value="ok">${esc(okLabel)}</button>
     </div>
   </form>`;
   return new Promise((resolve) => {
     const form = dlg.querySelector('form');
     let data = null;
-    form.addEventListener('submit', (e) => { if (e.submitter?.value === 'ok') data = new FormData(form); });
+    form.addEventListener('submit', (e) => {
+      if (e.submitter?.value === 'ok') data = new FormData(form);
+      else if (e.submitter?.value === 'extra') data = 'extra';
+    });
     // Enter in a field is OK (the browser would take the first button, Cancel).
     form.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' || e.defaultPrevented || e.isComposing || e.shiftKey || !e.target.matches('input:not([type=checkbox]):not([type=radio]), select')) return;
@@ -226,8 +231,18 @@ function markChanged() {
   schedulePreview();
 }
 
+// The browser keeps a copy of the project: it is offered back after a crash
+// or a window closed without saving. dirty tells whether it holds edits
+// that never reached the file.
+let autosaveFullShown = false;
 function autosave() {
-  store.set(AUTOSAVE_KEY, JSON.stringify({ fileName: app.fileName, project: projectJSON() }));
+  clearTimeout(autosaveTimer);
+  const ok = store.set(AUTOSAVE_KEY, JSON.stringify({ fileName: app.fileName, serverFile: app.serverFile, dirty: !!app.dirty, project: projectJSON() }));
+  if (ok) return;
+  // Too big for the browser's storage: an old copy must not come back later
+  // as if it were the latest.
+  try { localStorage.removeItem(AUTOSAVE_KEY); } catch { /* storage unavailable */ }
+  if (!autosaveFullShown) { autosaveFullShown = true; toast(t('autosaveFull'), 'error'); }
 }
 
 // Editor callbacks.
@@ -379,8 +394,10 @@ function menuDefs() {
     ] },
     { id: 'menuWindow', items: [
       // Only the panels of the current view: glyphs or kerning.
-      ...PANELS.filter(([id]) => id.startsWith('kern') === (app.mode === 'kern'))
-        .map(([id, label]) => ({ label, check: !isHidden(id), run: () => setHidden(id, !isHidden(id)) })),
+      // Extended-mode panels only in that mode; a panel this view or glyph
+      // has nothing for (a smart part of a plain letter...) is greyed out.
+      ...PANELS.filter(([id]) => id.startsWith('kern') === (app.mode === 'kern') && (app.extended || !EXT_PANELS.has(id)))
+        .map(([id, label]) => ({ label, check: !isHidden(id), enabled: panelExists(id), run: () => setHidden(id, !isHidden(id)) })),
       { label: 'preview', check: !$('preview').hidden, run: () => setPreviewHidden(!$('preview').hidden) },
       '-',
       { label: 'resetPanels', run: () => { resetPanels(); setPreviewHidden(false); } },
@@ -676,7 +693,7 @@ function tileHTML(g) {
       : `<span class="ghost" aria-hidden="true">${esc(ch)}</span>`;
   const label = ch && ch.trim() ? `${ch} ${g.name} ${hex(g)}` : `${g.name} ${hex(g)}`;
   return `<button type="button" class="tile${drawn ? ' drawn' : ''}" role="option" data-name="${esc(g.name)}"
-      ${g.color ? `data-color="${g.color}"` : ''} aria-selected="${app.selected.has(g.name)}"
+      ${g.color ? `data-color="${esc(g.color)}"` : ''} aria-selected="${app.selected.has(g.name)}"
       tabindex="${g.name === app.focusName ? 0 : -1}" aria-label="${esc(label)}">
       ${body}<span class="label"><span>${esc(g.name)}</span><span class="code">${hex(g)}</span></span></button>`;
 }
@@ -930,10 +947,10 @@ function fontSection() {
   return section('font', t('fontSection'), `
     <dl class="kv">
       <dt>${esc(t('family'))}</dt><dd>${esc(i.familyName)}</dd>
-      <dt>${esc(t('ascender'))}</dt><dd>${i.ascender}</dd>
-      <dt>${esc(t('capHeight'))}</dt><dd>${i.capHeight}</dd>
-      <dt>${esc(t('xHeight'))}</dt><dd>${i.xHeight}</dd>
-      <dt>${esc(t('descender'))}</dt><dd>${i.descender}</dd>
+      <dt>${esc(t('ascender'))}</dt><dd>${esc(i.ascender)}</dd>
+      <dt>${esc(t('capHeight'))}</dt><dd>${esc(i.capHeight)}</dd>
+      <dt>${esc(t('xHeight'))}</dt><dd>${esc(i.xHeight)}</dd>
+      <dt>${esc(t('descender'))}</dt><dd>${esc(i.descender)}</dd>
     </dl>
     <button class="btn btn-block" type="button" data-cmd="fontInfo">${icon('settings', 15)}<span>${esc(t('fontInfo'))}</span></button>`, false);
 }
@@ -1168,6 +1185,12 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
+const EXT_PANELS = new Set(['batch', 'paint', 'components', 'smart', 'anchors', 'points', 'background']);
+// Whether the current view has this panel right now (shown or hidden).
+const panelExists = (id) => {
+  const dock = DOCK_OF[app.mode];
+  return !!dock && !!document.querySelector(`details[data-sec="${id}"][data-dock="${dock}"]`);
+};
 const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['transform', 'transform'], ['batch', 'btTitleShort'], ['paint', 'pnTitle'], ['components', 'cmTitle'], ['smart', 'smTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
@@ -3762,6 +3785,9 @@ function toggleMastersView(key, prop) {
 
 function selectMaster(id) {
   endTransform();
+  // A smart part state being drawn goes back to its place first: the
+  // master switch moves glyph.contours, which then holds that state.
+  if (id !== activeId(app.project)) settleSmart();
   if (!switchMaster(app.project, id)) return;
   // Undo steps hold outlines of the master they were made in.
   app.history.clear();
@@ -3796,6 +3822,7 @@ async function mastersDialog() {
     okLabel: t('ok'),
   });
   if (!data) return;
+  settleSmart(); // adding or deleting a master copies or moves glyph.contours
   ms.forEach((m, i) => {
     m.name = String(data.get(`name${i}`) || m.name).trim() || m.name;
     const v = Number(data.get(`loc${i}`));
@@ -4028,8 +4055,11 @@ async function openFilter(kind) {
         dlg.querySelectorAll('[data-fl="value"]').forEach((o) => { if (o !== el) o.value = x; });
         previewFilter();
       };
-      dlg.addEventListener('input', on);
-      dlg.addEventListener('change', on);
+      // On the form, which each dialog builds anew: listeners on the dialog
+      // element itself would pile up, one set per opening.
+      const form = dlg.querySelector('form');
+      form.addEventListener('input', on);
+      form.addEventListener('change', on);
       previewFilter();
     },
   });
@@ -4723,6 +4753,7 @@ async function save(saveAs = false) {
       const r = await fetch('/api/file', { method: 'PUT', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON() });
       if (!r.ok) throw new Error(await r.text());
       setDirty(false);
+      autosave();
       toast(t('savedAs', { name: app.fileName }));
       return;
     }
@@ -5261,8 +5292,8 @@ function renderPreviewFeatures() {
   const loc = app.previewLoc ?? app.project.masters?.find((m) => m.id === activeId(app.project))?.loc;
   const axis2 = axis && app.project.axis2;
   const loc2 = app.previewLoc2 ?? app.project.masters?.find((m) => m.id === activeId(app.project))?.loc2;
-  const axisHTML = (axis ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis.tag)}<input type="range" data-pf-axis="1" min="${axis.min}" max="${axis.max}" step="1" value="${loc}"><output class="mono">${loc}</output></label>` : '')
-    + (axis2 && axis2.min < axis2.max ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis2.tag)}<input type="range" data-pf-axis="2" min="${axis2.min}" max="${axis2.max}" step="1" value="${loc2}"><output class="mono">${loc2}</output></label>` : '');
+  const axisHTML = (axis ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis.tag)}<input type="range" data-pf-axis="1" min="${esc(axis.min)}" max="${esc(axis.max)}" step="1" value="${esc(loc)}"><output class="mono">${esc(loc)}</output></label>` : '')
+    + (axis2 && axis2.min < axis2.max ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis2.tag)}<input type="range" data-pf-axis="2" min="${esc(axis2.min)}" max="${esc(axis2.max)}" step="1" value="${esc(loc2)}"><output class="mono">${esc(loc2)}</output></label>` : '');
   const tags = [...found.values()].filter((f) => f.tag !== 'locl');
   const langs = [...found.values()].filter((f) => f.tag === 'locl');
   bar.innerHTML = axisHTML + (tags.length || langs.length ? `<span class="opt-label">${esc(t('pfTitle'))}</span>` : '')
@@ -5355,6 +5386,7 @@ async function start() {
       try {
         setProject(validateProject(session.project), { fileName: session.fileName, serverFile: session.filePath });
         loaded = true;
+        offerUnsaved(session.filePath, session.fileName);
       } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
     } else if (session.error) {
       toast(t('openError', { err: session.error }), 'error');
@@ -5458,6 +5490,44 @@ $('updateBadge').addEventListener('click', openUpdatePage);
 // Inside the Spline window (WebView2) the system title bar is removed and
 // the menu bar acts as the title bar: drag to move, double-click to
 // maximize, custom minimize / maximize / close buttons, resize at the edges.
+// Closing with unsaved edits: Save / Don't Save / Cancel. True: close.
+async function confirmClose() {
+  if (!app.dirty) return true;
+  autosave(); // now, not in 0.7 s
+  const answer = await showDialog({
+    title: t('closeUnsavedTitle', { name: app.fileName || app.project.info.familyName }),
+    body: `<p class="hint">${esc(t('closeUnsavedText'))}</p>`,
+    okLabel: t('save'), extra: t('dontSave'),
+  });
+  if (answer === 'extra') return true;
+  if (!answer) return false;
+  await save();
+  return !app.dirty; // a failed save keeps the window open
+}
+
+// A file opened from disk whose last autosave still had unsaved edits (the
+// window was closed or the program crashed before saving): offer them back.
+async function offerUnsaved(filePath, fileName) {
+  let saved = null;
+  try { saved = JSON.parse(store.get(AUTOSAVE_KEY) || 'null'); } catch { /* broken autosave */ }
+  if (!saved?.dirty || saved.serverFile !== filePath || !saved.project) return;
+  // Declined: the file is the truth now, the old copy must not ask again.
+  if (!(await confirmDialog(t('restoreUnsaved', { name: fileName }), t('restore'), false))) { autosave(); return; }
+  try {
+    setProject(validateProject(JSON.parse(saved.project)), { fileName, serverFile: filePath });
+    setDirty(true);
+    renderAll();
+  } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
+}
+
+// The website (a browser tab): the browser's own "Leave site?" question.
+window.addEventListener('beforeunload', (e) => {
+  if (!app.dirty || typeof window.splineWindow === 'function') return; // the app window asks on its own
+  autosave();
+  e.preventDefault();
+  e.returnValue = '';
+});
+
 function initWindowFrame() {
   if (typeof window.splineWindow !== 'function') return; // regular browser
   const call = async (action, arg = '') => {
@@ -5467,9 +5537,11 @@ function initWindowFrame() {
   document.documentElement.classList.add('native');
   $('winControls').hidden = false;
   $('resizeEdges').hidden = false;
-  $('winControls').addEventListener('click', (e) => {
+  $('winControls').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-win]');
-    if (b) call(b.dataset.win);
+    if (!b) return;
+    if (b.dataset.win === 'close' && !(await confirmClose())) return;
+    call(b.dataset.win);
   });
   const isDragArea = (el) => !el.closest('button, input, select, a, [role="menu"], [role="menuitem"], .view-switch');
   document.querySelector('.menubar').addEventListener('pointerdown', (e) => {

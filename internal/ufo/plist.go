@@ -24,12 +24,20 @@ func parsePlist(data []byte) (any, error) {
 			return nil, fmt.Errorf("plist: %w", err)
 		}
 		if se, ok := tok.(xml.StartElement); ok && se.Name.Local != "plist" {
-			return plistValue(d, se)
+			return plistValue(d, se, 0)
 		}
 	}
 }
 
-func plistValue(d *xml.Decoder, se xml.StartElement) (any, error) {
+// maxDepth bounds nesting: real UFO plists are a few levels deep, and a
+// file nested millions deep would otherwise overflow the stack and kill
+// the whole process (a stack overflow cannot be recovered).
+const maxDepth = 64
+
+func plistValue(d *xml.Decoder, se xml.StartElement, depth int) (any, error) {
+	if depth > maxDepth {
+		return nil, errors.New("plist: nested too deep")
+	}
 	switch se.Name.Local {
 	case "dict":
 		m := map[string]any{}
@@ -49,7 +57,7 @@ func plistValue(d *xml.Decoder, se xml.StartElement) (any, error) {
 					key = s
 					continue
 				}
-				v, err := plistValue(d, t)
+				v, err := plistValue(d, t, depth+1)
 				if err != nil {
 					return nil, err
 				}
@@ -67,7 +75,7 @@ func plistValue(d *xml.Decoder, se xml.StartElement) (any, error) {
 			}
 			switch t := tok.(type) {
 			case xml.StartElement:
-				v, err := plistValue(d, t)
+				v, err := plistValue(d, t, depth+1)
 				if err != nil {
 					return nil, err
 				}

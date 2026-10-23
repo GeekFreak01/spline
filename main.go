@@ -336,12 +336,34 @@ func (s *server) handleInstallFont(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := fontgen.FullName(p.Info)
-	path, err := installFont(data, name, fontgen.PostScriptName(p.Info))
+	path, err := installFont(data, name, safeFileName(fontgen.PostScriptName(p.Info)))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]string{"name": name, "path": path})
+}
+
+// safeFileName keeps a name that cannot leave its folder or name an NTFS
+// stream: ASCII letters, digits, "-", "_" and inner dots only. The name
+// comes from the project, which may come from anyone.
+func safeFileName(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		case r == '.' && b.Len() > 0:
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := strings.Trim(b.String(), "._")
+	if out == "" {
+		return "SplineFont"
+	}
+	return out
 }
 
 // buildFont parses a .sp document and compiles it; status is the HTTP code

@@ -1,5 +1,5 @@
 // Project model and geometry helpers. Mirrors internal/project in Go.
-import { SETS, glyphNameFor, defaultAdvance } from './glyphsets.js';
+import { SETS, glyphNameFor, defaultAdvance, COLORS } from './glyphsets.js';
 
 export const FORMAT = 'spline';
 export const VERSION = 1;
@@ -50,8 +50,16 @@ export function validateProject(p) {
   if (!p || p.format !== FORMAT) throw new Error('not a Spline (.sp) file');
   if (p.version > VERSION) throw new Error('file is from a newer Spline version');
   const base = newProject({ sets: [] });
-  p.info = { ...base.info, ...(p.info || {}) };
+  // Every value gets its type here: a file is data from anywhere, and the
+  // UI puts many of these values into HTML.
+  const info = p.info && typeof p.info === 'object' ? p.info : {};
+  p.info = { ...base.info };
+  const INFO_NUM = ['unitsPerEm', 'ascender', 'descender', 'xHeight', 'capHeight', 'weight', 'italicAngle', 'lineGap', 'underlinePosition', 'underlineThickness', 'overshoot'];
+  const INFO_TEXT = ['familyName', 'styleName', 'designer', 'version', 'copyright', 'trademark', 'manufacturer', 'description', 'vendorURL', 'license', 'licenseURL'];
+  for (const k of INFO_NUM) if (Number.isFinite(info[k])) p.info[k] = info[k];
+  for (const k of INFO_TEXT) if (typeof info[k] === 'string') p.info[k] = info[k];
   if (!Array.isArray(p.glyphs)) p.glyphs = [];
+  p.glyphs = p.glyphs.filter((g) => g && typeof g === 'object' && typeof g.name === 'string' && g.name);
   // Kerning: { leftGlyph: { rightGlyph: value } }
   const cleanKerning = (k) => {
     const out = {};
@@ -78,7 +86,13 @@ export function validateProject(p) {
   if (!(Array.isArray(p.masters) && p.masters.length > 1 && p.masters.every((m) => m && typeof m.id === 'string' && Number.isFinite(m.loc)))) {
     delete p.masters; delete p.axis;
   } else {
-    p.axis = { tag: 'wght', min: 100, max: 900, ...(p.axis || {}) };
+    const axis = (a, tag, min, max) => ({
+      tag: typeof a?.tag === 'string' && /^[A-Za-z0-9 ]{1,4}$/.test(a.tag) ? a.tag : tag,
+      min: Number.isFinite(a?.min) ? a.min : min, max: Number.isFinite(a?.max) ? a.max : max,
+    });
+    p.axis = axis(p.axis, 'wght', 100, 900);
+    if (p.axis2) p.axis2 = axis(p.axis2, 'wdth', 100, 100);
+    for (const m of p.masters) if (typeof m.name !== 'string') m.name = m.id;
     // Kerning of the other masters (none = the default's).
     p.masters.forEach((m, i) => { if (i === 0 || !m.kerning) delete m.kerning; else m.kerning = cleanKerning(m.kerning); });
   }
@@ -93,6 +107,13 @@ export function validateProject(p) {
     if (g.smart) { delete g.smart.editing; delete g.smart.base; }
     g.contours = Array.isArray(g.contours) ? g.contours : [];
     g.advance = Number.isFinite(g.advance) ? g.advance : 600;
+    if (!(Number.isInteger(g.unicode) && g.unicode > 0 && g.unicode <= 0x10FFFF)) delete g.unicode;
+    if (!COLORS.includes(g.color)) delete g.color;
+    for (const k of ['kernLeft', 'kernRight']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];
+    if (g.smart) {
+      g.smart.props = g.smart.props.filter((x) => x && typeof x.name === 'string' && x.name && Number.isFinite(x.min) && Number.isFinite(x.max));
+      if (!g.smart.props.length) delete g.smart;
+    }
     if (!(g.compose && typeof g.compose.base === 'string' && Array.isArray(g.compose.marks))) delete g.compose;
     if (g.composeOff !== true) delete g.composeOff;
     if (!Array.isArray(g.background) || !g.background.length) delete g.background;
