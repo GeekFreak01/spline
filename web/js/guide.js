@@ -89,6 +89,16 @@ const S = [
     ],
   },
   {
+    id: 'family', icon: 'layers', title: { ru: 'Семейство', en: 'Family' },
+    lead: { ru: '«Буква → Семейство…»: Regular, Bold, Light, курсив и всё между ними из одного проекта.', en: 'Glyph → Family…: Regular, Bold, Light, italics and everything between them from one project.' },
+    items: [
+      ['layers', { ru: 'Жирный и тонкий', en: 'Bold and light' }, '', { ru: 'Кнопки «Жирный» и «Тонкий» добавляют мастер: копию букв с утолщёнными или утончёнными штрихами. Потом дорисуйте его вручную.', en: 'The Bold and Light buttons add a master: a copy of the glyphs with bolder or lighter strokes. Refine it by hand afterwards.' }],
+      ['type', { ru: 'Курсив', en: 'Italic' }, '', { ru: 'Кнопка «Курсив» добавляет наклонённую копию каждого мастера. Наклон — заготовка: настоящий курсив рисуют заново (а, е, f).', en: 'The Italic button adds a slanted copy of every master. The slant is a start: a true italic is redrawn (a, e, f).' }],
+      ['check', { ru: 'Начертания', en: 'Styles' }, '', { ru: 'Список того, что попадёт в шрифт: Thin…Black и курсивные пары. Галочка — экспортировать, насыщенность — где на оси. «Стандартный набор» возвращает список по мастерам.', en: 'The list of what goes into the font: Thin…Black and the italic pairs. The checkbox exports it, the weight places it on the axis. Standard Set brings the list back from the masters.' }],
+      ['download', { ru: 'Экспорт и установка', en: 'Export and install' }, '', { ru: '«Файл → Экспорт семейства»: каждое начертание отдельным файлом в одном .zip. «Установить семейство» ставит все сразу; в Word они идут как Regular, Italic, Bold и Bold Italic одного шрифта.', en: 'File → Export Family: every style as its own file in one .zip. Install Family puts them all in the system; Word groups them as Regular, Italic, Bold and Bold Italic of one font.' }],
+    ],
+  },
+  {
     id: 'extended', icon: 'sliders', title: { ru: 'Расширенный режим', en: 'Extended mode' },
     lead: { ru: 'Большие возможности для семейств и OpenType.', en: 'The big features for families and OpenType.' },
     items: [
@@ -110,7 +120,7 @@ const S = [
       ['download', { ru: 'TTF и OTF', en: 'TTF and OTF' }, '', { ru: 'TrueType и OpenType (CFF) с кернингом, вариантами, лигатурами и формами.', en: 'TrueType and OpenType (CFF) with kerning, alternates, ligatures and forms.' }],
       ['download', { ru: 'WOFF2 и WOFF', en: 'WOFF2 and WOFF' }, '', { ru: 'Для сайтов: WOFF2 меньше всего, WOFF — для старых браузеров.', en: 'For websites: WOFF2 is the smallest, WOFF is for old browsers.' }, true],
       ['open', { ru: 'UFO', en: 'UFO' }, '', { ru: 'Обмен с Glyphs, FontLab, RoboFont и fontmake: «Экспорт UFO» и «Открыть шрифт как проект». С мастерами — .zip с UFO на каждый мастер и .designspace.', en: 'Exchange with Glyphs, FontLab, RoboFont and fontmake: Export UFO and Open Font as Project. With masters it is a .zip with a UFO per master and a .designspace.' }, true],
-      ['layers', { ru: 'Начертания и вариативный шрифт', en: 'Styles and a variable font' }, '', { ru: 'Из мастеров: отдельные TTF (Light, Medium…) или один вариативный, где меняются контуры и кернинг.', en: 'From the masters: separate TTFs (Light, Medium…) or one variable font where outlines and kerning vary.' }, true],
+      ['layers', { ru: 'Начертания и вариативный шрифт', en: 'Styles and a variable font' }, '', { ru: 'Из мастеров: семейство отдельных файлов или вариативный шрифт, где меняются контуры и кернинг. С курсивом вариативных два: прямой и курсивный.', en: 'From the masters: a family of separate files or a variable font where outlines and kerning vary. With italics there are two variable fonts: upright and italic.' }],
       ['check', { ru: 'Установить в систему', en: 'Install in the system' }, '', { ru: 'Шрифт сразу появляется в Word, Figma и Photoshop.', en: 'The font shows up in Word, Figma and Photoshop right away.' }],
     ],
   },

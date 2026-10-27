@@ -230,7 +230,7 @@ The simple mode stays simple. Everything for serious type work switches on in **
       <br>
       <sub>Regular and Bold masters, a weight slider in the preview.</sub>
       <h3>🎚️ Masters and variable fonts</h3>
-      One glyph drawn in several styles on the weight and width axes · the master switch above the canvas and in kerning · kerning of its own in every master · export of styles (Light, Medium…) and of a variable font where both outlines and kerning vary.
+      One glyph drawn in several styles on the weight and width axes · the master switch above the canvas and in kerning · kerning of its own in every master · the Family window: a bold, light or italic master in one click, styles from Thin to Black with italics · family export as one .zip and install in the system · a variable font where both outlines and kerning vary.
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/en/ext-color.png" alt="The letter S painted red, the Colour window with a palette of six colours, and the multicoloured line “Spline Color Fonts” below" width="100%">
