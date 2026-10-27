@@ -8,7 +8,9 @@ import {
 import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { isSmart, editingState, editState, saveSmart, addProp, removeProp, smartProblems } from './smart.js';
-import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis, layerOf } from './masters.js';
+import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis, layerOf,
+  incompatibility, hasItalic, familyGroup, familyStyles, defaultStyles, addItalicMasters, fitAxis } from './masters.js';
+import { makeZip } from './zip.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
@@ -307,9 +309,14 @@ function menuDefs() {
       { label: 'exportWOFF2', key: keyLabel('exportWOFF2'), run: () => exportFont('woff2'), ext: true },
       { label: 'exportWOFF', key: keyLabel('exportWOFF'), run: () => exportFont('woff'), ext: true },
       { label: 'exportUFO', tip: 'exportUFOTip', run: () => exportFont('ufo'), ext: true },
-      { label: 'msExport', run: exportInstances, enabled: hasMasters(app.project || {}), ext: true },
-      { label: 'vfExport', run: exportVariable, enabled: hasMasters(app.project || {}), ext: true },
-      ...(app.platform?.canInstall ? [{ label: 'installFont', run: installFont }] : []),
+      '-',
+      { label: 'famExportTTF', run: () => exportFamily('ttf'), enabled: hasMasters(app.project || {}) },
+      { label: 'famExportWOFF2', run: () => exportFamily('woff2'), enabled: hasMasters(app.project || {}), ext: true },
+      { label: 'vfExport', run: exportVariable, enabled: hasMasters(app.project || {}) },
+      ...(app.platform?.canInstall ? [
+        { label: 'installFont', run: installFont },
+        { label: 'famInstall', run: installFamily, enabled: hasMasters(app.project || {}) },
+      ] : []),
       ...(app.platform?.canAssociate ? ['-', { label: 'associate', check: app.platform.associated, run: associateFiles }] : []),
     ] },
     { id: 'menuEdit', items: [
@@ -386,6 +393,7 @@ function menuDefs() {
       { label: 'kgTitleMenu', key: keyLabel('groups'), run: () => groupsDialog() },
       { label: 'sgMenu', key: keyLabel('shapeGroups'), run: shapeGroupsDialog },
       { label: 'fontInfo', key: keyLabel('fontInfo'), run: editFontInfo },
+      { label: 'famMenu', run: familyDialog },
     ] },
     { id: 'menuFilter', items: [
       { text: `${t('fl_offset')}…`, run: () => openFilter('offset'), enabled: inEditor, ext: true },
@@ -1577,7 +1585,11 @@ async function editFontInfo() {
   const num = (name, v) => `<label class="field">${esc(t(name))}<input type="number" name="${name}" value="${v}" required step="1"></label>`;
   const data = await showDialog({
     title: t('fontInfo').replace('…', ''),
-    body: `<label class="field">${esc(t('family'))}<input type="text" name="familyName" value="${esc(i.familyName)}" required maxlength="60"></label>
+    body: `<div class="field-row">
+        <label class="field">${esc(t('family'))}<input type="text" name="familyName" value="${esc(i.familyName)}" required maxlength="60"></label>
+        <label class="field">${esc(t('fi_styleName'))}<input type="text" name="styleName" value="${esc(i.styleName || 'Regular')}" required maxlength="40" list="styleNames"></label>
+      </div>
+      <datalist id="styleNames">${['Regular', 'Italic', 'Bold', 'Bold Italic', 'Light', 'Medium', 'SemiBold', 'ExtraBold', 'Black', 'Thin'].map((x) => `<option value="${x}">`).join('')}</datalist>
       <div class="field-row">
         <label class="field">${esc(t('designer'))}<input type="text" name="designer" value="${esc(i.designer || '')}" maxlength="80"></label>
         <label class="field">${esc(t('version'))}<input type="text" name="version" value="${esc(i.version || '1.000')}" pattern="\\d+\\.\\d+" maxlength="10"></label>
@@ -1589,6 +1601,7 @@ async function editFontInfo() {
   });
   if (!data) return;
   i.familyName = String(data.get('familyName')).trim() || i.familyName;
+  i.styleName = String(data.get('styleName') || '').trim().slice(0, 40) || 'Regular';
   i.designer = String(data.get('designer')).trim();
   i.version = String(data.get('version')).trim() || '1.000';
   for (const k of ['ascender', 'capHeight', 'xHeight', 'descender']) {
@@ -2212,6 +2225,7 @@ $('previewFeats').addEventListener('input', (e) => {
   schedulePreview(120);
 });
 $('previewFeats').addEventListener('change', (e) => {
+  if (e.target.dataset.pfItalic !== undefined) { app.previewItalic = e.target.checked; schedulePreview(0); return; }
   if (e.target.dataset.pf) { if (e.target.checked) previewFeats.add(e.target.dataset.pf); else previewFeats.delete(e.target.dataset.pf); }
   if (e.target.dataset.pfLang !== undefined) previewLang = e.target.value;
   applyPreviewFeatures();
@@ -3727,14 +3741,14 @@ function backgroundSection(g) {
 // ================================================================ masters
 
 function masterBarHTML() {
-  if (!app.extended) return '';
   const p = app.project;
+  if (!app.extended && !hasMasters(p)) return '';
   if (!hasMasters(p)) {
     return `<div class="group"><button class="btn" type="button" data-cmd="mastersDialog" data-tip="${esc(t('msAddTip'))}" aria-label="${esc(t('msMasters'))}">${icon('layers', 14)}<span class="opt-text">${esc(t('msMasters'))}</span></button></div><div class="sep"></div>`;
   }
   const act = activeId(p);
   // In the editor: show the other masters, and edit them all at once.
-  const toggles = app.mode === 'editor' ? `
+  const toggles = app.mode === 'editor' && app.extended ? `
     <button class="btn btn-icon ms-toggle" type="button" data-cmd="msShowAll" aria-pressed="${app.showAllMasters}" aria-label="${esc(t('msShowAll'))}" data-tip="${esc(t('msShowAllTip'))}">${icon('layers', 14)}</button>
     <button class="btn btn-icon ms-toggle" type="button" data-cmd="msEditAll" aria-pressed="${app.editAllMasters}" aria-label="${esc(t('msEditAll'))}" data-tip="${esc(t('msEditAllTip'))}">${icon('link', 14)}</button>` : '';
   return `<div class="group"><div class="seg" role="radiogroup" aria-label="${esc(t('msMasters'))}">
@@ -3804,6 +3818,13 @@ function selectMaster(id) {
   if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
 }
 
+// A master's slant from the dialog: 0 is upright, anything else italic.
+function setSlant(m, a) {
+  if (!Number.isFinite(a) || a === 0) { delete m.italic; delete m.italicAngle; return; }
+  m.italic = true;
+  m.italicAngle = Math.max(-45, Math.min(45, a));
+}
+
 async function mastersDialog() {
   const p = app.project;
   const ms = p.masters || [];
@@ -3813,14 +3834,15 @@ async function mastersDialog() {
       <input type="text" name="name${i}" value="${esc(m.name)}" aria-label="${esc(t('msName'))}" required maxlength="40">
       <input type="number" name="loc${i}" value="${m.loc}" step="1" aria-label="${esc(t('msLoc'))}">
       ${loc2(`loc2_${i}`, m.loc2)}
+      <input type="number" name="ang${i}" value="${m.italic ? m.italicAngle ?? 10 : 0}" step="0.5" min="-45" max="45" ${i === 0 ? 'disabled' : ''} aria-label="${esc(t('msAngle'))}" title="${esc(t('msAngleTip'))}">
       <label class="check"><input type="checkbox" name="del${i}" ${i === 0 ? 'disabled' : ''}>${esc(t('msDelete'))}</label></div>`).join('');
   const data = await showDialog({
     title: t('msMasters'),
-    body: `${ms.length ? `<div class="field-row ms-row ms-head${w2 ? ' two' : ''}"><span>${esc(t('msName'))}</span><span>${esc(t('msLoc'))}</span>${w2 ? `<span>${esc(t('msLoc2'))}</span>` : ''}<span></span></div>${rows}` : ''}
+    body: `${ms.length ? `<div class="field-row ms-row ms-head${w2 ? ' two' : ''}"><span>${esc(t('msName'))}</span><span>${esc(t('msLoc'))}</span>${w2 ? `<span>${esc(t('msLoc2'))}</span>` : ''}<span title="${esc(t('msAngleTip'))}">${esc(t('msAngle'))}</span><span></span></div>${rows}` : ''}
       <h3>${esc(t('msNew'))}</h3>
       <div class="field-row ms-row${w2 ? ' two' : ''}">
         <input type="text" name="newName" placeholder="Bold" maxlength="40" aria-label="${esc(t('msName'))}">
-        <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}">${loc2('newLoc2', '')}<span></span></div>
+        <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}">${loc2('newLoc2', '')}<input type="number" name="newAng" placeholder="0" step="0.5" min="-45" max="45" aria-label="${esc(t('msAngle'))}" title="${esc(t('msAngleTip'))}"><span></span></div>
       ${ms.length ? `<label class="check"><input type="checkbox" name="axis2" ${w2 ? 'checked' : ''}>${esc(t('msAxis2'))}</label>` : ''}`,
     okLabel: t('ok'),
   });
@@ -3832,6 +3854,7 @@ async function mastersDialog() {
     if (Number.isFinite(v)) m.loc = Math.round(v);
     const v2 = Number(data.get(`loc2_${i}`));
     if (w2 && Number.isFinite(v2) && String(data.get(`loc2_${i}`)).trim() !== '') m.loc2 = Math.round(v2);
+    if (i > 0) setSlant(m, Number(data.get(`ang${i}`)));
   });
   if (ms.length) setWidthAxis(p, !!data.get('axis2'));
   for (const m of [...ms].reverse()) if (data.get(`del${ms.indexOf(m)}`)) deleteMaster(p, m.id);
@@ -3841,6 +3864,7 @@ async function mastersDialog() {
     const l2 = Number(data.get('newLoc2'));
     addMaster(p, nn, Number.isFinite(loc) && String(data.get('newLoc')).trim() !== '' ? Math.round(loc) : 700,
       p.axis2 && String(data.get('newLoc2') || '').trim() !== '' && Number.isFinite(l2) ? Math.round(l2) : undefined);
+    setSlant(p.masters[p.masters.length - 1], Number(data.get('newAng')));
   }
   if (p.masters) {
     p.axis.min = Math.min(...p.masters.map((m) => m.loc));
@@ -3866,17 +3890,17 @@ function settleSmart() {
   for (const g of app.project.glyphs) if (editingState(g)) editState(g, null);
 }
 
-function variableJSON() {
+function variableJSON(italic = false) {
   settleSmart();
   const p = app.project;
-  const q = saveForm(p);
+  const q = hasItalic(p) ? familyGroup(p, italic) : saveForm(p);
   refreshComponents(q); recompose(q);
   const full = (g) => [...g.contours.filter((c) => !c.brush), ...(g.refContours || [])];
   const def = new Map(q.glyphs.map((g) => [g.name, full(g)]));
   const out = { ...q, glyphs: q.glyphs.map((g) => ({ ...g, layers: {} })) };
   const byName = new Map(out.glyphs.map((g) => [g.name, g]));
-  for (const m of p.masters.slice(1)) {
-    const inst = instanceAt(p, m.loc, undefined, m.loc2);
+  for (const m of q.masters.slice(1)) {
+    const inst = instanceAt(p, m.loc, undefined, m.loc2, italic);
     refreshComponents(inst); recompose(inst);
     for (const g of inst.glyphs) {
       const base = def.get(g.name) || [];
@@ -3887,49 +3911,226 @@ function variableJSON() {
   return serialize(out);
 }
 
+// Variable fonts: the upright one, and the italic one when there are
+// italic masters (both in a .zip then).
 async function exportVariable() {
   if (!hasMasters(app.project)) return;
   try {
-    const r = await fetch('/api/export?format=variable', {
-      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: variableJSON(),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    const name = safeFileName('-VF.ttf');
-    download(await r.blob(), name);
+    const files = [];
+    for (const italic of hasItalic(app.project) ? [false, true] : [false]) {
+      const group = familyGroup(app.project, italic);
+      if (!group || group.masters.length < 2) continue;
+      const r = await fetch('/api/export?format=variable', {
+        method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: variableJSON(italic),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      files.push({ name: safeFileName(italic ? '-Italic-VF.ttf' : '-VF.ttf'), data: new Uint8Array(await r.arrayBuffer()) });
+    }
+    if (!files.length) throw new Error(t('famNeedTwo'));
+    const name = files.length > 1 ? safeFileName('-VF.zip') : files[0].name;
+    download(files.length > 1 ? makeZip(files) : new Blob([files[0].data], { type: 'font/ttf' }), name);
     toast(t('exported', { name }));
   } catch (err) {
     toast(`${t('previewError')}: ${err.message}`, 'error');
   }
 }
 
-// Instances: every master plus the steps between them, each a font file.
-async function exportInstances() {
+// ================================================================ family
+// A family, as in Glyphs: masters are what you draw (Regular, Bold, their
+// italics), styles are the fonts that come out (Light, Medium, Bold Italic…).
+
+const italicName = (n) => (n === 'Regular' ? 'Italic' : `${n} Italic`);
+
+// Everything that shows the masters after they changed.
+function mastersChanged() {
+  app.history.clear(); // undo steps hold outlines of one master
+  refreshComponents(app.project);
+  recompose(app.project);
+  markChanged();
+  renderAll();
+  if (app.mode === 'editor') { renderEditorOptions(); renderGlyphPanel(); editor.render(); }
+  if (app.mode === 'grid') renderGridOptions();
+  renderPreviewText();
+}
+
+// A bolder (delta > 0) or lighter master: a copy of the default with every
+// outline offset by delta, the sidebearings kept. Glyphs where the offset
+// would change the points stay a plain copy, to be drawn by hand. Returns
+// how many those are.
+function addWeightMaster(name, loc, delta) {
+  const p = app.project;
+  settleSmart();
+  const id = addMaster(p, name, loc);
+  let rough = 0;
+  const shift = (q) => ({ x: Math.round(q.x + delta), y: q.y });
+  for (const g of p.glyphs) {
+    const l = g.layers[id];
+    if (!l?.contours.length || !delta) continue;
+    let cs;
+    try { cs = offsetContours(l.contours, delta); } catch { cs = null; }
+    if (!cs || incompatibility(l, { contours: cs })) { rough++; continue; }
+    cs = cs.map((c) => ({ ...c, nodes: c.nodes.map((n) => ({ ...n, ...shift(n), ...(n.in ? { in: shift(n.in) } : {}), ...(n.out ? { out: shift(n.out) } : {}) })) }));
+    g.layers[id] = { contours: cs, advance: Math.max(0, Math.round(l.advance + 2 * delta)) };
+  }
+  // A family with italics gets the italic twin of the new master too.
+  const it = p.masters.find((m) => m.italic);
+  if (it) addItalicMasters(p, it.italicAngle, italicName);
+  fitAxis(p);
+  return rough;
+}
+
+const WEIGHT_PRESETS = { bold: [['Bold', 700, 30], ['Black', 900, 60]], light: [['Light', 300, -20], ['Thin', 100, -35]] };
+
+async function familyDialog() {
+  endTransform();
   settleSmart();
   const p = app.project;
-  if (!hasMasters(p)) return;
-  const ms = [...p.masters].sort((a, b) => a.loc - b.loc);
-  const names = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black' };
-  const def2 = p.masters[0].loc2;
-  const list = ms.map((m) => [m.loc, m.name, m.loc2]);
-  const seen = new Set(list.map(([l, , l2]) => `${l}/${l2}`));
-  if (p.axis.tag === 'wght') {
-    for (let w = 100; w <= 900; w += 100) {
-      if (w > ms[0].loc && w < ms[ms.length - 1].loc && !seen.has(`${w}/${def2}`)) { seen.add(`${w}/${def2}`); list.push([w, names[w], def2]); }
+  let styles = structuredClone(familyStyles(p));
+  let open = null; // the quick form shown: 'bold', 'light' or 'italic'
+  let toMasters = false;
+  const preset = (kind) => WEIGHT_PRESETS[kind].find(([, w]) => !p.masters?.some((m) => !m.italic && m.loc === w)) || WEIGHT_PRESETS[kind][0];
+  const masterRows = () => (p.masters?.length ? p.masters : [{ name: p.info.styleName || 'Regular', loc: p.info.weight || 400 }])
+    .map((m) => `<div class="fam-master"><span>${esc(m.name)}</span><span class="mono">${esc(m.loc)}</span>${m.italic ? `<span class="fam-tag">${esc(t('famItalic'))} ${esc(m.italicAngle)}°</span>` : '<span></span>'}</div>`).join('');
+  const quick = () => {
+    if (open === 'italic') {
+      return `<div class="fam-quick"><label>${esc(t('famAngle'))}<input type="number" data-q="angle" value="10" min="1" max="30" step="1"><em>°</em></label>
+        <button type="button" class="btn btn-primary" data-fam="do">${esc(t('famAdd'))}</button></div>`;
     }
-  }
-  let n = 0;
-  for (const [loc, name, loc2] of list.sort((a, b) => a[0] - b[0])) {
-    const q = instanceAt(p, loc, name, loc2);
-    refreshComponents(q); recompose(q);
-    try {
-      const r = await fetch('/api/export?format=ttf', { method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(q) });
-      if (!r.ok) throw new Error(await r.text());
-      download(await r.blob(), safeFileName(`-${name.replace(/\s+/g, '')}.ttf`));
-      n++;
-    } catch (err) { toast(`${name}: ${err.message}`, 'error'); }
-  }
-  toast(t('msExported', { n }));
+    const [name, w, d] = preset(open);
+    return `<div class="fam-quick">
+      <label>${esc(t('famName'))}<input type="text" data-q="name" value="${esc(name)}" maxlength="40"></label>
+      <label>${esc(t('famWeight'))}<input type="number" data-q="loc" value="${w}" min="1" max="1000" step="1"></label>
+      <label data-tip="${esc(t('famOffsetTip'))}">${esc(t('famOffset'))}<input type="number" data-q="delta" value="${d}" min="-100" max="100" step="1"></label>
+      <button type="button" class="btn btn-primary" data-fam="do">${esc(t('famAdd'))}</button></div>`;
+  };
+  const styleRows = () => styles.map((s, i) => `<div class="fam-style">
+      <input type="checkbox" data-st="${i}:export" ${s.export ? 'checked' : ''} aria-label="${esc(t('famExportIt'))}">
+      <input type="text" data-st="${i}:name" value="${esc(s.name)}" maxlength="64" aria-label="${esc(t('famName'))}">
+      <input type="number" data-st="${i}:weight" value="${esc(s.weight)}" step="1" aria-label="${esc(t('famWeight'))}">
+      ${hasItalic(p) ? `<label class="check"><input type="checkbox" data-st="${i}:italic" ${s.italic ? 'checked' : ''}>${esc(t('famItalic'))}</label>` : '<span></span>'}
+      <button type="button" class="btn btn-icon" data-fam="del" data-i="${i}" aria-label="${esc(t('delete'))}" data-tip="${esc(t('delete'))}">${icon('close', 14)}</button>
+    </div>`).join('');
+  const body = () => `
+    <h3>${esc(t('famMasters'))}</h3>
+    <div class="fam-masters">${masterRows()}</div>
+    <div class="fam-actions">
+      <button type="button" class="btn" data-fam="bold" aria-pressed="${open === 'bold'}">${icon('plus', 14)}<span>${esc(t('famBold'))}</span></button>
+      <button type="button" class="btn" data-fam="light" aria-pressed="${open === 'light'}">${icon('plus', 14)}<span>${esc(t('famLight'))}</span></button>
+      <button type="button" class="btn" data-fam="italic" aria-pressed="${open === 'italic'}" ${hasItalic(p) ? `disabled data-tip="${esc(t('famHasItalic'))}"` : ''}>${icon('plus', 14)}<span>${esc(t('famItalicAdd'))}</span></button>
+      ${hasMasters(p) ? `<button type="button" class="btn" data-fam="masters">${icon('settings', 14)}<span>${esc(t('famEditMasters'))}</span></button>` : ''}
+    </div>
+    ${open ? quick() : ''}
+    <h3>${esc(t('famStyles'))} <span class="fam-count">${esc(t('famCount', { n: styles.filter((s) => s.export).length }))}</span></h3>
+    ${styles.length ? `<div class="fam-styles">${styleRows()}</div>` : `<p class="hint">${esc(t('famNoStyles'))}</p>`}
+    ${hasMasters(p) ? `<div class="fam-actions">
+      <button type="button" class="btn" data-fam="standard">${esc(t('famStandard'))}</button>
+      <button type="button" class="btn" data-fam="addStyle">${icon('plus', 14)}<span>${esc(t('famAddStyle'))}</span></button></div>` : ''}`;
+
+  const data = await showDialog({
+    title: t('famTitle', { name: p.info.familyName }),
+    cls: 'family-dlg',
+    body: body(),
+    okLabel: t('ok'),
+    onOpen: (dlg) => {
+      const form = dlg.querySelector('form');
+      const box = dlg.querySelector('.body');
+      const redraw = () => { box.innerHTML = body(); };
+      form.addEventListener('input', (e) => {
+        const [i, k] = (e.target.dataset.st || '').split(':');
+        if (!k) return;
+        const s = styles[Number(i)];
+        if (k === 'name') s.name = e.target.value;
+        else if (k === 'weight') s.weight = Number(e.target.value);
+        else s[k] = e.target.checked;
+        if (k === 'export') dlg.querySelector('.fam-count').textContent = t('famCount', { n: styles.filter((x) => x.export).length });
+      });
+      form.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-fam]');
+        if (!b) return;
+        e.preventDefault();
+        const act = b.dataset.fam;
+        if (act === 'bold' || act === 'light' || act === 'italic') { open = open === act ? null : act; redraw(); return; }
+        if (act === 'masters') { toMasters = true; dlg.close(); return; }
+        if (act === 'standard') styles = defaultStyles(p);
+        if (act === 'addStyle') styles.push({ name: 'Medium', weight: 500, ...(p.axis2 ? { width: p.masters[0].loc2 ?? 100 } : {}), italic: false, export: true });
+        if (act === 'del') styles.splice(Number(b.dataset.i), 1);
+        if (act === 'do') {
+          const q = (k) => dlg.querySelector(`[data-q="${k}"]`)?.value;
+          const before = defaultStyles(p);
+          const custom = JSON.stringify(styles) !== JSON.stringify(before);
+          if (open === 'italic') {
+            addItalicMasters(p, Math.max(1, Math.min(30, Number(q('angle')) || 10)), italicName);
+            if (custom) for (const s of styles.filter((x) => !x.italic)) styles.push({ ...s, name: italicName(s.name), italic: true });
+            toast(t('famItalicDone'));
+          } else {
+            const name = String(q('name') || '').trim() || preset(open)[0];
+            const rough = addWeightMaster(name, Math.round(Number(q('loc')) || preset(open)[1]), Math.round(Number(q('delta')) || 0));
+            toast(rough ? t('famRough', { name, n: rough }) : t('famWeightDone', { name }));
+          }
+          if (!custom) styles = defaultStyles(p);
+          open = null;
+          mastersChanged();
+        }
+        redraw();
+      });
+    },
+  });
+  if (toMasters) { mastersDialog(); return; }
+  if (!data) return;
+  const clean = styles.filter((s) => s.name.trim() && Number.isFinite(s.weight));
+  if (JSON.stringify(clean) === JSON.stringify(defaultStyles(p))) delete p.styles;
+  else p.styles = clean;
+  markChanged();
+  renderMenus();
 }
+
+// The fonts of the family, one per style that is switched on: [{ name, q }].
+function familyFonts() {
+  settleSmart();
+  const p = app.project;
+  const fam = (p.info.familyName || 'Font').replace(/\s+/g, '');
+  const out = [];
+  for (const s of familyStyles(p).filter((x) => x.export)) {
+    const q = instanceAt(p, s.weight, s.name, s.width, s.italic);
+    if (!q) continue;
+    refreshComponents(q); recompose(q);
+    out.push({ file: `${fam}-${s.name.replace(/\s+/g, '')}`, name: s.name, q });
+  }
+  return out;
+}
+
+// All styles of the family in one .zip.
+async function exportFamily(format = 'ttf') {
+  if (!hasMasters(app.project)) return;
+  const files = [];
+  for (const f of familyFonts()) {
+    try {
+      const r = await fetch(`/api/export?format=${format}`, { method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(f.q) });
+      if (!r.ok) throw new Error(await r.text());
+      files.push({ name: `${f.file}.${format}`, data: new Uint8Array(await r.arrayBuffer()) });
+    } catch (err) { toast(`${f.name}: ${err.message}`, 'error'); }
+  }
+  if (!files.length) return;
+  const name = safeFileName('-family.zip');
+  download(makeZip(files), name);
+  toast(t('famExported', { n: files.length, name }));
+}
+
+// Every style of the family into the system, so Word or Figma show them
+// as one family (Bold and Italic buttons included).
+async function installFamily() {
+  if (!hasMasters(app.project)) return;
+  let n = 0;
+  for (const f of familyFonts()) {
+    try {
+      const r = await fetch('/api/install-font', { method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(f.q) });
+      if (!r.ok) throw new Error(await r.text());
+      n++;
+    } catch (err) { toast(`${f.name}: ${err.message}`, 'error'); }
+  }
+  if (n) toast(t('famInstalled', { n }));
+}
+
 
 // ================================================================ colour fonts
 
@@ -5089,7 +5290,7 @@ const COMMANDS = {
   snapMenu: () => { snapMenuOpen = !snapMenuOpen; renderEditorOptions(); },
   pxDraw: () => { editor.pixelErase = false; renderEditorOptions(); }, pxErase: () => { editor.pixelErase = true; renderEditorOptions(); },
   newCorner: () => newPartGlyph('corner'), newBrush: () => newPartGlyph('brush'),
-  mastersDialog: () => mastersDialog(), exportInstances: () => exportInstances(),
+  mastersDialog: () => mastersDialog(),
   ulFitCap: () => fitUnderlay('cap'), ulFitX: () => fitUnderlay('x'), ulFitAll: () => fitUnderlay('all'),
 };
 
@@ -5254,8 +5455,9 @@ async function updatePreview() {
   const seq = ++previewSeq;
   try {
     let body = projectJSON();
-    if (app.extended && hasMasters(app.project) && app.previewLoc !== undefined) {
-      const q = instanceAt(app.project, app.previewLoc, undefined, app.previewLoc2);
+    if (hasMasters(app.project) && (app.previewLoc !== undefined || app.previewItalic)) {
+      const at = app.previewLoc ?? app.project.masters[0].loc;
+      const q = instanceAt(app.project, at, undefined, app.previewLoc2, !!app.previewItalic && hasItalic(app.project)) || instanceAt(app.project, at, undefined, app.previewLoc2);
       refreshComponents(q); recompose(q);
       body = serialize(q);
     }
@@ -5301,7 +5503,7 @@ function renderPreviewFeatures() {
   if (app.extended) for (const g of app.project.glyphs) { const f = formOf(g.name); if (f && !found.has(f.tag + (f.lang || ''))) found.set(f.tag + (f.lang || ''), f); }
   // Numerators and denominators also make fractions: "1/2" with frac on.
   if (found.has('numr') && found.has('dnom')) found.set('frac', { tag: 'frac', label: t('pfFrac') });
-  const axis = app.extended && hasMasters(app.project) ? app.project.axis : null;
+  const axis = hasMasters(app.project) ? app.project.axis : null;
   if (!found.size && !axis) { bar.innerHTML = ''; bar.hidden = true; return; }
   bar.hidden = false;
   const loc = app.previewLoc ?? app.project.masters?.find((m) => m.id === activeId(app.project))?.loc;
@@ -5311,7 +5513,8 @@ function renderPreviewFeatures() {
     + (axis2 && axis2.min < axis2.max ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis2.tag)}<input type="range" data-pf-axis="2" min="${esc(axis2.min)}" max="${esc(axis2.max)}" step="1" value="${esc(loc2)}"><output class="mono">${esc(loc2)}</output></label>` : '');
   const tags = [...found.values()].filter((f) => f.tag !== 'locl');
   const langs = [...found.values()].filter((f) => f.tag === 'locl');
-  bar.innerHTML = axisHTML + (tags.length || langs.length ? `<span class="opt-label">${esc(t('pfTitle'))}</span>` : '')
+  const italicHTML = hasItalic(app.project) ? `<label class="check"><input type="checkbox" data-pf-italic ${app.previewItalic ? 'checked' : ''}>${esc(t('famItalic'))}</label>` : '';
+  bar.innerHTML = axisHTML + italicHTML + (tags.length || langs.length ? `<span class="opt-label">${esc(t('pfTitle'))}</span>` : '')
     + tags.map((f) => `<label class="check" data-tip="${esc(f.tag)}"><input type="checkbox" data-pf="${f.tag}" ${previewFeats.has(f.tag) ? 'checked' : ''}>${esc(f.label)}</label>`).join('')
     + (langs.length ? `<label>${esc(t('pfLang'))}<select data-pf-lang><option value="">—</option>${langs.map((f) => `<option value="${f.lang}" ${previewLang === f.lang ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}</select></label>` : '');
 }

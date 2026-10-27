@@ -93,12 +93,22 @@ export function validateProject(p) {
     p.axis = axis(p.axis, 'wght', 100, 900);
     if (p.axis2) p.axis2 = axis(p.axis2, 'wdth', 100, 100);
     for (const m of p.masters) if (typeof m.name !== 'string') m.name = m.id;
+    p.masters.forEach((m, i) => {
+      if (i === 0 || m.italic !== true) { delete m.italic; delete m.italicAngle; return; }
+      m.italicAngle = Number.isFinite(m.italicAngle) ? Math.max(-45, Math.min(45, m.italicAngle)) : 10;
+    });
     // Kerning of the other masters (none = the default's).
     p.masters.forEach((m, i) => { if (i === 0 || !m.kerning) delete m.kerning; else m.kerning = cleanKerning(m.kerning); });
   }
   if (!p.masters || !p.axis2 || typeof p.axis2 !== 'object') delete p.axis2;
   else for (const m of p.masters) if (!Number.isFinite(m.loc2)) m.loc2 = 100;
   delete p.activeMaster;
+  // The styles of a family: name, weight, width, upright or italic.
+  p.styles = (Array.isArray(p.styles) && p.masters ? p.styles : [])
+    .filter((s) => s && typeof s.name === 'string' && s.name.trim() && Number.isFinite(s.weight))
+    .slice(0, 64)
+    .map((s) => ({ name: s.name.trim().slice(0, 64), weight: s.weight, ...(Number.isFinite(s.width) ? { width: s.width } : {}), italic: s.italic === true, export: s.export !== false }));
+  if (!p.styles.length) delete p.styles;
   p.palette = (Array.isArray(p.palette) ? p.palette : []).filter((c) => typeof c === 'string' && /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(c)).slice(0, 64);
   if (!p.palette.length) delete p.palette;
   for (const g of p.glyphs) {

@@ -96,8 +96,20 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 	variable := f == VarTTF
 	if variable {
 		f = TTF
+		// A variable font is upright or italic: it is made of the masters
+		// of its own kind (the page sends each group as a project).
+		var ms []project.Master
+		for _, m := range p.Masters {
+			if m.Italic == p.Masters[0].Italic {
+				ms = append(ms, m)
+			}
+		}
+		p.Masters = ms
 		if len(p.Masters) > 1 {
 			p.Info.Weight = int(math.Round(p.Masters[0].Loc))
+		}
+		if p.Masters != nil && p.Masters[0].Italic {
+			p.Info.ItalicAngle = -math.Abs(p.Masters[0].ItalicAngle)
 		}
 	}
 	fd := prepare(p, f)
@@ -336,9 +348,15 @@ func makeNames(in project.Info) names {
 	switch strings.ToLower(in.StyleName) {
 	case "regular", "bold", "italic", "bold italic":
 	default:
+		// Four-style naming for old apps: "Light Italic" is the Italic of
+		// the family "X Light", so the Italic button finds it from Light.
 		n.typoFamily, n.typoStyle = n.family, n.style
-		n.family = n.family + " " + n.style
-		n.style = "Regular"
+		base, style := n.style, "Regular"
+		if lower := strings.ToLower(base); strings.HasSuffix(lower, " italic") {
+			base, style = strings.TrimSpace(base[:len(base)-len(" italic")]), "Italic"
+		}
+		n.family = n.family + " " + base
+		n.style = style
 	}
 	n.full = in.FamilyName + " " + in.StyleName
 	n.version = "Version " + in.Version

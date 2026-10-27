@@ -543,14 +543,27 @@ func importDesignspace(files map[string][]byte, dsName string, roots []string) (
 	if len(ds.Axes) == 0 || len(ds.Sources) < 2 {
 		return nil, 0, errors.New("designspace: needs an axis and two sources")
 	}
-	axes := ds.Axes
+	// An Italic axis (ital) is not blended: it marks the italic masters.
+	italName := ""
+	axes := ds.Axes[:0:0]
+	for _, a := range ds.Axes {
+		if strings.EqualFold(a.Tag, "ital") {
+			italName = a.Name
+			continue
+		}
+		axes = append(axes, a)
+	}
+	if len(axes) == 0 {
+		return nil, 0, errors.New("designspace: no axis to blend")
+	}
 	if len(axes) > 2 {
 		axes = axes[:2]
 	}
 	type src struct {
-		name string
-		loc  []float64
-		font *ufoFont
+		name   string
+		loc    []float64
+		font   *ufoFont
+		italic bool
 	}
 	var srcs []src
 	for _, s := range ds.Sources {
@@ -582,7 +595,13 @@ func importDesignspace(files map[string][]byte, dsName string, roots []string) (
 		if name == "" {
 			name = u.project.Info.StyleName
 		}
-		srcs = append(srcs, src{name, loc, u})
+		italic := false
+		for _, d := range s.Location {
+			if italName != "" && (d.Name == italName || strings.EqualFold(d.Name, "ital")) && d.XValue > 0 {
+				italic = true
+			}
+		}
+		srcs = append(srcs, src{name, loc, u, italic})
 	}
 	if len(srcs) < 2 {
 		return nil, 0, errors.New("designspace: the sources are missing")
@@ -590,7 +609,7 @@ func importDesignspace(files map[string][]byte, dsName string, roots []string) (
 	// The default source first.
 	def := 0
 	for i, s := range srcs {
-		at := true
+		at := !s.italic
 		for k, a := range axes {
 			at = at && s.loc[k] == a.Default
 		}
@@ -606,7 +625,13 @@ func importDesignspace(files map[string][]byte, dsName string, roots []string) (
 		p.Axis2 = &project.Axis{Tag: axes[1].Tag, Min: axes[1].Minimum, Max: axes[1].Maximum}
 	}
 	for i, s := range srcs {
-		m := project.Master{ID: fmt.Sprintf("m%d", i), Name: s.name, Loc: s.loc[0]}
+		m := project.Master{ID: fmt.Sprintf("m%d", i), Name: s.name, Loc: s.loc[0], Italic: s.italic}
+		if s.italic {
+			m.ItalicAngle = math.Abs(s.font.project.Info.ItalicAngle)
+			if m.ItalicAngle == 0 {
+				m.ItalicAngle = 10
+			}
+		}
 		if len(axes) > 1 {
 			m.Loc2 = s.loc[1]
 		}

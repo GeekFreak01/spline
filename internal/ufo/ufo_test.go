@@ -134,6 +134,41 @@ func TestDesignspace(t *testing.T) {
 	}
 }
 
+// Italic masters go out on a discrete ital axis and come back italic.
+func TestDesignspaceItalic(t *testing.T) {
+	p := demo(t)
+	p.Axis = &project.Axis{Tag: "wght", Min: 400, Max: 700}
+	p.Masters = []project.Master{{ID: "m0", Name: "Regular", Loc: 400}, {ID: "m1", Name: "Bold", Loc: 700},
+		{ID: "m2", Name: "Italic", Loc: 400, Italic: true, ItalicAngle: 12}}
+	for i := range p.Glyphs {
+		g := &p.Glyphs[i]
+		g.Layers = map[string]project.Layer{"m1": {Advance: g.Advance, Contours: g.Contours}, "m2": {Advance: g.Advance, Contours: g.Contours}}
+	}
+	data, _, err := Export(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, _, err := Import(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Masters) != 3 || q.Masters[0].Italic || q.Axis == nil || q.Axis.Tag != "wght" {
+		t.Fatalf("masters %+v axis %+v", q.Masters, q.Axis)
+	}
+	n := 0
+	for _, m := range q.Masters {
+		if m.Italic {
+			n++
+			if m.Name != "Italic" || m.Loc != 400 || m.ItalicAngle != 12 {
+				t.Errorf("italic master %+v", m)
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d italic masters", n)
+	}
+}
+
 // A plist nested millions deep is an error, not a crash.
 func TestDeepPlist(t *testing.T) {
 	deep := strings.Repeat("<array>", 3_000_000) + strings.Repeat("</array>", 3_000_000)

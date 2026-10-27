@@ -121,6 +121,19 @@ type Master struct {
 	// Kerning of this master (not the default's, which is Project.Kerning);
 	// nil means the same as the default.
 	Kerning map[string]map[string]float64 `json:"kerning,omitempty"`
+	// Italic masters make the italic styles of the family; ItalicAngle is
+	// their slant in degrees to the right. The default master is upright.
+	Italic      bool    `json:"italic,omitempty"`
+	ItalicAngle float64 `json:"italicAngle,omitempty"`
+}
+
+// Style is one font of the family: a place on the axes, upright or italic.
+type Style struct {
+	Name   string  `json:"name"`
+	Weight float64 `json:"weight"`
+	Width  float64 `json:"width,omitempty"`
+	Italic bool    `json:"italic,omitempty"`
+	Export bool    `json:"export"`
 }
 
 // Anchor is a named point of a glyph.
@@ -232,6 +245,9 @@ type Project struct {
 	Axis    *Axis    `json:"axis,omitempty"`
 	Axis2   *Axis    `json:"axis2,omitempty"` // a second axis, e.g. width
 	Masters []Master `json:"masters,omitempty"`
+	// Styles the family exports (extended: masters); none = every master
+	// and the standard weights between them.
+	Styles []Style `json:"styles,omitempty"`
 	// Palette of a colour font: "#RRGGBB" or "#RRGGBBAA" (extended mode).
 	Palette []string `json:"palette,omitempty"`
 }
@@ -346,6 +362,19 @@ func (p *Project) Validate() error {
 	for _, g := range p.Guides {
 		if (g.Axis != "x" && g.Axis != "y") || !okCoord(g.Pos) {
 			return errors.New("invalid guide")
+		}
+	}
+	if len(p.Styles) > 64 {
+		return errors.New("too many styles")
+	}
+	for _, st := range p.Styles {
+		if strings.TrimSpace(st.Name) == "" || len(st.Name) > 64 || !finite(st.Weight) || !finite(st.Width) {
+			return errors.New("invalid style")
+		}
+	}
+	for _, m := range p.Masters {
+		if !finite(m.ItalicAngle) || math.Abs(m.ItalicAngle) > 45 {
+			return fmt.Errorf("master %q has an invalid italic angle", m.Name)
 		}
 	}
 	if len(p.Glyphs) > maxGlyphs {

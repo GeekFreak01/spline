@@ -784,7 +784,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .part-row select { min-width: 0; }
 .mkeys-head { margin-top: 6px; cursor: help; }
 
-.dialog .ms-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px 90px; gap: 8px; align-items: center; margin-bottom: 6px; }
+.dialog .ms-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px 72px 80px; gap: 8px; align-items: center; margin-bottom: 6px; }
 .dialog .ms-head { color: var(--text-3); font-size: var(--fs-s); margin-bottom: 2px; }
 .compose-note.warn { border-color: var(--dot-orange); }
 .compose-note.warn p { color: var(--dot-orange); }
@@ -799,7 +799,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .sm-slider input[type="range"] { flex: 1; min-width: 0; }
 .sm-slider .with-unit { display: flex; align-items: center; gap: 6px; }
 .seg.sm-states { grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); }
-.dialog .ms-row.two { grid-template-columns: minmax(0, 1fr) 110px 110px 80px; }
+.dialog .ms-row.two { grid-template-columns: minmax(0, 1fr) 96px 96px 72px 76px; }
 
 .snap-pop { position: relative; }
 .ms-toggle[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
@@ -809,6 +809,23 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .snap-menu[hidden] { display: none; }
 .snap-menu kbd { margin-left: auto; color: var(--text-3); font: var(--fs-s) var(--font-mono, monospace); }
 .snap-menu .check { width: 100%; }
+
+/* Family dialog: masters, quick additions, the list of styles. */
+.dialog.family-dlg { width: min(580px, calc(100vw - 32px)); }
+.fam-masters { display: grid; gap: 2px; }
+.fam-master { display: grid; grid-template-columns: minmax(0, 1fr) 56px 120px; gap: 8px; align-items: center; padding: 4px 8px; background: var(--bg-input); border-radius: var(--radius); }
+.fam-master .mono, .fam-style input[type="number"] { font-family: var(--font-mono); }
+.fam-tag { color: var(--text-2); font-size: var(--fs-s); }
+.fam-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.fam-actions .btn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.fam-quick { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 8px; border: 1px solid var(--line-soft); border-radius: var(--radius); }
+.fam-quick label { display: flex; flex-direction: column; gap: 3px; color: var(--text-2); font-size: var(--fs-s); }
+.fam-quick label:has(em) { flex-direction: row; align-items: center; gap: 6px; }
+.fam-quick input[type="number"] { width: 80px; }
+.fam-quick em { font-style: normal; color: var(--text-3); }
+.fam-count { margin-left: 6px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-2); }
+.fam-styles { display: grid; gap: 4px; max-height: 260px; overflow-y: auto; }
+.fam-style { display: grid; grid-template-columns: 20px minmax(0, 1fr) 84px 92px 28px; gap: 8px; align-items: center; }
 
 /* A filter dialog leaves the canvas visible: the result shows there. */
 .dialog.filter-dlg { width: 340px; margin: 96px 300px auto auto; }

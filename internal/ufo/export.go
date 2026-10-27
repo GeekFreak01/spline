@@ -96,7 +96,11 @@ func writeUFO(z *zip.Writer, dir string, p *project.Project, mi int) error {
 			masterID = ""
 		}
 	}
-	if err := put("fontinfo.plist", writePlist(fontInfo(p.Info, style, weight))); err != nil {
+	info := p.Info
+	if len(p.Masters) > 1 && p.Masters[mi].Italic {
+		info.ItalicAngle = -math.Abs(p.Masters[mi].ItalicAngle)
+	}
+	if err := put("fontinfo.plist", writePlist(fontInfo(info, style, weight))); err != nil {
 		return err
 	}
 
@@ -380,6 +384,18 @@ func designspace(p *project.Project, sources []string) []byte {
 			}
 			return m.Loc2
 		}})
+	}
+	// Italic masters: a discrete Italic axis, 0 upright and 1 italic.
+	for _, m := range p.Masters {
+		if m.Italic {
+			axes = append(axes, ax{tag: "ital", loc: func(m project.Master) float64 {
+				if m.Italic {
+					return 1
+				}
+				return 0
+			}})
+			break
+		}
 	}
 	names := map[string]string{"wght": "Weight", "wdth": "Width", "slnt": "Slant", "ital": "Italic", "opsz": "Optical size"}
 	for i := range axes {
