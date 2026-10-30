@@ -282,7 +282,7 @@ The simple mode stays simple. Everything for serious type work switches on in **
 
 ### Updates
 
-Spline checks once a day whether a new version is out (and on Help → Check for Updates). If there is one, the status bar shows "Version … available". A click on it opens the latest release on GitHub: download `Spline-Setup-<version>.exe` and run it, it installs over the old version in the same folder. When you already have the latest version, the badge is not shown.
+Spline checks by itself whether a new version is out (and on Help → Check for Updates). If there is one, a window lists what changed. Update downloads the new version in the background: you can keep working, the status bar shows the percentage. Then Spline offers to restart, asks about unsaved changes and opens the same file. The download is checked against the checksum of the GitHub release. If the program cannot be updated in place (for example, it has no write access to its folder), Spline opens the release page. You can always come back later by clicking the label in the status bar.
 
 ### Icon for `.sp` files (Windows)
 
@@ -430,7 +430,7 @@ go build -ldflags "-H=windowsgui" -o spline.exe .
 ```
 </details>
 
-Ideas and fixes are welcome: open an issue or a pull request.
+Ideas and fixes are welcome: open an issue or send a pull request from your fork into `main`. How it works: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
