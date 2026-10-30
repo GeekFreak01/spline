@@ -13,7 +13,10 @@ jobs:
           fetch-depth: 0 # all tags and commits, for the release notes
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # The newest supported Go (security fixes in the standard library);
+          # go.mod only states the oldest Go the code builds with.
+          go-version: stable
+          check-latest: true
       - run: go test ./...
       - name: Build binaries
         run: |
@@ -31,13 +34,15 @@ jobs:
           build linux   amd64 spline-linux-amd64
           build linux   arm64 spline-linux-arm64
       # What changed since the previous version, from the commit messages:
-      # visible on the release page (and from the update badge in the app).
+      # visible on the release page and in the update window of the app.
       - name: Release notes
         run: bash .github/scripts/release-notes.sh "${GITHUB_REF_NAME}" > notes.md
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          files: dist/*
-          body_path: notes.md
+          name: binaries
+          path: |
+            dist/*
+            notes.md
 
   # Windows installer (Inno Setup): asks for the install folder, adds Start
   # menu / desktop shortcuts, .sp file association and an uninstaller.
@@ -48,7 +53,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # The newest supported Go (security fixes in the standard library);
+          # go.mod only states the oldest Go the code builds with.
+          go-version: stable
+          check-latest: true
       - name: Build spline.exe
         shell: bash
         run: |
@@ -58,13 +66,35 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          if (-not (Get-ChildItem "${env:ProgramFiles}*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
       - name: Build installer
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q "/DAppVersion=$version" installer\spline.iss
+          $iscc = (Get-ChildItem "${env:ProgramFiles}*\Inno Setup*\ISCC.exe" | Select-Object -First 1).FullName
+          & $iscc /Q "/DAppVersion=$version" installer\spline.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          files: dist/Spline-Setup-*.exe
+          name: installer
+          path: dist/Spline-Setup-*.exe
+
+  # A draft: nobody sees it, and no copy of Spline offers it, until it is
+  # checked and published by hand. Then the update reaches everyone.
+  draft:
+    needs: [build, installer]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mv artifacts/notes.md notes.md
+          (cd artifacts && sha256sum * > SHA256SUMS.txt)
+          gh release create "${GITHUB_REF_NAME}" artifacts/* --draft --verify-tag \
+            --title "${GITHUB_REF_NAME}" --notes-file notes.md --generate-notes

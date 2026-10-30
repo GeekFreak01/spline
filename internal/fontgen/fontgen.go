@@ -96,8 +96,21 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 	variable := f == VarTTF
 	if variable {
 		f = TTF
+		// A variable font is upright or italic: it is made of the masters
+		// of its own kind (the page sends each group as a project).
+		var ms []project.Master
+		for _, m := range p.Masters {
+			if m.Italic == p.Masters[0].Italic {
+				ms = append(ms, m)
+			}
+		}
+		p.Masters = ms
 		if len(p.Masters) > 1 {
 			p.Info.Weight = int(math.Round(p.Masters[0].Loc))
+		}
+		if p.Masters != nil && p.Masters[0].Italic {
+			p.Info.ItalicAngle = -p.Masters[0].ItalicAngle
+			p.Info.StyleName = italicStyle(p.Masters[0].Name)
 		}
 	}
 	fd := prepare(p, f)
@@ -193,7 +206,7 @@ func prepare(p *project.Project, f Format) *fontData {
 	// another font instead of showing an empty gap. Spaces stay.
 	src := []project.Glyph{notdef}
 	for _, g := range p.Glyphs {
-		if g.NoExport {
+		if g.NoExport || g.IsPart() {
 			continue
 		}
 		if len(g.Outline()) > 0 || (g.Unicode > 0 && unicode.IsSpace(rune(g.Unicode))) {
@@ -336,9 +349,15 @@ func makeNames(in project.Info) names {
 	switch strings.ToLower(in.StyleName) {
 	case "regular", "bold", "italic", "bold italic":
 	default:
+		// Four-style naming for old apps: "Light Italic" is the Italic of
+		// the family "X Light", so the Italic button finds it from Light.
 		n.typoFamily, n.typoStyle = n.family, n.style
-		n.family = n.family + " " + n.style
-		n.style = "Regular"
+		base, style := n.style, "Regular"
+		if lower := strings.ToLower(base); strings.HasSuffix(lower, " italic") {
+			base, style = strings.TrimSpace(base[:len(base)-len(" italic")]), "Italic"
+		}
+		n.family = n.family + " " + base
+		n.style = style
 	}
 	n.full = in.FamilyName + " " + in.StyleName
 	n.version = "Version " + in.Version
@@ -796,13 +815,32 @@ func isItalic(in project.Info) bool {
 	return in.ItalicAngle != 0 || strings.Contains(st, "italic") || strings.Contains(st, "oblique")
 }
 
+// isBold: only the Bold of the four-style link. Black is a Regular of its
+// own family (see makeNames), or Word would embolden it once more.
+func isBold(in project.Info) bool {
+	st := strings.ToLower(in.StyleName)
+	return st == "bold" || st == "bold italic"
+}
+
+// italicStyle names the italic of a style: "Bold" -> "Bold Italic",
+// "Regular" -> "Italic"; a name that says it already stays.
+func italicStyle(name string) string {
+	switch {
+	case name == "" || strings.EqualFold(name, "regular"):
+		return "Italic"
+	case strings.Contains(strings.ToLower(name), "italic"):
+		return name
+	}
+	return name + " Italic"
+}
+
 // fsSelection: ITALIC, BOLD or REGULAR, and USE_TYPO_METRICS.
 func fsSelection(in project.Info) uint16 {
 	var v uint16 = 0x80
 	if isItalic(in) {
 		v |= 0x01
 	}
-	if weightOf(in) >= 700 {
+	if isBold(in) {
 		v |= 0x20
 	}
 	if v&0x21 == 0 {
@@ -813,7 +851,7 @@ func fsSelection(in project.Info) uint16 {
 
 func macStyle(in project.Info) uint16 {
 	var v uint16
-	if weightOf(in) >= 700 {
+	if isBold(in) {
 		v |= 1
 	}
 	if isItalic(in) {

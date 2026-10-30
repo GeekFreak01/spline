@@ -168,7 +168,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>🧰 Drawing</h3>
-      Select · Pen (Bézier curves) · Brush with a stabilizer · Eraser · Rectangle · Ellipse · Knife · Hand · free transform <code>Ctrl+T</code> (scale, rotate, move, snapping) · path operations (unite, subtract, intersect, exclude, divide, remove overlap) · align and distribute relative to the selection, a key object or the glyph frame · exact coordinates of points and shapes · Simplify Outline removes extra points after the brush · underlay: drop a scan or photo of a letter and trace it · letters with diacritics (Й, Ё, À, é…) build themselves from the base letter and the mark.
+      Select · Pen (Bézier curves) · Brush with a stabilizer · Eraser · Rectangle · Ellipse · Knife · Hand · Text: edit a glyph right inside a word, the neighbours drawn grey with their widths and kerning, double-click a neighbour to edit it · free transform <code>Ctrl+T</code> (scale, rotate, move, snapping) · path operations (unite, subtract, intersect, exclude, divide, remove overlap) · align and distribute relative to the selection, a key object or the glyph frame · exact coordinates of points and shapes · Simplify Outline removes extra points after the brush · underlay: drop a scan or photo of a letter and trace it · letters with diacritics (Й, Ё, À, é…) build themselves from the base letter and the mark.
     </td>
     <td width="50%" valign="top">
       <h3>📐 Grid, rulers, transformations</h3>
@@ -178,7 +178,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>🔁 Import and export</h3>
-      SVG from Illustrator, Figma, Inkscape: as a file, by drag and drop or by pasting code (<code>Ctrl+V</code>); files named <code>A.svg</code>, <code>uni0416.svg</code>, <code>Ж.svg</code> go to their glyphs · glyphs from another <code>.sp</code> · a ready <code>.ttf</code>/<code>.otf</code> opens as a project · copying glyphs between projects · export to <code>.ttf</code> (TrueType) and <code>.otf</code> (CFF) with kerning, alternates and ligatures.
+      SVG from Illustrator, Figma, Inkscape: as a file, by drag and drop or by pasting code (<code>Ctrl+V</code>); files named <code>A.svg</code>, <code>uni0416.svg</code>, <code>Ж.svg</code> go to their glyphs · glyphs from another <code>.sp</code> · a ready <code>.ttf</code>/<code>.otf</code> or a UFO (<code>.ufoz</code>, a <code>.zip</code> with a <code>.designspace</code>) opens as a project · copying glyphs between projects · export to <code>.ttf</code> (TrueType) and <code>.otf</code> (CFF) with kerning, alternates and ligatures · a family (Glyph → Family…): bold, light and italic, styles from Thin to Black, every style exported as one <code>.zip</code>.
     </td>
     <td width="50%" valign="top">
       <h3>🪄 Comfort</h3>
@@ -198,7 +198,7 @@ The simple mode stays simple. Everything for serious type work switches on in **
       <br>
       <sub>The Ruler measures stems and counters; the Points panel holds the editing commands.</sub>
       <h3>✏️ Editing and spacing</h3>
-      Extremes, align in a line, break and join contours, even handles, first point, lasso, Tab through points, Alt-drag to copy · the Ruler tool: length, angle, stem widths · metric keys <code>=n</code>, <code>=o+10</code>, <code>=|</code> · sidebearings right in the kerning line · background and glyph snapshots.
+      Extremes, align in a line, break and join contours, even handles, first point, lasso, Tab through points, Alt-drag to copy · the Ruler tool: length, angle, stem widths · metric keys <code>=n</code>, <code>=o+10</code>, <code>=|</code> · sidebearings right in the kerning line · background and glyph snapshots · Open Corner (ears) and Reconnect back into a corner, segment deletion with <code>Alt+Delete</code>, an open end dragged onto another one joins it · alignment zones: Overshoot (zones) in Font Info, zones on the canvas, points in or near a zone are marked, OTF fonts get BlueValues.
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/en/ext-anchors.png" alt="The letter И with top and bottom anchors (orange diamonds), the Anchors panel with coordinates and Place Automatically, the preview “Йй Ёё — À É Ñ Ö Ü”" width="100%">
@@ -214,7 +214,7 @@ The simple mode stays simple. Everything for serious type work switches on in **
       <br>
       <sub>Special Form…: pick what the copy is for and the OpenType feature appears by itself.</sub>
       <h3>🔠 OpenType without code</h3>
-      Special Form…: small caps, figure styles, superscript and subscript, slashed zero, swash, stylistic sets, Bulgarian and Serbian forms, “1/2” fractions · feature checkboxes in the preview · font info: rights, weight, slant, line gap · WOFF2 and WOFF export for websites.
+      Special Form…: small caps, figure styles, superscript and subscript, slashed zero, swash, stylistic sets, Bulgarian and Serbian forms, “1/2” fractions · feature checkboxes in the preview · font info: rights, weight, slant, line gap · WOFF2 and WOFF export for websites · UFO export for Glyphs, FontLab, RoboFont and fontmake.
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/en/ext-table.png" alt="The glyph table: name, Unicode, width, sidebearings, tags “ready” and “check”, a note “the spur is too short”, Export checkboxes; the With a note filter and tags on the left" width="100%">
@@ -230,7 +230,7 @@ The simple mode stays simple. Everything for serious type work switches on in **
       <br>
       <sub>Regular and Bold masters, a weight slider in the preview.</sub>
       <h3>🎚️ Masters and variable fonts</h3>
-      One glyph drawn in several styles on the weight and width axes · the master switch above the canvas and in kerning · kerning of its own in every master · export of styles (Light, Medium…) and of a variable font where both outlines and kerning vary.
+      One glyph drawn in several styles on the weight and width axes · the master switch above the canvas and in kerning · kerning of its own in every master · “All masters”: the other masters' outlines over the glyph, red where a contour will not blend · “Edit all masters”: new points, deletions, cuts and ears go into every master at once · the Family window: a bold, light or italic master in one click, styles from Thin to Black with italics · family export as one .zip and install in the system · a variable font where both outlines and kerning vary: upright and italic separately · a UFO per master and a <code>.designspace</code>, italics on an <code>ital</code> axis.
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/en/ext-color.png" alt="The letter S painted red, the Colour window with a palette of six colours, and the multicoloured line “Spline Color Fonts” below" width="100%">
@@ -282,7 +282,7 @@ The simple mode stays simple. Everything for serious type work switches on in **
 
 ### Updates
 
-Spline checks once a day whether a new version is out (and on Help → Check for Updates). If there is one, the status bar shows "Version … available". A click on it opens the latest release on GitHub: download `Spline-Setup-<version>.exe` and run it, it installs over the old version in the same folder. When you already have the latest version, the badge is not shown.
+Spline checks by itself whether a new version is out (and on Help → Check for Updates). If there is one, a window lists what changed. Update downloads the new version in the background: you can keep working, the status bar shows the percentage. Then Spline offers to restart, asks about unsaved changes and opens the same file. The download is checked against the checksum of the GitHub release. If the program cannot be updated in place (for example, it has no write access to its folder), Spline opens the release page. You can always come back later by clicking the label in the status bar.
 
 ### Icon for `.sp` files (Windows)
 
@@ -357,7 +357,7 @@ Shortcuts work with any keyboard layout, including Russian. Any of them can be c
 
 | Key | Action |
 |---|---|
-| `V` `P` `B` `E` `R` `O` `K` `H` | Select, pen, brush, eraser, rectangle, ellipse, knife, hand |
+| `V` `P` `B` `E` `R` `O` `K` `H` `T` | Select, pen, brush, eraser, rectangle, ellipse, knife, hand, text |
 | `Ctrl+R` / `Ctrl+;` | Rulers / show guides |
 | `Ctrl+K` | Kerning (`Alt+←/→` ±10, `Alt+Shift+←/→` ±1, `Alt+G` show group, `Ctrl+]` / `Ctrl+[` samples) |
 | `Ctrl+T` | Free transform (`Ctrl+Z` inside cancels it) |
@@ -396,6 +396,7 @@ spline (a single Go executable)
 ├── window_other.go       a Chrome/Edge app window (macOS, Linux)
 ├── internal/project      the .sp format: reading and validation
 ├── internal/fontgen      font building: TrueType (glyf) and OpenType/CFF, GPOS, GSUB
+├── internal/ufo          UFO and .designspace: open and save
 └── web/                  the interface (HTML/CSS/JS, no build step), embedded with go:embed
     ├── js/trace.js       brush: bitmap → outline → Bézier curve fitting
     ├── js/svg.js         SVG import (paths, shapes, arcs, transforms)
@@ -429,7 +430,7 @@ go build -ldflags "-H=windowsgui" -o spline.exe .
 ```
 </details>
 
-Ideas and fixes are welcome: open an issue or a pull request.
+Ideas and fixes are welcome: open an issue or send a pull request from your fork into `main`. How it works: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

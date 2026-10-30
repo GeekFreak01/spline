@@ -2,16 +2,20 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
-	"io"
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,8 +48,16 @@ type webServer struct {
 	siteDir    string
 	trustProxy bool
 	static     fs.FS
-	builds     chan struct{} // limits concurrent font builds
+	builds     chan struct{} // limits concurrent font builds and imports
 	limiter    *rateLimiter
+	assets     sync.Map // path -> *asset, the embedded files ready to send
+}
+
+// asset is a static file with its ETag and, for text, a gzip copy.
+type asset struct {
+	data, gz []byte
+	etag     string
+	ctype    string
 }
 
 func runWeb(addr, hosts, siteDir string, trustProxy, dev bool) {
@@ -81,7 +93,6 @@ func runWeb(addr, hosts, siteDir string, trustProxy, dev bool) {
 
 func (ws *webServer) routes() http.Handler {
 	mux := http.NewServeMux()
-	files := http.FileServer(http.FS(ws.static))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			ws.serveIndex(w)
@@ -90,7 +101,10 @@ func (ws *webServer) routes() http.Handler {
 		if ws.serveSiteFile(w, r) {
 			return
 		}
-		files.ServeHTTP(w, r)
+		if ws.serveAsset(w, r) {
+			return
+		}
+		http.NotFound(w, r) // no folder listings
 	})
 	mux.HandleFunc("/api/session", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"version": version, "web": true, "privacy": ws.siteFileExists("privacy.html")})
@@ -102,7 +116,20 @@ func (ws *webServer) routes() http.Handler {
 			http.Error(w, "too many requests, try again in a minute", http.StatusTooManyRequests)
 			return
 		}
-		handleImportFont(w, r)
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		data, ok := readBody(w, r, webMaxBody)
+		if !ok {
+			return
+		}
+		release, ok := ws.slot(w, r)
+		if !ok {
+			return
+		}
+		defer release()
+		importFont(w, data)
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	return ws.guard(mux)
@@ -126,6 +153,11 @@ func (ws *webServer) guard(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Cache-Control", "no-cache")
+		// No framing of the editor by other sites, no plugins, no <base>
+		// tricks. Scripts are not restricted here: the site files may add
+		// third-party scripts (see head.html).
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -202,24 +234,26 @@ func (ws *webServer) handleExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too many requests, try again in a minute", http.StatusTooManyRequests)
 		return
 	}
-	format, err := fontgen.ParseFormat(r.URL.Query().Get("format"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	isUFO := r.URL.Query().Get("format") == "ufo"
+	var format fontgen.Format
+	if !isUFO {
+		var err error
+		if format, err = fontgen.ParseFormat(r.URL.Query().Get("format")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	body, ok := readBody(w, r, webMaxBody)
+	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, webMaxBody)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "project is too large", http.StatusRequestEntityTooLarge)
+	release, ok := ws.slot(w, r)
+	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	defer cancel()
-	select {
-	case ws.builds <- struct{}{}:
-		defer func() { <-ws.builds }()
-	case <-ctx.Done():
-		http.Error(w, "server is busy, try again", http.StatusServiceUnavailable)
+	defer release()
+	if isUFO {
+		writeUFO(w, body)
 		return
 	}
 	data, status, err := buildFont(body, format)
@@ -251,4 +285,71 @@ func (l *rateLimiter) allow(key string) bool {
 	}
 	l.counts[key]++
 	return l.counts[key] <= l.n
+}
+
+// slot waits (up to 20 s) for one of the build slots, so many visitors at
+// once cannot run more font builds or imports than the server has cores.
+func (ws *webServer) slot(w http.ResponseWriter, r *http.Request) (release func(), ok bool) {
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	select {
+	case ws.builds <- struct{}{}:
+		return func() { <-ws.builds }, true
+	case <-ctx.Done():
+		http.Error(w, "server is busy, try again", http.StatusServiceUnavailable)
+		return nil, false
+	}
+}
+
+// serveAsset sends an embedded file with an ETag (so a reload costs a 304,
+// not the whole file) and gzip for text when the browser takes it.
+// Directories and missing files are left to the caller.
+func (ws *webServer) serveAsset(w http.ResponseWriter, r *http.Request) bool {
+	name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+	if name == "" || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return false
+	}
+	var a *asset
+	if v, ok := ws.assets.Load(name); ok {
+		a = v.(*asset)
+	} else {
+		data, err := fs.ReadFile(ws.static, name)
+		if err != nil {
+			return false // a directory or nothing: no listing, a 404 from the file server
+		}
+		sum := sha256.Sum256(data)
+		a = &asset{data: data, etag: `"` + hex.EncodeToString(sum[:8]) + `"`, ctype: mime.TypeByExtension(path.Ext(name))}
+		if a.ctype == "" {
+			a.ctype = http.DetectContentType(data)
+		}
+		if strings.HasPrefix(a.ctype, "text/") || strings.Contains(a.ctype, "javascript") || strings.Contains(a.ctype, "json") || strings.Contains(a.ctype, "svg") {
+			var b bytes.Buffer
+			zw, _ := gzip.NewWriterLevel(&b, gzip.BestCompression)
+			zw.Write(data)
+			zw.Close()
+			if b.Len() < len(data) {
+				a.gz = b.Bytes()
+			}
+		}
+		ws.assets.Store(name, a)
+	}
+	h := w.Header()
+	h.Set("Content-Type", a.ctype)
+	h.Set("ETag", a.etag)
+	h.Set("Vary", "Accept-Encoding")
+	if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, a.etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return true
+	}
+	body := a.data
+	if a.gz != nil && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		h.Set("Content-Encoding", "gzip")
+		body = a.gz
+	}
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	if r.Method == http.MethodHead {
+		return true
+	}
+	w.Write(body)
+	return true
 }

@@ -2,8 +2,11 @@ package fontgen
 
 import (
 	"math"
+	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/GeekFreak01/spline/internal/project"
 )
 
 // buildCFF writes a minimal CFF (version 1) table with Type 2 charstrings.
@@ -28,6 +31,7 @@ func buildCFF(fd *fontData) []byte {
 	}
 
 	private := &writer{}
+	writeBlues(private, fd.info)
 	dictInt(private, 0)
 	private.u8(20) // defaultWidthX
 	dictInt(private, 0)
@@ -247,5 +251,44 @@ func csInt(w *writer, v int) {
 	default:
 		w.u8(28)
 		w.u16(uint16(int16(v)))
+	}
+}
+
+// writeBlues puts the alignment zones into the Private DICT: BlueValues
+// (the baseline zone and the zones above the x-height, cap height and
+// ascender) and OtherBlues (below the descender), each as deltas.
+// Overlapping zones (two lines at one height) are written once.
+func writeBlues(w *writer, in project.Info) {
+	o := in.Overshoot
+	if o <= 0 || o > 100 {
+		return
+	}
+	top := [][2]int{{-o, 0}, {in.XHeight, in.XHeight + o}, {in.CapHeight, in.CapHeight + o}, {in.Ascender, in.Ascender + o}}
+	sort.Slice(top, func(i, j int) bool { return top[i][0] < top[j][0] })
+	var blues []int
+	last := math.MinInt
+	for _, z := range top {
+		if z[0] <= last {
+			continue // overlaps the zone before
+		}
+		blues = append(blues, z[0], z[1])
+		last = z[1]
+	}
+	put := func(vals []int, op byte) {
+		prev := 0
+		for _, v := range vals {
+			dictInt(w, v-prev)
+			prev = v
+		}
+		w.u8(op)
+	}
+	put(blues, 6) // BlueValues
+	if d := in.Descender; d < -o {
+		put([]int{d - o, d}, 7) // OtherBlues
+	}
+	if o >= 25 { // BlueScale × the tallest zone must stay under 1
+		dictReal(w, 0.9/float64(o))
+		w.u8(12)
+		w.u8(9)
 	}
 }

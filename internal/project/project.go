@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode/utf8"
 )
 
 // FormatName is the value of the "format" field in every .sp file.
@@ -103,6 +104,9 @@ type Glyph struct {
 type Layer struct {
 	Contours []Contour `json:"contours"`
 	Advance  float64   `json:"advance"`
+	// Flat: Contours is the whole outline, with smart parts, corners and
+	// brushes already expanded (sent by the page for an export).
+	Flat bool `json:"flat,omitempty"`
 }
 
 // Axis is the design axis the masters sit on (weight for now).
@@ -121,6 +125,19 @@ type Master struct {
 	// Kerning of this master (not the default's, which is Project.Kerning);
 	// nil means the same as the default.
 	Kerning map[string]map[string]float64 `json:"kerning,omitempty"`
+	// Italic masters make the italic styles of the family; ItalicAngle is
+	// their slant in degrees to the right. The default master is upright.
+	Italic      bool    `json:"italic,omitempty"`
+	ItalicAngle float64 `json:"italicAngle,omitempty"`
+}
+
+// Style is one font of the family: a place on the axes, upright or italic.
+type Style struct {
+	Name   string  `json:"name"`
+	Weight float64 `json:"weight"`
+	Width  float64 `json:"width,omitempty"`
+	Italic bool    `json:"italic,omitempty"`
+	Export bool    `json:"export"`
 }
 
 // Anchor is a named point of a glyph.
@@ -135,7 +152,14 @@ type Component struct {
 	Glyph string  `json:"glyph"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
+	// Props are the slider values when the glyph is a smart part.
+	Props map[string]float64 `json:"props,omitempty"`
 }
+
+// IsPart tells a glyph that only serves as a part of others: a name
+// starting with "_" (_dash, _corner.serif, _brush.ink), as in Glyphs. Parts
+// are not exported into fonts; the glyphs using them carry their outline.
+func (g *Glyph) IsPart() bool { return len(g.Name) > 1 && g.Name[0] == '_' }
 
 // Outline is everything the glyph draws: its own contours and those of
 // its components.
@@ -191,6 +215,9 @@ type Info struct {
 	LineGap      int     `json:"lineGap,omitempty"`
 	UnderlinePos int     `json:"underlinePosition,omitempty"`
 	UnderlineW   int     `json:"underlineThickness,omitempty"`
+	// Overshoot: alignment zones of this height at every font line
+	// (0 = none); OTF fonts get them as BlueValues / OtherBlues.
+	Overshoot int `json:"overshoot,omitempty"`
 }
 
 // Guide is a ruler guide shared by all glyphs: a horizontal line at
@@ -222,6 +249,9 @@ type Project struct {
 	Axis    *Axis    `json:"axis,omitempty"`
 	Axis2   *Axis    `json:"axis2,omitempty"` // a second axis, e.g. width
 	Masters []Master `json:"masters,omitempty"`
+	// Styles the family exports (extended: masters); none = every master
+	// and the standard weights between them.
+	Styles []Style `json:"styles,omitempty"`
 	// Palette of a colour font: "#RRGGBB" or "#RRGGBBAA" (extended mode).
 	Palette []string `json:"palette,omitempty"`
 }
@@ -338,6 +368,19 @@ func (p *Project) Validate() error {
 			return errors.New("invalid guide")
 		}
 	}
+	if len(p.Styles) > 64 {
+		return errors.New("too many styles")
+	}
+	for _, st := range p.Styles {
+		if strings.TrimSpace(st.Name) == "" || utf8.RuneCountInString(st.Name) > 64 || !finite(st.Weight) || !finite(st.Width) {
+			return errors.New("invalid style")
+		}
+	}
+	for _, m := range p.Masters {
+		if !finite(m.ItalicAngle) || math.Abs(m.ItalicAngle) > 45 {
+			return fmt.Errorf("master %q has an invalid italic angle", m.Name)
+		}
+	}
 	if len(p.Glyphs) > maxGlyphs {
 		return fmt.Errorf("too many glyphs (%d, max %d)", len(p.Glyphs), maxGlyphs)
 	}
@@ -391,6 +434,20 @@ func (p *Project) Validate() error {
 				for _, h := range []*Point{n.In, n.Out} {
 					if h != nil && (!okCoord(h.X) || !okCoord(h.Y)) {
 						return fmt.Errorf("glyph %q has a handle out of range", g.Name)
+					}
+				}
+			}
+		}
+		// The other masters: the same limits as the default one.
+		for id, l := range g.Layers {
+			if !finite(l.Advance) || l.Advance < 0 || l.Advance > maxCoord || len(l.Contours) > maxContours {
+				return fmt.Errorf("glyph %q is invalid in master %q", g.Name, id)
+			}
+			for _, c := range l.Contours {
+				nodes += len(c.Nodes)
+				for _, n := range c.Nodes {
+					if !okCoord(n.X) || !okCoord(n.Y) || (n.In != nil && (!okCoord(n.In.X) || !okCoord(n.In.Y))) || (n.Out != nil && (!okCoord(n.Out.X) || !okCoord(n.Out.Y))) {
+						return fmt.Errorf("glyph %q has a point out of range in master %q", g.Name, id)
 					}
 				}
 			}

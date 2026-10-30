@@ -8,7 +8,9 @@ import {
 import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { isSmart, editingState, editState, saveSmart, addProp, removeProp, smartProblems } from './smart.js';
-import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis } from './masters.js';
+import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis, layerOf,
+  incompatibility, hasItalic, familyGroup, familyStyles, uniqueStyles, nextStyle, defaultStyles, addItalicMasters, fitAxis } from './masters.js';
+import { makeZip } from './zip.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
@@ -27,7 +29,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
+  set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } }, // false: full or unavailable
 };
 const AUTOSAVE_KEY = 'spline.autosave';
 const isMac = /Mac/.test(navigator.platform);
@@ -37,12 +39,12 @@ const MOD = isMac ? '⌘' : 'Ctrl+';
 setDefaults({
   simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [], exportWOFF: [], exportWOFF2: [], specialForm: [],
   undo: ['Ctrl+Z'], redo: ['Ctrl+Shift+Z', 'Ctrl+Y'], selectAll: ['Ctrl+A'], freeTransform: ['Ctrl+T'],
-  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
+  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], openCorner: [], reconnect: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
   snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
   'tool.measure': ['M'], selShapeCycle: ['Shift+V'], 'tool.pixel': ['G'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
-  'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'],
+  'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'], 'tool.text': ['T'],
   'op.unite': ['Ctrl+Alt+U'], 'op.subtract': ['Ctrl+Alt+M'], 'op.intersect': ['Ctrl+Alt+I'],
   'op.exclude': ['Ctrl+Alt+E'], 'op.divide': ['Ctrl+Alt+D'], 'op.removeOverlap': ['Ctrl+Alt+O'],
   autoSpacing: [], flipH: [], flipV: [], fontInfo: [], groups: [], newVariant: [], newLigature: [], shapeGroups: [], shortcuts: ['F1'],
@@ -58,6 +60,7 @@ const TOOLS = [
   { id: 'ellipse', icon: 'ellipse', key: 'O' },
   { id: 'knife', icon: 'knife', key: 'K' },
   { id: 'hand', icon: 'hand', key: 'H' },
+  { id: 'text', icon: 'type', key: 'T' },
   { id: 'measure', icon: 'ruler', key: 'M', ext: true },
   { id: 'pixel', icon: 'pixel', key: 'G', ext: true },
 ];
@@ -90,11 +93,18 @@ const app = {
 
 // ================================================================ helpers
 
+// An open dialog covers everything on the page: tooltips and toasts are
+// popovers, shown last, so they stay above it.
+function onTop(el) {
+  try { if (el.matches(':popover-open')) el.hidePopover(); el.showPopover(); } catch { /* an old browser: below the dialog */ }
+}
+
 function toast(msg, kind = 'ok') {
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
   el.innerHTML = icon(kind === 'error' ? 'alert' : 'check', 16) + `<span>${esc(msg)}</span>`;
   $('toasts').append(el);
+  onTop($('toasts'));
   setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 200); }, kind === 'error' ? 6000 : 2500);
 }
 
@@ -129,7 +139,8 @@ function dragDialog(dlg, cls) {
 }
 
 // Modal dialog. Resolves with FormData (OK) or null (cancel).
-function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true, onOpen = null, cls = '' }) {
+// extra: a third button between Cancel and OK; the promise then gives 'extra'.
+function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true, cancelLabel = t('cancel'), onOpen = null, cls = '', extra = '' }) {
   const dlg = $('dialog');
   dlg.className = `dialog ${cls}`.trim();
   dlg.removeAttribute('style');
@@ -137,21 +148,25 @@ function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', c
     <h2>${esc(title)}</h2>
     <div class="body">${body}</div>
     <div class="actions">
-      ${cancel ? `<button class="btn" value="cancel" formnovalidate>${esc(t('cancel'))}</button>` : ''}
+      ${cancel ? `<button class="btn" value="cancel" formnovalidate>${esc(cancelLabel)}</button>` : ''}
+      ${extra ? `<button class="btn" value="extra" formnovalidate>${esc(extra)}</button>` : ''}
       <button class="btn ${okClass}" value="ok">${esc(okLabel)}</button>
     </div>
   </form>`;
   return new Promise((resolve) => {
     const form = dlg.querySelector('form');
     let data = null;
-    form.addEventListener('submit', (e) => { if (e.submitter?.value === 'ok') data = new FormData(form); });
+    form.addEventListener('submit', (e) => {
+      if (e.submitter?.value === 'ok') data = new FormData(form);
+      else if (e.submitter?.value === 'extra') data = 'extra';
+    });
     // Enter in a field is OK (the browser would take the first button, Cancel).
     form.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' || e.defaultPrevented || e.isComposing || e.shiftKey || !e.target.matches('input:not([type=checkbox]):not([type=radio]), select')) return;
       e.preventDefault();
       form.querySelector('button[value=ok]').click();
     });
-    dlg.addEventListener('close', () => resolve(data), { once: true });
+    dlg.addEventListener('close', () => { hideTip(); resolve(data); }, { once: true });
     dlg.showModal();
     dragDialog(dlg, cls);
     const pos = cls && dialogPos.get(cls);
@@ -164,6 +179,16 @@ function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', c
 
 async function confirmDialog(msg, okLabel, danger = true) {
   return !!(await showDialog({ title: msg, body: '', okLabel, okClass: danger ? 'btn-danger' : 'btn-primary' }));
+}
+
+// The field being edited survives a redraw of its panel: arrows keep
+// stepping the value and Tab keeps its place.
+function keepFocus(render) {
+  const el = document.activeElement;
+  const attrs = el?.matches('input, select, textarea') ? [...el.attributes].filter((a) => a.name.startsWith('data-')) : [];
+  const key = el?.id ? `#${CSS.escape(el.id)}` : attrs.map((a) => `[${a.name}="${CSS.escape(a.value)}"]`).join('');
+  render();
+  if (key) document.querySelector(key)?.focus();
 }
 
 function glyphSVG(g, cls = 'glyph') {
@@ -201,7 +226,10 @@ function setProject(p, { fileName = null, fileHandle = null, serverFile = null }
   schedulePreview(0);
 }
 
+// Counts edits, so a save knows whether something changed while it ran.
+let editCount = 0;
 function setDirty(v) {
+  if (v) editCount++;
   app.dirty = v;
   $('dirtyDot').hidden = !v;
   updateTitle();
@@ -225,12 +253,23 @@ function markChanged() {
   schedulePreview();
 }
 
+// The browser keeps a copy of the project: it is offered back after a crash
+// or a window closed without saving. dirty tells whether it holds edits
+// that never reached the file.
+let autosaveFullShown = false;
 function autosave() {
-  store.set(AUTOSAVE_KEY, JSON.stringify({ fileName: app.fileName, project: projectJSON() }));
+  clearTimeout(autosaveTimer);
+  const ok = store.set(AUTOSAVE_KEY, JSON.stringify({ fileName: app.fileName, serverFile: app.serverFile, dirty: !!app.dirty, project: projectJSON() }));
+  if (ok) return;
+  // Too big for the browser's storage: an old copy must not come back later
+  // as if it were the latest.
+  try { localStorage.removeItem(AUTOSAVE_KEY); } catch { /* storage unavailable */ }
+  if (!autosaveFullShown) { autosaveFullShown = true; toast(t('autosaveFull'), 'error'); }
 }
 
 // Editor callbacks.
 app.commitGlyph = (g) => {
+  if (g) syncNewContours(g);
   markChanged();
   if (app.extended && hasMasters(app.project) && g) queueMicrotask(() => { if (app.current === g) renderGlyphPanel(); });
   if (editor.preview) queueMicrotask(previewFilter);
@@ -274,7 +313,7 @@ function menuDefs() {
     { id: 'menuFile', items: [
       { label: 'new', key: keyLabel('new'), run: newFontDialog },
       { label: 'open', key: keyLabel('open'), run: openDialog },
-      { label: 'openFont', run: () => pickFiles('font') },
+      { label: 'openFont', tip: 'openFontTip', run: () => pickFiles('font') },
       '-',
       { label: 'importSvg', key: keyLabel('importSvg'), run: () => pickFiles('svg') },
       { label: 'importSp', run: () => pickFiles('import') },
@@ -286,9 +325,15 @@ function menuDefs() {
       { label: 'exportOTF', key: keyLabel('exportOTF'), run: () => exportFont('otf') },
       { label: 'exportWOFF2', key: keyLabel('exportWOFF2'), run: () => exportFont('woff2'), ext: true },
       { label: 'exportWOFF', key: keyLabel('exportWOFF'), run: () => exportFont('woff'), ext: true },
-      { label: 'msExport', run: exportInstances, enabled: hasMasters(app.project || {}), ext: true },
-      { label: 'vfExport', run: exportVariable, enabled: hasMasters(app.project || {}), ext: true },
-      ...(app.platform?.canInstall ? [{ label: 'installFont', run: installFont }] : []),
+      { label: 'exportUFO', tip: 'exportUFOTip', run: () => exportFont('ufo'), ext: true },
+      '-',
+      { label: 'famExportTTF', run: () => exportFamily('ttf'), enabled: hasMasters(app.project || {}) },
+      { label: 'famExportWOFF2', run: () => exportFamily('woff2'), enabled: hasMasters(app.project || {}), ext: true },
+      { label: 'vfExport', run: exportVariable, enabled: hasMasters(app.project || {}) },
+      ...(app.platform?.canInstall ? [
+        { label: 'installFont', run: installFont },
+        { label: 'famInstall', run: installFamily, enabled: hasMasters(app.project || {}) },
+      ] : []),
       ...(app.platform?.canAssociate ? ['-', { label: 'associate', check: app.platform.associated, run: associateFiles }] : []),
     ] },
     { id: 'menuEdit', items: [
@@ -348,7 +393,7 @@ function menuDefs() {
       { label: 'bgCopy', key: keyLabel('bgCopy'), run: () => backgroundOp('copy'), enabled: inEditor, ext: true },
       { label: 'bgSwap', run: () => backgroundOp('swap'), enabled: inEditor, ext: true },
       { label: 'cmAddMenu', run: addComponentDialog, enabled: inEditor, ext: true },
-      { label: 'msMenu', run: mastersDialog, ext: true },
+      { label: 'msMenu', run: mastersDialog },
       '-',
       { label: 'wAnchors', run: () => openWindow('anchors'), enabled: inEditor, ext: true },
       { label: 'wPaint', run: () => openWindow('paint'), enabled: inEditor, ext: true },
@@ -365,6 +410,7 @@ function menuDefs() {
       { label: 'kgTitleMenu', key: keyLabel('groups'), run: () => groupsDialog() },
       { label: 'sgMenu', key: keyLabel('shapeGroups'), run: shapeGroupsDialog },
       { label: 'fontInfo', key: keyLabel('fontInfo'), run: editFontInfo },
+      { label: 'famMenu', run: familyDialog },
     ] },
     { id: 'menuFilter', items: [
       { text: `${t('fl_offset')}…`, run: () => openFilter('offset'), enabled: inEditor, ext: true },
@@ -376,8 +422,10 @@ function menuDefs() {
     ] },
     { id: 'menuWindow', items: [
       // Only the panels of the current view: glyphs or kerning.
-      ...PANELS.filter(([id]) => id.startsWith('kern') === (app.mode === 'kern'))
-        .map(([id, label]) => ({ label, check: !isHidden(id), run: () => setHidden(id, !isHidden(id)) })),
+      // Extended-mode panels only in that mode; a panel this view or glyph
+      // has nothing for (a smart part of a plain letter...) is greyed out.
+      ...PANELS.filter(([id]) => id.startsWith('kern') === (app.mode === 'kern') && (app.extended || !EXT_PANELS.has(id)))
+        .map(([id, label]) => ({ label, check: !isHidden(id), enabled: panelExists(id), run: () => setHidden(id, !isHidden(id)) })),
       { label: 'preview', check: !$('preview').hidden, run: () => setPreviewHidden(!$('preview').hidden) },
       '-',
       { label: 'resetPanels', run: () => { resetPanels(); setPreviewHidden(false); } },
@@ -412,7 +460,7 @@ function renderMenus() {
     <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="${openMenu === i}" data-menu="${i}">${esc(t(m.id))}</button>
     <div class="menu" role="menu" ${openMenu === i ? '' : 'hidden'}>
       ${m.items.map((it, j) => (it === '-' ? '<hr>' : `<button type="button" role="${it.check !== undefined ? 'menuitemcheckbox' : 'menuitem'}"
-        ${it.check !== undefined ? `aria-checked="${!!it.check}"` : ''} data-item="${i}:${j}" ${it.enabled === false ? 'disabled' : ''}>
+        ${it.check !== undefined ? `aria-checked="${!!it.check}"` : ''} data-item="${i}:${j}" ${it.enabled === false ? 'disabled' : ''}${it.tip ? ` data-tip="${esc(t(it.tip))}"` : ''}>
         <span>${it.check ? icon('check', 14) : ''}</span><span>${esc(it.text || t(it.label))}</span><kbd>${esc(it.key || '')}</kbd></button>`)).join('')}
     </div></div>`).join('');
 }
@@ -477,6 +525,7 @@ function showTip(el) {
   if (!text) return;
   tip.innerHTML = esc(text) + (el.dataset.key ? `<kbd>${esc(el.dataset.key)}</kbd>` : '');
   tip.hidden = false;
+  onTop(tip);
   const r = el.getBoundingClientRect();
   const tr = tip.getBoundingClientRect();
   const left = el.closest('.toolstrip') ? r.right + 6 : Math.min(window.innerWidth - tr.width - 4, Math.max(4, r.left + r.width / 2 - tr.width / 2));
@@ -553,7 +602,7 @@ const SMART_FILTERS = {
   forms: (g) => !!formOf(g.name),
   components: (g) => !!g.components?.length,
   notes: (g) => !!g.note,
-  noExport: (g) => !!g.noExport,
+  noExport: (g) => !!g.noExport || isPartGlyph(g),
   stale: (g) => outOfSync(app.project, g).length > 0,
 };
 function renderSmartFilters() {
@@ -608,7 +657,7 @@ function renderSideMetrics() {
   const el = $('sideMetrics');
   const sel = selectedGlyphs();
   el.innerHTML = sel.length === 1
-    ? `<div class="sub-head">${esc(charOf(sel[0]).trim() || sel[0].name)} · ${esc(sel[0].name)}</div>${metricInputs(sel[0])}`
+    ? `<div class="sub-head">${esc(glyphMark(sel[0]))} · ${esc(sel[0].name)}</div>${metricInputs(sel[0])}`
     : '';
 }
 
@@ -659,7 +708,7 @@ function onMetricChange(e) {
   const g = app.mode === 'editor' ? app.current : selectedGlyphs()[0];
   if (!g) return;
   applyMetric(g, role, Number(e.target.value));
-  if (app.mode === 'editor') { editor.afterEdit(false); } else { markChanged(); updateTile(g); renderSideMetrics(); renderInspector(); }
+  if (app.mode === 'editor') { editor.afterEdit(false); } else { markChanged(); updateTile(g); keepFocus(() => { renderSideMetrics(); renderInspector(); }); }
 }
 $('sideMetrics').addEventListener('change', onMetricChange);
 
@@ -673,7 +722,7 @@ function tileHTML(g) {
       : `<span class="ghost" aria-hidden="true">${esc(ch)}</span>`;
   const label = ch && ch.trim() ? `${ch} ${g.name} ${hex(g)}` : `${g.name} ${hex(g)}`;
   return `<button type="button" class="tile${drawn ? ' drawn' : ''}" role="option" data-name="${esc(g.name)}"
-      ${g.color ? `data-color="${g.color}"` : ''} aria-selected="${app.selected.has(g.name)}"
+      ${g.color ? `data-color="${esc(g.color)}"` : ''} aria-selected="${app.selected.has(g.name)}"
       tabindex="${g.name === app.focusName ? 0 : -1}" aria-label="${esc(label)}">
       ${body}<span class="label"><span>${esc(g.name)}</span><span class="code">${hex(g)}</span></span></button>`;
 }
@@ -692,7 +741,7 @@ function tableHTML(list) {
   const val = {
     name: (g) => g.name, unicode: (g) => g.unicode || 1e9, advance: (g) => g.advance,
     lsb: (g) => sides(g).lsb ?? -1e9, rsb: (g) => sides(g).rsb ?? -1e9, tags: (g) => (g.tags || []).join(','), note: (g) => g.note || '',
-    export: (g) => (g.noExport ? 1 : 0),
+    export: (g) => (g.noExport || isPartGlyph(g) ? 1 : 0),
   }[col];
   const rows = val ? [...list].sort((a, b) => {
     const x = val(a), y = val(b);
@@ -709,7 +758,7 @@ function tableHTML(list) {
       <td>${num(g, 'advance', g.advance)}</td><td>${num(g, 'lsb', sd.lsb)}</td><td>${num(g, 'rsb', sd.rsb)}</td>
       <td><input type="text" data-cell="tags" aria-label="${esc(t('tc_tags'))} ${esc(g.name)}" value="${esc((g.tags || []).join(', '))}" spellcheck="false"></td>
       <td><input type="text" data-cell="note" aria-label="${esc(t('tc_note'))} ${esc(g.name)}" value="${esc(g.note || '')}"></td>
-      <td><input type="checkbox" data-cell="export" ${g.noExport ? '' : 'checked'} aria-label="${esc(t('tc_export'))}"></td>
+      <td><input type="checkbox" data-cell="export" ${g.noExport || isPartGlyph(g) ? '' : 'checked'} ${isPartGlyph(g) ? `disabled data-tip="${esc(t('partNoExport'))}"` : ''} aria-label="${esc(t('tc_export'))}"></td>
     </tr>`;
   }).join('');
   return `<table class="glyph-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
@@ -846,6 +895,7 @@ function renderGridOptions() {
 }
 
 $('optionsBar').addEventListener('input', (e) => {
+  if (e.target.id === 'lineText') { onLineInput(e.target.value); return; }
   if (e.target.id === 'searchInput') { app.search = e.target.value; renderGrid(); updateStatus(); }
   if (e.target.id === 'tileSize') {
     $('glyphGrid').style.setProperty('--tile', `${e.target.value}px`);
@@ -926,16 +976,16 @@ function fontSection() {
   return section('font', t('fontSection'), `
     <dl class="kv">
       <dt>${esc(t('family'))}</dt><dd>${esc(i.familyName)}</dd>
-      <dt>${esc(t('ascender'))}</dt><dd>${i.ascender}</dd>
-      <dt>${esc(t('capHeight'))}</dt><dd>${i.capHeight}</dd>
-      <dt>${esc(t('xHeight'))}</dt><dd>${i.xHeight}</dd>
-      <dt>${esc(t('descender'))}</dt><dd>${i.descender}</dd>
+      <dt>${esc(t('ascender'))}</dt><dd>${esc(i.ascender)}</dd>
+      <dt>${esc(t('capHeight'))}</dt><dd>${esc(i.capHeight)}</dd>
+      <dt>${esc(t('xHeight'))}</dt><dd>${esc(i.xHeight)}</dd>
+      <dt>${esc(t('descender'))}</dt><dd>${esc(i.descender)}</dd>
     </dl>
     <button class="btn btn-block" type="button" data-cmd="fontInfo">${icon('settings', 15)}<span>${esc(t('fontInfo'))}</span></button>`, false);
 }
 
 function renderInspector() {
-  renderInspectorBody();
+  keepFocus(renderInspectorBody);
   recordOrder($('inspector'));
   if (app.mode === 'grid') layoutPanels();
 }
@@ -950,7 +1000,7 @@ function renderInspectorBody() {
   const g = sel[0];
   const head = sel.length === 1
     ? `<div class="big-glyph">${hasOutline(g) ? glyphSVG(g) : `<span class="ghost">${esc(charOf(g))}</span>`}</div>
-       <div class="title-row"><b>${esc(charOf(g).trim() || g.name)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>`
+       <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>`
     : `<div class="title-row"><b>${sel.length}</b><small>${esc(t('glyphs'))}: ${esc(sel.slice(0, 24).map((x) => charOf(x) || x.name).join(' '))}</small></div>`;
   // One section for everything about the glyph (in the extended mode also
   // its name, code, tags, note and export).
@@ -972,7 +1022,7 @@ function renderInspectorBody() {
 }
 
 function renderGlyphPanel() {
-  renderGlyphPanelBody();
+  keepFocus(renderGlyphPanelBody);
   recordOrder($('glyphPanel'));
   if (app.mode === 'editor') layoutPanels();
 }
@@ -981,7 +1031,7 @@ function renderGlyphPanelBody() {
   const g = app.current;
   if (!g) return;
   $('glyphPanel').innerHTML = section('glyph', t('glyph'), `
-      <div class="title-row"><b>${esc(charOf(g).trim() || '␣')}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>
+      <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>
       ${composeNoteHTML(g)}
       ${metricInputs(g)}
       <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(g.color)}</div>
@@ -1164,6 +1214,12 @@ function updateMetricInputs() {
 const DOCK_OF = { grid: 'inspector', editor: 'glyphPanel', kern: 'kernPanel' };
 const VIEW_OF = { grid: 'gridView', editor: 'editorView', kern: 'kernView' };
 const panelQuery = (sel) => (VIEW_OF[app.mode] && $(VIEW_OF[app.mode]).querySelector(sel)) || $('floatLayer').querySelector(sel);
+const EXT_PANELS = new Set(['batch', 'paint', 'components', 'smart', 'anchors', 'points', 'background']);
+// Whether the current view has this panel right now (shown or hidden).
+const panelExists = (id) => {
+  const dock = DOCK_OF[app.mode];
+  return !!dock && !!document.querySelector(`details[data-sec="${id}"][data-dock="${dock}"]`);
+};
 const PANELS = [['glyph', 'glyph'], ['selection', 'selection'], ['pathops', 'pathOps'], ['transform', 'transform'], ['batch', 'btTitleShort'], ['paint', 'pnTitle'], ['components', 'cmTitle'], ['smart', 'smTitle'], ['anchors', 'anTitle'], ['points', 'ptTitle'], ['background', 'bgTitle'], ['variants', 'varTitle'], ['underlay', 'ulTitle'], ['actions', 'actions'], ['font', 'fontSection'],
   ['kernPair', 'kernPair'], ['kernSpacing', 'kernSpacing'], ['kernSuggest', 'ksTitle'], ['kernList', 'kernAll']];
 
@@ -1547,7 +1603,11 @@ async function editFontInfo() {
   const num = (name, v) => `<label class="field">${esc(t(name))}<input type="number" name="${name}" value="${v}" required step="1"></label>`;
   const data = await showDialog({
     title: t('fontInfo').replace('…', ''),
-    body: `<label class="field">${esc(t('family'))}<input type="text" name="familyName" value="${esc(i.familyName)}" required maxlength="60"></label>
+    body: `<div class="field-row">
+        <label class="field">${esc(t('family'))}<input type="text" name="familyName" value="${esc(i.familyName)}" required maxlength="60"></label>
+        <label class="field">${esc(t('fi_styleName'))}<input type="text" name="styleName" value="${esc(i.styleName || 'Regular')}" required maxlength="40" list="styleNames"></label>
+      </div>
+      <datalist id="styleNames">${['Regular', 'Italic', 'Bold', 'Bold Italic', 'Light', 'Medium', 'SemiBold', 'ExtraBold', 'Black', 'Thin'].map((x) => `<option value="${x}">`).join('')}</datalist>
       <div class="field-row">
         <label class="field">${esc(t('designer'))}<input type="text" name="designer" value="${esc(i.designer || '')}" maxlength="80"></label>
         <label class="field">${esc(t('version'))}<input type="text" name="version" value="${esc(i.version || '1.000')}" pattern="\\d+\\.\\d+" maxlength="10"></label>
@@ -1559,6 +1619,7 @@ async function editFontInfo() {
   });
   if (!data) return;
   i.familyName = String(data.get('familyName')).trim() || i.familyName;
+  i.styleName = String(data.get('styleName') || '').trim().slice(0, 40) || 'Regular';
   i.designer = String(data.get('designer')).trim();
   i.version = String(data.get('version')).trim() || '1.000';
   for (const k of ['ascender', 'capHeight', 'xHeight', 'descender']) {
@@ -1574,15 +1635,16 @@ async function editFontInfo() {
 
 // Extended mode: rights, style and line metrics of the font.
 const FI_TEXT = ['copyright', 'trademark', 'manufacturer', 'vendorURL', 'license', 'licenseURL', 'description'];
-const FI_NUM = ['italicAngle', 'lineGap', 'underlinePosition', 'underlineThickness'];
+const FI_NUM = ['italicAngle', 'lineGap', 'underlinePosition', 'underlineThickness', 'overshoot'];
 const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900];
 
 function fontInfoExtended(i) {
   const text = (k, long) => `<label class="field">${esc(t('fi_' + k))}${long
     ? `<textarea name="${k}" rows="2" maxlength="5000">${esc(i[k] || '')}</textarea>`
     : `<input type="text" name="${k}" value="${esc(i[k] || '')}" maxlength="500">`}</label>`;
-  const num = (k) => `<label class="field" data-tip="${esc(t('fi_' + k + 'Tip'))}">${esc(t('fi_' + k))}<input type="number" name="${k}" value="${i[k] ?? ''}" step="${k === 'italicAngle' ? '0.5' : '1'}" placeholder="${k === 'italicAngle' ? '0' : t('fiAuto')}"></label>`;
-  return `<h3>${esc(t('fiStyle'))}</h3>
+  const num = (k) => `<label class="field" data-tip="${esc(t('fi_' + k + 'Tip'))}">${esc(t('fi_' + k))}<input type="number" name="${k}" value="${k === 'italicAngle' && i[k] ? -i[k] : i[k] ?? ''}" step="${k === 'italicAngle' ? '0.5' : '1'}" placeholder="${k === 'italicAngle' ? '0' : t('fiAuto')}"></label>`;
+  return `<div class="field-row">${num('overshoot')}<span></span></div>
+    <h3>${esc(t('fiStyle'))}</h3>
     <div class="field-row">
       <label class="field">${esc(t('fi_weight'))}<select name="weight">${WEIGHTS.map((w) => `<option value="${w}" ${(i.weight || 400) === w ? 'selected' : ''}>${w} · ${esc(t('weightNames')[w])}</option>`).join('')}</select></label>
       ${num('italicAngle')}
@@ -1607,7 +1669,7 @@ function readFontInfoExtended(i, data) {
   for (const k of FI_NUM) {
     const raw = String(data.get(k) ?? '').trim();
     const v = Number(raw);
-    if (raw !== '' && Number.isFinite(v) && v !== 0) i[k] = k === 'italicAngle' ? Math.max(-45, Math.min(45, v)) : Math.round(v);
+    if (raw !== '' && Number.isFinite(v) && v !== 0) i[k] = k === 'italicAngle' ? -Math.max(-45, Math.min(45, v)) : k === 'overshoot' ? Math.max(0, Math.min(100, Math.round(v))) : Math.round(v);
     else delete i[k];
   }
 }
@@ -1636,7 +1698,7 @@ const KEY_GROUPS = [
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
   ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'simplify', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups', 'fontInfo']],
-  ['extTools', ['tool.measure', 'tool.pixel', 'selShapeCycle', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'bgCopy', 'updateMetrics']],
+  ['extTools', ['tool.measure', 'tool.pixel', 'selShapeCycle', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'openCorner', 'reconnect', 'bgCopy', 'updateMetrics']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -1854,6 +1916,7 @@ function drawEditorOptions() {
       <label data-tip="${esc(t('stabilizerTip'))}">${esc(t('stabilizer'))}
       <input type="range" data-opt="stabilizer" min="0" max="10" step="1" value="${editor.stabilizer}"><output class="mono" id="stabOut">${editor.stabilizer}</output></label>
       </div><div class="sep"></div>` : ''}
+    ${editor.tool === 'text' ? `<div class="group line-group"><label>${esc(t('lineText'))}<input class="kern-text" id="lineText" value="${esc(lineText())}" spellcheck="false" data-tip="${esc(t('lineTextTip'))}"></label></div><div class="sep"></div>` : ''}
     ${editor.tool === 'pixel' ? `<div class="group">
       <label data-tip="${esc(t('pxSizeTip'))}">${esc(t('pxSize'))}<input type="number" data-opt="pixelSize" min="4" max="500" step="1" value="${editor.pixelSize}"></label>
       <div class="seg" role="radiogroup">
@@ -1867,11 +1930,7 @@ function drawEditorOptions() {
       <label>${esc(t('gridStep'))}<input type="number" data-opt="gridStep" min="1" max="500" step="1" value="${editor.gridStep}"></label>
     </div>
     <div class="sep"></div>
-    ${app.extended ? snapButtonHTML() : `<div class="group">
-      <span class="opt-label">${esc(t('snap'))}</span>
-      <label class="check" data-tip="${esc(t('snapGridTip'))}" data-key="${esc(keyLabel('snapGrid'))}"><input type="checkbox" data-opt="snapGrid" ${editor.snapGrid ? 'checked' : ''}>${esc(t('snapGrid'))}</label>
-      <label class="check" data-tip="${esc(t('snapGuidesTip'))}" data-key="${esc(keyLabel('snapGuides'))}"><input type="checkbox" data-opt="snapGuides" ${editor.snapGuides ? 'checked' : ''}>${esc(t('snapGuides'))}</label>
-    </div>`}
+    ${snapButtonHTML()}
     <div class="sep"></div>
     <div class="group">
       <button class="btn btn-icon" type="button" data-cmd="undo" data-tip="${esc(t('undo'))}" data-key="${esc(keyLabel('undo'))}" aria-label="${esc(t('undo'))}">${icon('undo', 15)}</button>
@@ -1883,7 +1942,7 @@ function drawEditorOptions() {
       <button class="btn btn-icon" type="button" data-cmd="zoomIn" data-tip="${esc(t('zoomIn'))}" data-key="${esc(keyLabel('zoomIn'))}" aria-label="${esc(t('zoomIn'))}">${icon('zoomIn', 15)}</button>
       <div class="sep"></div>
       <button class="btn btn-icon" type="button" data-cmd="prev" data-tip="${esc(t('prev'))}" data-key="${esc(keyLabel('prev'))}" aria-label="${esc(t('prev'))}">${icon('chevronLeft', 15)}</button>
-      <div class="cur"><b>${esc(charOf(g).trim() || '␣')}</b><small>${esc(g.name)}</small></div>
+      <div class="cur"><b>${markHTML(g)}</b><small>${esc(g.name)}</small></div>
       <button class="btn btn-icon" type="button" data-cmd="next" data-tip="${esc(t('next'))}" data-key="${esc(keyLabel('next'))}" aria-label="${esc(t('next'))}">${icon('chevronRight', 15)}</button>
     </div>`;
 }
@@ -1960,7 +2019,7 @@ function setViewTabs() {
   $('tabKerning').setAttribute('aria-selected', app.mode === 'kern');
 }
 
-function openEditor(name, push = true) {
+function openEditor(name, push = true, opts = {}) {
   const g = findGlyph(name);
   if (!g) return;
   $('kernView').hidden = true;
@@ -1973,12 +2032,20 @@ function openEditor(name, push = true) {
   $('editorView').hidden = false;
   if (push) history.pushState({ glyph: name }, '', `#glyph=${encodeURIComponent(name)}`);
   else history.replaceState({ glyph: name }, '', `#glyph=${encodeURIComponent(name)}`);
+  // The text line: kept when the glyph is in it, else it starts anew.
+  if (opts.lineAt !== undefined) editor.lineAt = opts.lineAt;
+  else {
+    const at = editor.line?.indexOf(name) ?? -1;
+    if (at >= 0) editor.lineAt = at;
+    else { editor.line = [name]; editor.lineAt = 0; editor.lineCursor = 1; }
+  }
+  saveLine();
   renderToolbar();
   renderEditorOptions();
   renderGlyphPanel();
   editor.setTool(editor.tool);
   editor.resize();
-  editor.open(g);
+  editor.open(g, opts.view);
   editor.preview = null;
   filterState.active = false;
   if (app.extended) queueMicrotask(previewFilter);
@@ -1986,6 +2053,115 @@ function openEditor(name, push = true) {
   updateStatus();
   renderPreviewText();
   $('canvas').focus({ preventScroll: true });
+}
+
+// ---------------------------------------------------------------- text line
+// Editing in a line of text, as in Glyphs: the neighbours are drawn around
+// the glyph, the Text tool types, a double-click edits another glyph.
+
+editor.line = (store.get('spline.editLine') || '').split(' ').filter(Boolean);
+editor.lineAt = 0;
+editor.lineCursor = 0;
+app.glyphByName = (name) => findGlyph(name);
+
+function saveLine() { store.set('spline.editLine', (editor.line || []).join(' ')); }
+
+// The line as text: characters, and "/name " for a glyph without one.
+function lineText() {
+  return (editor.line || []).map((n) => {
+    const g = findGlyph(n);
+    const ch = g && charOf(g);
+    return ch && ch.trim() ? ch : `/${n} `;
+  }).join('');
+}
+
+// Text back into glyph names ("/a.alt " for a glyph by its name).
+function parseLine(text) {
+  const out = [];
+  for (let i = 0; i < text.length;) {
+    if (text[i] === '/') {
+      const m = /^\/([^\s/]+) ?/.exec(text.slice(i));
+      if (m && findGlyph(m[1])) { out.push(m[1]); i += m[0].length; continue; }
+    }
+    const ch = String.fromCodePoint(text.codePointAt(i));
+    const g = app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
+    if (g) out.push(g.name);
+    i += ch.length;
+  }
+  return out;
+}
+
+// Moves the editing to item i of the line; the canvas does not jump.
+app.editLineItem = (i) => {
+  const name = editor.line?.[i];
+  if (!name || i === editor.lineAt) return;
+  const items = editor.lineItems();
+  const it = items.find((x) => x.i === i);
+  const v = editor.view;
+  const view = it ? { scale: v.scale, oy: v.oy, ox: v.ox + it.x * v.scale } : null;
+  openEditor(name, false, { lineAt: i, view });
+};
+
+// Text tool keys: type, move the caret, delete; Esc edits the glyph at the caret.
+function lineKey(e) {
+  const line = editor.line || (editor.line = []);
+  const k = editor.lineCursor;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    editor.lineCursor = Math.max(0, Math.min(line.length, k + (e.key === 'ArrowLeft' ? -1 : 1)));
+  } else if (e.key === 'Home' || e.key === 'End') {
+    editor.lineCursor = e.key === 'Home' ? 0 : line.length;
+  } else if (e.key === 'Backspace' || e.key === 'Delete') {
+    const at = e.key === 'Backspace' ? k - 1 : k;
+    if (at < 0 || at >= line.length || at === editor.lineAt) return true; // the glyph being edited stays
+    line.splice(at, 1);
+    if (at < editor.lineAt) editor.lineAt--;
+    if (e.key === 'Backspace') editor.lineCursor--;
+  } else if (e.key === 'Escape' || e.key === 'Enter') {
+    const at = Math.max(0, Math.min(line.length - 1, k > 0 ? k - 1 : 0));
+    setTool('select');
+    app.editLineItem(at);
+    return true;
+  } else if (e.key.length === 1 || /^\p{L}|\p{N}|\p{P}|\p{S}$/u.test(e.key)) {
+    const names = parseLine(e.key);
+    if (!names.length) return true;
+    line.splice(k, 0, ...names);
+    if (k <= editor.lineAt) editor.lineAt += names.length;
+    editor.lineCursor += names.length;
+  } else return false;
+  saveLine();
+  const input = $('lineText');
+  if (input && document.activeElement !== input) input.value = lineText();
+  followCaret();
+  editor.render();
+  return true;
+}
+
+// The canvas moves along so the caret stays in sight.
+function followCaret() {
+  const x = editor.toScreen({ x: editor.caretX(editor.lineCursor), y: 0 }).x;
+  const margin = Math.min(80, editor.w / 4);
+  if (x > editor.w - margin) editor.view.ox -= x - (editor.w - margin);
+  else if (x < margin) editor.view.ox += margin - x;
+}
+
+// The line field of the Text tool's options bar.
+function onLineInput(text) {
+  const names = parseLine(text);
+  const cur = app.current?.name;
+  if (!names.length) return;
+  const grew = names.length !== (editor.line || []).length;
+  editor.line = names;
+  const at = names.indexOf(cur);
+  saveLine();
+  if (at >= 0) {
+    editor.lineAt = at;
+    editor.lineCursor = Math.min(editor.lineCursor, names.length);
+    if (grew) editor.fit(); else editor.render(); // the whole line in view
+    return;
+  }
+  // This glyph is no longer in the line: edit the first one instead.
+  editor.lineCursor = names.length;
+  openEditor(names[0], false, { lineAt: 0 });
 }
 
 function showGrid(push = true) {
@@ -2076,6 +2252,7 @@ $('previewFeats').addEventListener('input', (e) => {
   schedulePreview(120);
 });
 $('previewFeats').addEventListener('change', (e) => {
+  if (e.target.dataset.pfItalic !== undefined) { app.previewItalic = e.target.checked; schedulePreview(0); return; }
   if (e.target.dataset.pf) { if (e.target.checked) previewFeats.add(e.target.dataset.pf); else previewFeats.delete(e.target.dataset.pf); }
   if (e.target.dataset.pfLang !== undefined) previewLang = e.target.value;
   applyPreviewFeatures();
@@ -2144,10 +2321,23 @@ function renderKernOptions() {
 function kernKeyLabel(key) {
   if (isGroup(key)) return key;
   const g = findGlyph(key);
-  return g ? (charOf(g).trim() || g.name) : key;
+  return g ? glyphMark(g) : key;
 }
 
-const glyphLabel = (g) => charOf(g).trim() || g.name;
+// What shows for a glyph: its character; ␣ for a space or another
+// invisible character; the name for a glyph without a code.
+function glyphMark(g) {
+  const ch = charOf(g);
+  if (ch && ch.trim() && !/^[\p{Cf}\p{Cc}]$/u.test(ch)) return ch;
+  return g.unicode ? '␣' : g.name;
+}
+const glyphLabel = glyphMark;
+// A name in a box made for one character: smaller, cut with "…", the full
+// name in the tooltip.
+const markHTML = (g) => {
+  const m = glyphMark(g);
+  return [...m].length > 2 ? `<span class="mark-name" data-tip="${esc(g.name)}">${esc(m)}</span>` : esc(m);
+};
 
 // Glyphs a kerning key stands for: the glyph itself, or the members of the
 // group (the left key of a pair uses right-side groups and vice versa).
@@ -2185,12 +2375,11 @@ function kernPairHTML(pr) {
     const name = glyph[prop];
     const members = name ? groupMembers(p, name, gside) : [];
     const useGroup = kernView.useGroups[which] && !!name;
-    const ch = glyphLabel(glyph);
     const MAX = 6;
     const more = members.length > MAX
       ? ` <button type="button" class="kp-more" data-kg-open="${gside}:${esc(name)}" data-tip="${esc(t('kgOpenAll'))}">+${members.length - MAX}</button>` : '';
     return `<div class="kp-side">
-      <div class="kp-letter">${esc(ch)}</div>
+      <div class="kp-letter">${markHTML(glyph)}</div>
       <label class="kp-field"><span>${esc(t(which === 'left' ? 'kpGroupRight' : 'kpGroupLeft'))}</span>
         <input type="text" data-pair-group="${which}" list="${prop}List" value="${esc(name || '')}" placeholder="${esc(t('kernNoGroup'))}" spellcheck="false"></label>
       ${name ? `<div class="seg seg-sm" role="radiogroup" aria-label="${esc(t('kernScopeLabel'))}">
@@ -2225,7 +2414,7 @@ function kernSpacingHTML(pr) {
   const row = (which, g) => {
     const box = glyphBox(g);
     const f = (role, label, v, dis) => `<label><span>${esc(label)}</span><input type="number" step="1" data-kmetric="${which}:${role}" value="${v}" ${dis ? 'disabled' : ''}></label>`;
-    return `<div class="kspace"><b>${esc(glyphLabel(g))}</b>
+    return `<div class="kspace"><b>${markHTML(g)}</b>
       ${f('lsb', t('lsb'), box ? Math.round(box.minX) : '', !box)}${f('advance', t('width'), Math.round(g.advance))}${f('rsb', t('rsb'), box ? Math.round(g.advance - box.maxX) : '', !box)}</div>`;
   };
   return row('left', pr.left) + row('right', pr.right);
@@ -2280,7 +2469,9 @@ function onKernPanels(type, fn) {
   }
 }
 
-function renderKernPanel() {
+function renderKernPanel() { keepFocus(renderKernPanelBody); }
+
+function renderKernPanelBody() {
   const pr = kernView.pair();
   const n = kernPairs(app.project).length;
   $('kernPanel').innerHTML = section('kernPair', t('kernPair'), kernPairHTML(pr))
@@ -3122,6 +3313,7 @@ $('optionsBar').addEventListener('change', (e) => {
 });
 $('optionsBar').addEventListener('keydown', (e) => {
   if (e.target.id === 'kernText' && e.key === 'Enter') { e.preventDefault(); $('kernCanvas').focus(); }
+  if (e.target.id === 'lineText' && (e.key === 'Enter' || e.key === 'Escape')) { e.preventDefault(); $('canvas').focus(); }
 });
 
 onKernPanels('change', (e) => {
@@ -3353,7 +3545,7 @@ function infoFieldsHTML(g) {
     <label class="prop"><span>Unicode</span><input type="text" data-info="unicode" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></label>
     <label class="prop"><span>${esc(t('tc_tags'))}</span><input type="text" data-info="tags" value="${esc((g.tags || []).join(', '))}" placeholder="${esc(t('tagsPh'))}" spellcheck="false"></label>
     <label class="prop"><span>${esc(t('tc_note'))}</span><input type="text" data-info="note" value="${esc(g.note || '')}"></label>
-    <label class="check" data-tip="${esc(t('exportTip'))}"><input type="checkbox" data-info="export" ${g.noExport ? '' : 'checked'}>${esc(t('exportIn'))}</label>`;
+    <label class="check" data-tip="${esc(t(isPartGlyph(g) ? 'partNoExport' : 'exportTip'))}"><input type="checkbox" data-info="export" ${g.noExport || isPartGlyph(g) ? '' : 'checked'} ${isPartGlyph(g) ? 'disabled' : ''}>${esc(t('exportIn'))}</label>`;
 }
 
 function onInfoChange(e) {
@@ -3398,7 +3590,8 @@ function batchSection(sel) {
   const b = (cmd, label) => `<button class="btn" type="button" data-cmd="${cmd}" data-tip="${esc(t(label + 'Tip'))}">${esc(t(label))}</button>`;
   return section('batch', t('btTitle', { n: sel.length }), `
     <div class="btn-row">${b('btExtremes', 'btExtremes')}${b('btRound', 'btRound')}</div>
-    <div class="btn-row">${b('btMetrics', 'btMetrics')}${b('btDecompose', 'btDecompose')}</div>
+    <button class="btn btn-block" type="button" data-cmd="btMetrics" data-tip="${esc(t('btMetricsTip'))}">${esc(t('btMetrics'))}</button>
+    <button class="btn btn-block" type="button" data-cmd="btDecompose" data-tip="${esc(t('btDecomposeTip'))}">${esc(t('btDecompose'))}</button>
     <button class="btn btn-block" type="button" data-cmd="tmOpen">${icon('spacing', 15)}<span>${esc(t('tmMenu'))}</span></button>
     ${sel.length > 1 ? `<label class="prop"><span>${esc(t('btTag'))}</span><input type="text" data-batch-tag placeholder="${esc(t('tagsPh'))}" spellcheck="false"></label>
     <div class="btn-row">${b('btExportOff', 'btExportOff')}${b('btExportOn', 'btExportOn')}</div>` : ''}`, false);
@@ -3480,6 +3673,7 @@ function pointsSection() {
   return section('points', t('ptTitle'), `
     <div class="btn-row">${b('ptExtremes', 'addExtremes', 'addExtremes')}${b('ptAlign', 'alignPoints', 'alignPoints')}</div>
     <div class="btn-row">${b('ptBreak', 'breakContour', 'breakContour')}${b('ptJoin', 'joinContours', 'joinContours')}</div>
+    <div class="btn-row">${b('ptOpenCorner', 'openCorner', 'openCorner')}${b('ptReconnect', 'reconnect', 'reconnect')}</div>
     <div class="btn-row">${b('ptEven', 'evenHandles', 'evenHandles')}${b('ptFirst', 'makeFirst', 'makeFirst')}</div>
     <div class="btn-row">${b('ptInvert', 'invertSelection', 'invertSelection')}</div>
     <div class="parts">${partsHTML()}</div>`, true, t('ptHint'));
@@ -3576,19 +3770,76 @@ function backgroundSection(g) {
 // ================================================================ masters
 
 function masterBarHTML() {
-  if (!app.extended) return '';
   const p = app.project;
+  if (!app.extended && !hasMasters(p)) return '';
   if (!hasMasters(p)) {
-    return `<div class="group"><button class="btn" type="button" data-cmd="mastersDialog" data-tip="${esc(t('msAddTip'))}">${icon('layers', 14)}<span>${esc(t('msMasters'))}</span></button></div><div class="sep"></div>`;
+    return `<div class="group"><button class="btn" type="button" data-cmd="mastersDialog" data-tip="${esc(t('msAddTip'))}" aria-label="${esc(t('msMasters'))}">${icon('layers', 14)}<span class="opt-text">${esc(t('msMasters'))}</span></button></div><div class="sep"></div>`;
   }
   const act = activeId(p);
-  return `<div class="group"><div class="seg" role="radiogroup" aria-label="${esc(t('msMasters'))}">
+  // In the editor: show the other masters, and edit them all at once.
+  const toggles = app.mode === 'editor' && app.extended ? `
+    <button class="btn btn-icon ms-toggle" type="button" data-cmd="msShowAll" aria-pressed="${app.showAllMasters}" aria-label="${esc(t('msShowAll'))}" data-tip="${esc(t('msShowAllTip'))}">${icon('layers', 14)}</button>
+    <button class="btn btn-icon ms-toggle" type="button" data-cmd="msEditAll" aria-pressed="${app.editAllMasters}" aria-label="${esc(t('msEditAll'))}" data-tip="${esc(t('msEditAllTip'))}">${icon('link', 14)}</button>` : '';
+  const many = p.masters.length > 4; // a row of buttons would push the rest off the bar
+  return `<div class="group">${many ? `<select class="ms-select" data-master-select aria-label="${esc(t('msMasters'))}">
+    ${p.masters.map((m) => `<option value="${esc(m.id)}" ${m.id === act ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>` : `<div class="seg" role="radiogroup" aria-label="${esc(t('msMasters'))}">
     ${p.masters.map((m) => `<button type="button" role="radio" data-master="${esc(m.id)}" aria-checked="${m.id === act}" data-tip="${esc(p.axis.tag)} ${m.loc}${p.axis2 ? ` · ${esc(p.axis2.tag)} ${m.loc2}` : ''}">${esc(m.name)}</button>`).join('')}
-    </div><button class="btn btn-icon" type="button" data-cmd="mastersDialog" aria-label="${esc(t('msMenu'))}" data-tip="${esc(t('msMenu'))}">${icon('settings', 14)}</button></div><div class="sep"></div>`;
+    </div>`}${toggles}<button class="btn btn-icon" type="button" data-cmd="mastersDialog" aria-label="${esc(t('msMenu'))}" data-tip="${esc(t('msMenu'))}">${icon('settings', 14)}</button></div><div class="sep"></div>`;
 }
+
+// The other masters of a glyph (extended mode): [{ id, name, layer }],
+// only those that have their own drawing of it.
+function otherLayers(g) {
+  const p = app.project;
+  if (!app.extended || !hasMasters(p) || !g) return [];
+  return p.masters.filter((m) => m.id !== activeId(p) && g.layers?.[m.id]).map((m) => ({ id: m.id, name: m.name, layer: g.layers[m.id] }));
+}
+
+app.showAllMasters = store.get('spline.showAllMasters') === '1';
+app.editAllMasters = store.get('spline.editAllMasters') === '1';
+app.otherMasters = (g) => (app.showAllMasters ? otherLayers(g).map((m) => ({ name: m.name, contours: m.layer.contours })) : null);
+
+// "Edit all masters": a structural change (a new point, deleted points,
+// a cut, ears...) runs on every master, each brought to this master's
+// point order first, so they stay compatible.
+app.syncMasters = (g, fn) => {
+  if (!app.editAllMasters) return;
+  for (const { layer } of otherLayers(g)) {
+    layer.contours.forEach((c, i) => {
+      const same = g.contours[i] && matchContour(g.contours[i], c);
+      if (same && same !== c) layer.contours[i] = same;
+    });
+    fn(layer.contours);
+  }
+};
+
+// New shapes drawn while editing all masters go into every master.
+function syncNewContours(g) {
+  if (!app.editAllMasters) return;
+  for (const { layer } of otherLayers(g)) {
+    const n = layer.contours.length;
+    if (n >= g.contours.length) continue;
+    if (!layer.contours.every((c, i) => matchContour(g.contours[i], c))) continue;
+    layer.contours.push(...structuredClone(g.contours.slice(n)));
+  }
+}
+
+function toggleMastersView(key, prop) {
+  app[prop] = !app[prop];
+  store.set(key, app[prop] ? '1' : '0');
+  renderEditorOptions();
+  editor.render();
+}
+
+document.addEventListener('change', (e) => {
+  if (e.target.matches?.('[data-master-select]')) selectMaster(e.target.value);
+});
 
 function selectMaster(id) {
   endTransform();
+  // A smart part state being drawn goes back to its place first: the
+  // master switch moves glyph.contours, which then holds that state.
+  if (id !== activeId(app.project)) settleSmart();
   if (!switchMaster(app.project, id)) return;
   // Undo steps hold outlines of the master they were made in.
   app.history.clear();
@@ -3602,42 +3853,58 @@ function selectMaster(id) {
   if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
 }
 
+// A master's slant from the dialog: 0 is upright, anything else italic.
+function setSlant(m, a) {
+  if (!Number.isFinite(a) || a === 0) { delete m.italic; delete m.italicAngle; return; }
+  m.italic = true;
+  m.italicAngle = Math.max(-45, Math.min(45, a));
+}
+
 async function mastersDialog() {
   const p = app.project;
   const ms = p.masters || [];
-  const w2 = !!p.axis2;
+  const full = app.extended; // the second axis and the slant are extended tools
+  const w2 = full && !!p.axis2;
   const loc2 = (name, v) => (w2 ? `<input type="number" name="${name}" value="${v ?? ''}" step="1" placeholder="100" aria-label="${esc(t('msLoc2'))}">` : '');
   const rows = ms.map((m, i) => `<div class="field-row ms-row${w2 ? ' two' : ''}">
       <input type="text" name="name${i}" value="${esc(m.name)}" aria-label="${esc(t('msName'))}" required maxlength="40">
       <input type="number" name="loc${i}" value="${m.loc}" step="1" aria-label="${esc(t('msLoc'))}">
       ${loc2(`loc2_${i}`, m.loc2)}
+      ${full ? `<input type="number" name="ang${i}" value="${m.italic ? m.italicAngle ?? 10 : 0}" step="0.5" min="-45" max="45" ${i === 0 ? 'disabled' : ''} aria-label="${esc(t('msAngle'))}" title="${esc(t('msAngleTip'))}">` : ''}
       <label class="check"><input type="checkbox" name="del${i}" ${i === 0 ? 'disabled' : ''}>${esc(t('msDelete'))}</label></div>`).join('');
   const data = await showDialog({
     title: t('msMasters'),
-    body: `${ms.length ? `<div class="field-row ms-row ms-head${w2 ? ' two' : ''}"><span>${esc(t('msName'))}</span><span>${esc(t('msLoc'))}</span>${w2 ? `<span>${esc(t('msLoc2'))}</span>` : ''}<span></span></div>${rows}` : ''}
+    body: `${ms.length ? `<div class="field-row ms-row ms-head${w2 ? ' two' : ''}"><span>${esc(t('msName'))}</span><span>${esc(t('msLoc'))}</span>${w2 ? `<span>${esc(t('msLoc2'))}</span>` : ''}${full ? `<span title="${esc(t('msAngleTip'))}">${esc(t('msAngle'))}</span>` : ''}<span></span></div>${rows}` : ''}
       <h3>${esc(t('msNew'))}</h3>
       <div class="field-row ms-row${w2 ? ' two' : ''}">
         <input type="text" name="newName" placeholder="Bold" maxlength="40" aria-label="${esc(t('msName'))}">
-        <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}">${loc2('newLoc2', '')}<span></span></div>
-      ${ms.length ? `<label class="check"><input type="checkbox" name="axis2" ${w2 ? 'checked' : ''}>${esc(t('msAxis2'))}</label>` : ''}`,
+        <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}">${loc2('newLoc2', '')}${full ? `<input type="number" name="newAng" placeholder="0" step="0.5" min="-45" max="45" aria-label="${esc(t('msAngle'))}" title="${esc(t('msAngleTip'))}">` : ''}<span></span></div>
+      ${ms.length && full ? `<label class="check"><input type="checkbox" name="axis2" ${w2 ? 'checked' : ''}>${esc(t('msAxis2'))}</label>` : ''}`,
+    cls: full ? '' : 'ms-simple',
     okLabel: t('ok'),
   });
   if (!data) return;
+  settleSmart(); // adding or deleting a master copies or moves glyph.contours
   ms.forEach((m, i) => {
     m.name = String(data.get(`name${i}`) || m.name).trim() || m.name;
     const v = Number(data.get(`loc${i}`));
     if (Number.isFinite(v)) m.loc = Math.round(v);
     const v2 = Number(data.get(`loc2_${i}`));
     if (w2 && Number.isFinite(v2) && String(data.get(`loc2_${i}`)).trim() !== '') m.loc2 = Math.round(v2);
+    if (i > 0 && full) setSlant(m, Number(data.get(`ang${i}`)));
   });
-  if (ms.length) setWidthAxis(p, !!data.get('axis2'));
-  for (const m of [...ms].reverse()) if (data.get(`del${ms.indexOf(m)}`)) deleteMaster(p, m.id);
+  if (ms.length && full) setWidthAxis(p, !!data.get('axis2'));
+  const gone = ms.filter((m, i) => data.get(`del${i}`));
+  if (gone.length && await confirmDialog(t('msConfirmDelete', { names: gone.map((m) => m.name).join(', ') }), t('delete'))) {
+    for (const m of gone) deleteMaster(p, m.id);
+  }
   const nn = String(data.get('newName') || '').trim();
   if (nn) {
     const loc = Number(data.get('newLoc'));
     const l2 = Number(data.get('newLoc2'));
     addMaster(p, nn, Number.isFinite(loc) && String(data.get('newLoc')).trim() !== '' ? Math.round(loc) : 700,
       p.axis2 && String(data.get('newLoc2') || '').trim() !== '' && Number.isFinite(l2) ? Math.round(l2) : undefined);
+    if (full) setSlant(p.masters[p.masters.length - 1], Number(data.get('newAng')));
   }
   if (p.masters) {
     p.axis.min = Math.min(...p.masters.map((m) => m.loc));
@@ -3663,17 +3930,17 @@ function settleSmart() {
   for (const g of app.project.glyphs) if (editingState(g)) editState(g, null);
 }
 
-function variableJSON() {
+function variableJSON(italic = false) {
   settleSmart();
   const p = app.project;
-  const q = saveForm(p);
+  const q = hasItalic(p) ? familyGroup(p, italic) : saveForm(p);
   refreshComponents(q); recompose(q);
   const full = (g) => [...g.contours.filter((c) => !c.brush), ...(g.refContours || [])];
   const def = new Map(q.glyphs.map((g) => [g.name, full(g)]));
   const out = { ...q, glyphs: q.glyphs.map((g) => ({ ...g, layers: {} })) };
   const byName = new Map(out.glyphs.map((g) => [g.name, g]));
-  for (const m of p.masters.slice(1)) {
-    const inst = instanceAt(p, m.loc, undefined, m.loc2);
+  for (const m of q.masters.slice(1)) {
+    const inst = instanceAt(p, m.loc, undefined, m.loc2, italic);
     refreshComponents(inst); recompose(inst);
     for (const g of inst.glyphs) {
       const base = def.get(g.name) || [];
@@ -3684,49 +3951,254 @@ function variableJSON() {
   return serialize(out);
 }
 
+// Variable fonts: the upright one, and the italic one when there are
+// italic masters (both in a .zip then).
 async function exportVariable() {
   if (!hasMasters(app.project)) return;
   try {
-    const r = await fetch('/api/export?format=variable', {
-      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: variableJSON(),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    const name = safeFileName('-VF.ttf');
-    download(await r.blob(), name);
+    const files = [];
+    for (const italic of hasItalic(app.project) ? [false, true] : [false]) {
+      const group = familyGroup(app.project, italic);
+      if (!group || group.masters.length < 2) continue;
+      const r = await fetch('/api/export?format=variable', {
+        method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: variableJSON(italic),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      files.push({ name: safeFileName(italic ? '-Italic-VF.ttf' : '-VF.ttf'), data: new Uint8Array(await r.arrayBuffer()) });
+    }
+    if (!files.length) throw new Error(t('famNeedTwo'));
+    const name = files.length > 1 ? safeFileName('-VF.zip') : files[0].name;
+    download(files.length > 1 ? makeZip(files) : new Blob([files[0].data], { type: 'font/ttf' }), name);
     toast(t('exported', { name }));
   } catch (err) {
     toast(`${t('previewError')}: ${err.message}`, 'error');
   }
 }
 
-// Instances: every master plus the steps between them, each a font file.
-async function exportInstances() {
+// ================================================================ family
+// A family, as in Glyphs: masters are what you draw (Regular, Bold, their
+// italics), styles are the fonts that come out (Light, Medium, Bold Italic…).
+
+const italicName = (n) => (n === 'Regular' ? 'Italic' : `${n} Italic`);
+
+// Everything that shows the masters after they changed.
+function mastersChanged() {
+  app.history.clear(); // undo steps hold outlines of one master
+  refreshComponents(app.project);
+  recompose(app.project);
+  markChanged();
+  renderAll();
+  if (app.mode === 'editor') { renderEditorOptions(); renderGlyphPanel(); editor.render(); }
+  if (app.mode === 'grid') renderGridOptions();
+  renderPreviewText();
+}
+
+// A bolder (delta > 0) or lighter master: a copy of the default with every
+// outline offset by delta, the sidebearings kept. Glyphs where the offset
+// would change the points stay a plain copy, to be drawn by hand. Returns
+// how many those are.
+function addWeightMaster(name, loc, delta) {
+  const p = app.project;
+  settleSmart();
+  const id = addMaster(p, name, loc);
+  let rough = 0;
+  const shift = (q) => ({ x: Math.round(q.x + delta), y: q.y });
+  for (const g of p.glyphs) {
+    const l = g.layers[id];
+    if (l && !l.contours.length && g.components?.length) l.advance = Math.max(0, Math.round(l.advance + 2 * delta)); // made of other glyphs
+    if (!l?.contours.length || !delta) continue;
+    let cs;
+    try { cs = offsetContours(l.contours, delta); } catch { cs = null; }
+    if (!cs || incompatibility(l, { contours: cs })) { rough++; continue; }
+    cs = cs.map((c) => ({ ...c, nodes: c.nodes.map((n) => ({ ...n, ...shift(n), ...(n.in ? { in: shift(n.in) } : {}), ...(n.out ? { out: shift(n.out) } : {}) })) }));
+    g.layers[id] = { contours: cs, advance: Math.max(0, Math.round(l.advance + 2 * delta)) };
+  }
+  // A family with italics gets the italic twin of the new master too.
+  const it = p.masters.find((m) => m.italic);
+  if (it) addItalicMasters(p, it.italicAngle, italicName);
+  fitAxis(p);
+  return rough;
+}
+
+const WEIGHT_PRESETS = { bold: [['Bold', 700, 30], ['Black', 900, 60]], light: [['Light', 300, -20], ['Thin', 100, -35]] };
+
+async function familyDialog() {
+  endTransform();
   settleSmart();
   const p = app.project;
-  if (!hasMasters(p)) return;
-  const ms = [...p.masters].sort((a, b) => a.loc - b.loc);
-  const names = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black' };
-  const def2 = p.masters[0].loc2;
-  const list = ms.map((m) => [m.loc, m.name, m.loc2]);
-  const seen = new Set(list.map(([l, , l2]) => `${l}/${l2}`));
-  if (p.axis.tag === 'wght') {
-    for (let w = 100; w <= 900; w += 100) {
-      if (w > ms[0].loc && w < ms[ms.length - 1].loc && !seen.has(`${w}/${def2}`)) { seen.add(`${w}/${def2}`); list.push([w, names[w], def2]); }
+  let styles = structuredClone(familyStyles(p));
+  let open = null; // the quick form shown: 'bold', 'light' or 'italic'
+  let toMasters = false;
+  const preset = (kind) => WEIGHT_PRESETS[kind].find(([, w]) => !p.masters?.some((m) => !m.italic && m.loc === w)) || WEIGHT_PRESETS[kind][0];
+  const masterRows = () => (p.masters?.length ? p.masters : [{ name: p.info.styleName || 'Regular', loc: p.info.weight || 400 }])
+    .map((m) => `<div class="fam-master"><span>${esc(m.name)}</span><span class="mono">${esc(m.loc)}</span>${m.italic ? `<span class="fam-tag">${esc(t('famItalic'))} ${esc(m.italicAngle)}°</span>` : '<span></span>'}</div>`).join('');
+  const quick = () => {
+    if (open === 'italic') {
+      return `<div class="fam-quick"><label>${esc(t('famAngle'))}<input type="number" data-q="angle" value="10" min="1" max="30" step="1"><em>°</em></label>
+        <button type="button" class="btn btn-primary" data-fam="do">${esc(t('famAdd'))}</button></div>`;
     }
-  }
-  let n = 0;
-  for (const [loc, name, loc2] of list.sort((a, b) => a[0] - b[0])) {
-    const q = instanceAt(p, loc, name, loc2);
-    refreshComponents(q); recompose(q);
-    try {
-      const r = await fetch('/api/export?format=ttf', { method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(q) });
-      if (!r.ok) throw new Error(await r.text());
-      download(await r.blob(), safeFileName(`-${name.replace(/\s+/g, '')}.ttf`));
-      n++;
-    } catch (err) { toast(`${name}: ${err.message}`, 'error'); }
-  }
-  toast(t('msExported', { n }));
+    const [name, w, d] = preset(open);
+    return `<div class="fam-quick">
+      <label>${esc(t('famName'))}<input type="text" data-q="name" value="${esc(name)}" maxlength="40"></label>
+      <label>${esc(t('famWeight'))}<input type="number" data-q="loc" value="${w}" min="1" max="1000" step="1"></label>
+      <label data-tip="${esc(t('famOffsetTip'))}">${esc(t('famOffset'))}<input type="number" data-q="delta" value="${d}" min="-100" max="100" step="1"></label>
+      <button type="button" class="btn btn-primary" data-fam="do">${esc(t('famAdd'))}</button></div>`;
+  };
+  const styleRows = () => styles.map((s, i) => `<div class="fam-style">
+      <input type="checkbox" data-st="${i}:export" ${s.export ? 'checked' : ''} aria-label="${esc(t('famExportIt'))}">
+      <input type="text" data-st="${i}:name" value="${esc(s.name)}" maxlength="64" aria-label="${esc(t('famName'))}">
+      <input type="number" data-st="${i}:weight" value="${esc(s.weight)}" step="1" aria-label="${esc(t('famWeight'))}">
+      ${hasItalic(p) ? `<label class="check"><input type="checkbox" data-st="${i}:italic" ${s.italic ? 'checked' : ''}>${esc(t('famItalic'))}</label>` : '<span></span>'}
+      <button type="button" class="btn btn-icon" data-fam="del" data-i="${i}" aria-label="${esc(t('delete'))}" data-tip="${esc(t('delete'))}">${icon('close', 14)}</button>
+    </div>`).join('');
+  const body = () => `
+    <h3>${esc(t('famMasters'))}</h3>
+    <div class="fam-masters">${masterRows()}</div>
+    <div class="fam-actions">
+      <button type="button" class="btn" data-fam="bold" aria-pressed="${open === 'bold'}">${icon('plus', 14)}<span>${esc(t('famBold'))}</span></button>
+      <button type="button" class="btn" data-fam="light" aria-pressed="${open === 'light'}">${icon('plus', 14)}<span>${esc(t('famLight'))}</span></button>
+      <button type="button" class="btn" data-fam="italic" aria-pressed="${open === 'italic'}" ${hasItalic(p) ? `aria-disabled="true" data-tip="${esc(t('famHasItalic'))}"` : ''}>${icon('plus', 14)}<span>${esc(t('famItalicAdd'))}</span></button>
+      ${hasMasters(p) ? `<button type="button" class="btn" data-fam="masters">${icon('settings', 14)}<span>${esc(t('famEditMasters'))}</span></button>` : ''}
+    </div>
+    ${open ? quick() : ''}
+    <h3>${esc(t('famStyles'))} <span class="fam-count">${esc(t('famCount', { n: styles.filter((s) => s.export).length }))}</span></h3>
+    ${styles.length ? `<div class="fam-styles">${styleRows()}</div>` : `<p class="hint">${esc(t('famNoStyles'))}</p>`}
+    ${hasMasters(p) ? `<div class="fam-actions">
+      <button type="button" class="btn" data-fam="standard">${esc(t('famStandard'))}</button>
+      <button type="button" class="btn" data-fam="addStyle">${icon('plus', 14)}<span>${esc(t('famAddStyle'))}</span></button></div>` : ''}`;
+
+  // Masters are added at once, so the window has only "Done": there is
+  // nothing "Cancel" could take back.
+  await showDialog({
+    title: t('famTitle', { name: p.info.familyName }),
+    cls: 'family-dlg',
+    body: body(),
+    okLabel: t('famDone'), cancel: false,
+    onOpen: (dlg) => {
+      const form = dlg.querySelector('form');
+      const box = dlg.querySelector('.body');
+      // The body is drawn anew: focus goes on, to `sel` or the same button.
+      const redraw = (sel) => {
+        const act = document.activeElement?.dataset?.fam;
+        box.innerHTML = body();
+        const to = (sel && dlg.querySelector(sel)) || (act && dlg.querySelector(`[data-fam="${act}"]`));
+        to?.focus();
+        to?.scrollIntoView({ block: 'nearest' });
+      };
+      dlg.querySelector('button[value=ok]').focus();
+      // Enter in the quick form adds, it does not close the window.
+      form.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || !e.target.closest('.fam-quick') || !e.target.matches('input')) return;
+        e.preventDefault();
+        dlg.querySelector('[data-fam="do"]').click();
+      }, true);
+      form.addEventListener('input', (e) => {
+        const [i, k] = (e.target.dataset.st || '').split(':');
+        if (!k) return;
+        const s = styles[Number(i)];
+        if (k === 'name') s.name = e.target.value;
+        else if (k === 'weight') s.weight = Number(e.target.value);
+        else s[k] = e.target.checked;
+        if (k === 'export') dlg.querySelector('.fam-count').textContent = t('famCount', { n: styles.filter((x) => x.export).length });
+      });
+      form.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-fam]');
+        if (!b) return;
+        e.preventDefault();
+        if (b.getAttribute('aria-disabled') === 'true') return; // disabled would hide its tooltip
+        const act = b.dataset.fam;
+        if (act === 'bold' || act === 'light' || act === 'italic') { open = open === act ? null : act; redraw(open && '.fam-quick input'); return; }
+        if (act === 'masters') { toMasters = true; dlg.close(); return; }
+        if (act === 'standard') styles = defaultStyles(p);
+        if (act === 'addStyle') {
+          styles.push(nextStyle(p, styles));
+          redraw(`[data-st="${styles.length - 1}:name"]`);
+          return;
+        }
+        if (act === 'del') {
+          styles.splice(Number(b.dataset.i), 1);
+          redraw(`[data-fam="del"][data-i="${Math.min(Number(b.dataset.i), styles.length - 1)}"]`);
+          return;
+        }
+        if (act === 'do') {
+          const q = (k) => dlg.querySelector(`[data-q="${k}"]`)?.value;
+          const before = defaultStyles(p);
+          const custom = JSON.stringify(styles) !== JSON.stringify(before);
+          if (open === 'italic') {
+            addItalicMasters(p, Math.max(1, Math.min(30, Number(q('angle')) || 10)), italicName);
+            if (custom) for (const s of styles.filter((x) => !x.italic)) styles.push({ ...s, name: italicName(s.name), italic: true });
+            toast(t('famItalicDone'));
+          } else {
+            const name = String(q('name') || '').trim() || preset(open)[0];
+            const rough = addWeightMaster(name, Math.round(Number(q('loc')) || preset(open)[1]), Math.round(Number(q('delta')) || 0));
+            toast(rough ? t('famRough', { name, n: rough }) : t('famWeightDone', { name }));
+          }
+          if (!custom) styles = defaultStyles(p);
+          open = null;
+          mastersChanged();
+          redraw('[data-fam="bold"]');
+          return;
+        }
+        redraw();
+      });
+    },
+  });
+  // Done, Esc or a step to the Masters window: what was typed stays.
+  const clean = uniqueStyles(styles.filter((s) => s.name.trim() && Number.isFinite(s.weight)));
+  if (JSON.stringify(clean) === JSON.stringify(defaultStyles(p))) delete p.styles;
+  else p.styles = clean;
+  markChanged();
+  renderMenus();
+  if (toMasters) mastersDialog();
 }
+
+// The fonts of the family, one per style that is switched on: [{ name, q }].
+function familyFonts() {
+  settleSmart();
+  const p = app.project;
+  const fam = (p.info.familyName || 'Font').replace(/\s+/g, '');
+  const out = [];
+  for (const s of familyStyles(p).filter((x) => x.export)) {
+    const q = instanceAt(p, s.weight, s.name, s.width, s.italic);
+    if (!q) continue;
+    refreshComponents(q); recompose(q);
+    out.push({ file: `${fam}-${s.name.replace(/[\s\\/:*?"<>|]+/g, '')}`, name: s.name, q });
+  }
+  return out;
+}
+
+// All styles of the family in one .zip.
+async function exportFamily(format = 'ttf') {
+  if (!hasMasters(app.project)) return;
+  const files = [];
+  for (const f of familyFonts()) {
+    try {
+      const r = await fetch(`/api/export?format=${format}`, { method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(f.q) });
+      if (!r.ok) throw new Error(await r.text());
+      files.push({ name: `${f.file}.${format}`, data: new Uint8Array(await r.arrayBuffer()) });
+    } catch (err) { toast(`${f.name}: ${err.message}`, 'error'); }
+  }
+  if (!files.length) return;
+  const name = safeFileName('-family.zip');
+  download(makeZip(files), name);
+  toast(t('famExported', { n: files.length, name }));
+}
+
+// Every style of the family into the system, so Word or Figma show them
+// as one family (Bold and Italic buttons included).
+async function installFamily() {
+  if (!hasMasters(app.project)) return;
+  let n = 0;
+  for (const f of familyFonts()) {
+    try {
+      const r = await fetch('/api/install-font', { method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(f.q) });
+      if (!r.ok) throw new Error(await r.text());
+      n++;
+    } catch (err) { toast(`${f.name}: ${err.message}`, 'error'); }
+  }
+  if (n) toast(t('famInstalled', { n }));
+}
+
 
 // ================================================================ colour fonts
 
@@ -3855,8 +4327,11 @@ async function openFilter(kind) {
         dlg.querySelectorAll('[data-fl="value"]').forEach((o) => { if (o !== el) o.value = x; });
         previewFilter();
       };
-      dlg.addEventListener('input', on);
-      dlg.addEventListener('change', on);
+      // On the form, which each dialog builds anew: listeners on the dialog
+      // element itself would pile up, one set per opening.
+      const form = dlg.querySelector('form');
+      form.addEventListener('input', on);
+      form.addEventListener('change', on);
       previewFilter();
     },
   });
@@ -3929,7 +4404,7 @@ async function transformMetricsDialog() {
 // ================================================================ components
 
 function componentsSection(g) {
-  const label = (name) => { const x = findGlyph(name); return x ? (charOf(x).trim() || x.name) : name; };
+  const label = (name) => { const x = findGlyph(name); return x ? glyphMark(x) : name; };
   const rows = (g.components || []).map((k, i) => `<div class="cm-row">
       <button class="btn cm-name" type="button" data-cm-open="${esc(k.glyph)}" data-tip="${esc(t('cmOpenTip'))}">${esc(label(k.glyph))}</button>
       <label><span>X</span><input type="number" step="1" data-cmpos="${i}:x" value="${Math.round(k.x)}"></label>
@@ -4054,6 +4529,9 @@ function setCompProp(spec, v, commit) {
 }
 
 // A glyph can become a smart part when it is a part: "_name", not exported or used by others.
+// A part (name starting with "_", as in Glyphs) never goes into the font.
+const isPartGlyph = (g) => g.name.length > 1 && g.name[0] === '_';
+
 function canBeSmart(g) {
   return !!g && (isSmart(g) || g.name.startsWith('_') || g.noExport || usedBy(app.project, g.name).length > 0);
 }
@@ -4482,7 +4960,7 @@ function underlaySection(g) {
 
 // ================================================================ fonts: open TTF/OTF, install
 
-const isFontFile = (f) => /\.(ttf|otf)$/i.test(f?.name || '');
+const isFontFile = (f) => /\.(ttf|otf|ufoz|zip)$/i.test(f?.name || '');
 
 // A ready font opens as a new project (not saved yet).
 async function openFontFile(file, ask = false) {
@@ -4544,9 +5022,22 @@ function download(blob, name) {
 async function save(saveAs = false) {
   try {
     if (app.serverFile && !saveAs) {
-      const r = await fetch('/api/file', { method: 'PUT', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON() });
-      if (!r.ok) throw new Error(await r.text());
-      setDirty(false);
+      const body = projectJSON();
+      const at = editCount;
+      const put = (overwrite) => fetch('/api/file', {
+        method: 'PUT', body,
+        headers: { 'X-Spline': '1', 'Content-Type': 'application/json', ...(overwrite ? { 'X-Spline-Overwrite': '1' } : {}) },
+      });
+      let r = await put(false);
+      // Changed on disk by another window or program since it was opened.
+      if (r.status === 409) {
+        if (!(await confirmDialog(t('saveConflict', { name: app.fileName }), t('saveOverwrite')))) return;
+        r = await put(true);
+      }
+      if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+      // Edits made while the file was being written are not in it.
+      if (editCount === at) setDirty(false);
+      autosave();
       toast(t('savedAs', { name: app.fileName }));
       return;
     }
@@ -4619,8 +5110,8 @@ async function openDialog() {
 function pickFiles(mode) {
   const input = $('fileInput');
   input.dataset.mode = mode;
-  input.accept = { svg: '.svg,image/svg+xml', image: 'image/png,image/jpeg,image/webp,image/gif', font: '.ttf,.otf' }[mode]
-    || '.sp,.json,.ttf,.otf,application/json';
+  input.accept = { svg: '.svg,image/svg+xml', image: 'image/png,image/jpeg,image/webp,image/gif', font: '.ttf,.otf,.ufoz,.zip' }[mode]
+    || '.sp,.json,.ttf,.otf,.ufoz,.zip,application/json';
   input.multiple = mode === 'svg';
   input.click();
 }
@@ -4727,13 +5218,34 @@ async function associateFiles() {
   }
 }
 
+// UFO has no smart parts, corners or brushes: a glyph with them is written
+// as its whole outline, and each master needs its own.
+function ufoJSON() {
+  const p = app.project;
+  const q = JSON.parse(projectJSON());
+  if (!hasMasters(p)) return JSON.stringify(q);
+  const hasParts = (g) => g.components?.some((c) => c.props && Object.keys(c.props).length) || g.contours.some((c) => c.brush || c.nodes.some((n) => n.corner));
+  const byName = new Map(q.glyphs.map((g) => [g.name, g]));
+  for (const m of q.masters.slice(1)) {
+    const inst = instanceAt(p, m.loc, undefined, m.loc2, !!m.italic);
+    if (!inst) continue;
+    refreshComponents(inst); recompose(inst);
+    for (const g of inst.glyphs.filter(hasParts)) {
+      const out = byName.get(g.name);
+      if (!out?.layers?.[m.id] || incompatibility(out, out.layers[m.id])) continue;
+      out.layers[m.id] = { contours: [...g.contours.filter((c) => !c.brush), ...(g.refContours || [])], advance: g.advance, flat: true };
+    }
+  }
+  return JSON.stringify(q);
+}
+
 async function exportFont(format) {
   try {
     const r = await fetch(`/api/export?format=${format}`, {
-      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON(),
+      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: format === 'ufo' ? ufoJSON() : projectJSON(),
     });
     if (!r.ok) throw new Error(await r.text());
-    const name = safeFileName('.' + format);
+    const name = safeFileName('.' + (r.headers.get('X-File-Ext') || format));
     download(await r.blob(), name);
     toast(t('exported', { name }));
   } catch (err) {
@@ -4854,7 +5366,11 @@ const COMMANDS = {
   simplify: simplifyGlyphs, composeOff: () => setComposed(false), composeOn: () => setComposed(true),
   ulLoad: () => pickFiles('image'), ulRemove: removeUnderlay,
   ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
-  ptBreak: breakContour, ptJoin: joinContours, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
+  ptBreak: breakContour, ptJoin: joinContours,
+  msShowAll: () => toggleMastersView('spline.showAllMasters', 'showAllMasters'),
+  msEditAll: () => toggleMastersView('spline.editAllMasters', 'editAllMasters'),
+  ptOpenCorner: () => { if (!editor.openCorners()) toast(t('openCornerNone'), 'error'); },
+  ptReconnect: () => { if (!editor.reconnectEars()) toast(t('reconnectNone'), 'error'); }, bgCopy: () => backgroundOp('copy'), bgSwap: () => backgroundOp('swap'),
   bgClear: () => backgroundOp('clear'),
   ptEven: evenHandles, snapSave: saveSnapshot, gvTiles: () => setGridView('tiles'), gvTable: () => setGridView('table'),
   duplicate: duplicateGlyphs, tmOpen: transformMetricsDialog, btExtremes: () => batch('extremes'), btRound: () => batch('round'), btMetrics: () => batch('metrics'),
@@ -4863,7 +5379,7 @@ const COMMANDS = {
   snapMenu: () => { snapMenuOpen = !snapMenuOpen; renderEditorOptions(); },
   pxDraw: () => { editor.pixelErase = false; renderEditorOptions(); }, pxErase: () => { editor.pixelErase = true; renderEditorOptions(); },
   newCorner: () => newPartGlyph('corner'), newBrush: () => newPartGlyph('brush'),
-  mastersDialog: () => mastersDialog(), exportInstances: () => exportInstances(),
+  mastersDialog: () => mastersDialog(),
   ulFitCap: () => fitUnderlay('cap'), ulFitX: () => fitUnderlay('x'), ulFitAll: () => fitUnderlay('all'),
 };
 
@@ -4913,6 +5429,8 @@ const ACTIONS = {
   updateMetrics: { run: updateAllMetrics, when: () => app.extended },
   breakContour: { run: breakContour, when: () => app.extended && inEditorMode() },
   joinContours: { run: joinContours, when: () => app.extended && inEditorMode() },
+  openCorner: { run: () => COMMANDS.ptOpenCorner(), when: () => app.extended && inEditorMode() },
+  reconnect: { run: () => COMMANDS.ptReconnect(), when: () => app.extended && inEditorMode() },
   bgCopy: { run: () => backgroundOp('copy'), when: () => app.extended && inEditorMode() },
   fontInfo: { run: editFontInfo }, groups: { run: () => groupsDialog(), label: () => t('kgTitle') }, shortcuts: { run: helpDialog, always: true },
 };
@@ -4927,11 +5445,15 @@ document.addEventListener('keydown', (e) => {
   const act = combo && ACTIONS[actionFor(combo)];
   if (act) {
     const busy = !act.always && (typing(e.target) || e.target.closest?.('#menus'));
-    // In the kerning view plain keys type text.
-    const kernText = app.mode === 'kern' && !mod && !e.altKey && combo.replace(/^Shift\+/, '').length === 1;
+    // In the kerning view and with the Text tool plain keys type text.
+    const plain = !mod && !e.altKey && combo.replace(/^Shift\+/, '').length === 1;
+    const kernText = plain && (app.mode === 'kern' || (app.mode === 'editor' && editor.tool === 'text'));
     if (!busy && !kernText && (!act.when || act.when())) { e.preventDefault(); act.run(); return; }
   }
   if (typing(e.target) || e.target.closest?.('#menus')) return;
+  if (app.mode === 'editor' && editor.tool === 'text' && !mod && !e.altKey && e.target === $('canvas')) {
+    if (lineKey(e)) { e.preventDefault(); return; }
+  }
   if (app.mode === 'kern') {
     // The canvas works like a text line: type to add letters, arrows move
     // the cursor, Alt+arrows change the kerning (Shift: by 1).
@@ -4973,6 +5495,11 @@ document.addEventListener('keydown', (e) => {
     const d = { arrowleft: [-st, 0], arrowright: [st, 0], arrowup: [0, st], arrowdown: [0, -st] }[key];
     const ok = editor.xform ? editor.nudgeTransform(...d) : mod ? editor.nudge(...d) : editor.nudgeNodesOnly(...d);
     if (ok) e.preventDefault();
+    return;
+  }
+  // Alt+Delete: the segment between two points, not the points.
+  if (app.extended && e.altKey && !mod && (e.key === 'Delete' || e.key === 'Backspace')) {
+    if (editor.deleteSegmentBetween()) e.preventDefault();
     return;
   }
   if (mod || e.altKey) return;
@@ -5017,8 +5544,9 @@ async function updatePreview() {
   const seq = ++previewSeq;
   try {
     let body = projectJSON();
-    if (app.extended && hasMasters(app.project) && app.previewLoc !== undefined) {
-      const q = instanceAt(app.project, app.previewLoc, undefined, app.previewLoc2);
+    if (hasMasters(app.project) && (app.previewLoc !== undefined || app.previewItalic)) {
+      const at = app.previewLoc ?? app.project.masters[0].loc;
+      const q = instanceAt(app.project, at, undefined, app.previewLoc2, !!app.previewItalic && hasItalic(app.project)) || instanceAt(app.project, at, undefined, app.previewLoc2);
       refreshComponents(q); recompose(q);
       body = serialize(q);
     }
@@ -5064,17 +5592,18 @@ function renderPreviewFeatures() {
   if (app.extended) for (const g of app.project.glyphs) { const f = formOf(g.name); if (f && !found.has(f.tag + (f.lang || ''))) found.set(f.tag + (f.lang || ''), f); }
   // Numerators and denominators also make fractions: "1/2" with frac on.
   if (found.has('numr') && found.has('dnom')) found.set('frac', { tag: 'frac', label: t('pfFrac') });
-  const axis = app.extended && hasMasters(app.project) ? app.project.axis : null;
+  const axis = hasMasters(app.project) ? app.project.axis : null;
   if (!found.size && !axis) { bar.innerHTML = ''; bar.hidden = true; return; }
   bar.hidden = false;
   const loc = app.previewLoc ?? app.project.masters?.find((m) => m.id === activeId(app.project))?.loc;
   const axis2 = axis && app.project.axis2;
   const loc2 = app.previewLoc2 ?? app.project.masters?.find((m) => m.id === activeId(app.project))?.loc2;
-  const axisHTML = (axis ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis.tag)}<input type="range" data-pf-axis="1" min="${axis.min}" max="${axis.max}" step="1" value="${loc}"><output class="mono">${loc}</output></label>` : '')
-    + (axis2 && axis2.min < axis2.max ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis2.tag)}<input type="range" data-pf-axis="2" min="${axis2.min}" max="${axis2.max}" step="1" value="${loc2}"><output class="mono">${loc2}</output></label>` : '');
+  const axisHTML = (axis ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis.tag)}<input type="range" data-pf-axis="1" min="${esc(axis.min)}" max="${esc(axis.max)}" step="1" value="${esc(loc)}"><output class="mono">${esc(loc)}</output></label>` : '')
+    + (axis2 && axis2.min < axis2.max ? `<label data-tip="${esc(t('msPreviewTip'))}">${esc(axis2.tag)}<input type="range" data-pf-axis="2" min="${esc(axis2.min)}" max="${esc(axis2.max)}" step="1" value="${esc(loc2)}"><output class="mono">${esc(loc2)}</output></label>` : '');
   const tags = [...found.values()].filter((f) => f.tag !== 'locl');
   const langs = [...found.values()].filter((f) => f.tag === 'locl');
-  bar.innerHTML = axisHTML + (tags.length || langs.length ? `<span class="opt-label">${esc(t('pfTitle'))}</span>` : '')
+  const italicHTML = hasItalic(app.project) ? `<label class="check"><input type="checkbox" data-pf-italic ${app.previewItalic ? 'checked' : ''}>${esc(t('famItalic'))}</label>` : '';
+  bar.innerHTML = axisHTML + italicHTML + (tags.length || langs.length ? `<span class="opt-label">${esc(t('pfTitle'))}</span>` : '')
     + tags.map((f) => `<label class="check" data-tip="${esc(f.tag)}"><input type="checkbox" data-pf="${f.tag}" ${previewFeats.has(f.tag) ? 'checked' : ''}>${esc(f.label)}</label>`).join('')
     + (langs.length ? `<label>${esc(t('pfLang'))}<select data-pf-lang><option value="">—</option>${langs.map((f) => `<option value="${f.lang}" ${previewLang === f.lang ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}</select></label>` : '');
 }
@@ -5164,6 +5693,7 @@ async function start() {
       try {
         setProject(validateProject(session.project), { fileName: session.fileName, serverFile: session.filePath });
         loaded = true;
+        offerUnsaved(session.filePath, session.fileName);
       } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
     } else if (session.error) {
       toast(t('openError', { err: session.error }), 'error');
@@ -5191,7 +5721,7 @@ async function start() {
   else if (m && findGlyph(decodeURIComponent(m[1]))) openEditor(decodeURIComponent(m[1]), false);
   else history.replaceState({}, '', location.pathname);
   if (!app.platform.web) {
-    checkUpdates();
+    checkUpdates(false, true);
     setInterval(() => checkUpdates(), 3 * 3600 * 1000);
   }
 }
@@ -5217,6 +5747,7 @@ function openGuide() {
 }
 
 let updateInfo = null;
+let updateJob = null; // the download in the background
 
 // "v1.2.3" newer than "v1.2.0"?
 function newerVersion(a, b) {
@@ -5227,9 +5758,9 @@ function newerVersion(a, b) {
 }
 
 // Checks GitHub for a newer release: at start, every few hours while the
-// app is open, and from the Help menu. A badge in the status bar links to
-// the release page.
-async function checkUpdates(manual = false) {
+// app is open, and from the Help menu. At start a new version is offered
+// once; after that the badge in the status bar stays.
+async function checkUpdates(manual = false, atStart = false) {
   try {
     // The Go side keeps GitHub's answer for an hour, so asking often is cheap.
     const r = await fetch(`/api/update${manual ? '?force=1' : ''}`);
@@ -5242,31 +5773,151 @@ async function checkUpdates(manual = false) {
   }
   showUpdateBadge();
   if (manual && !updateAvailable()) toast(t('upToDate', { v: updateInfo.current }));
-  if (manual && updateAvailable()) openUpdatePage();
+  if (manual && updateAvailable()) updateDialog();
+  if (atStart && updateAvailable() && !$('dialog').open && store.get('spline.updateSeen') !== updateInfo.latest) {
+    store.set('spline.updateSeen', updateInfo.latest);
+    updateDialog();
+  }
 }
 
 const updateAvailable = () => !!updateInfo && newerVersion(updateInfo.latest, app.platform.version || updateInfo.current);
+const updateVersion = () => updateInfo.latest.replace(/^v/, '');
 
 function showUpdateBadge() {
   const b = $('updateBadge');
   const show = updateAvailable();
   b.hidden = !show;
-  if (show) {
-    b.textContent = t('updateBadge', { v: updateInfo.latest.replace(/^v/, '') });
-    b.dataset.tip = t('updateBadgeTip');
-  }
+  if (!show) return;
+  const pct = updateJob?.total ? Math.floor(updateJob.done / updateJob.total * 100) : 0;
+  b.textContent = updateJob?.state === 'downloading' ? t('updateDownloading', { p: pct })
+    : updateJob?.state === 'ready' ? t('updateRestartBadge') : t('updateBadge', { v: updateVersion() });
+  b.dataset.tip = t('updateBadgeTip');
 }
 
-// The latest release on GitHub: download the installer there.
-function openUpdatePage() { openPage('releases'); }
+// What is new in the release, and the way to get it.
+async function updateDialog() {
+  if (updateJob?.state === 'downloading') return;
+  if (updateJob?.state === 'ready') { restartDialog(); return; }
+  const can = updateInfo.canInstall;
+  const notes = (updateInfo.notes || '').replace(/^#+\s*/gm, '').replaceAll('**', '');
+  const answer = await showDialog({
+    title: t('updateTitle', { v: updateVersion() }),
+    body: `<p class="hint">${esc(t('updateCurrent', { v: (app.platform.version || updateInfo.current).replace(/^v/, '') }))}</p>
+      ${notes ? `<pre class="update-notes" tabindex="0">${esc(notes)}</pre>` : ''}`,
+    okLabel: t(can ? 'updateInstall' : 'updateOpenPage'), cancelLabel: t('updateLater'), extra: can ? t('updateOpenPage') : '',
+  });
+  if (answer === 'extra' || (answer && !can)) openPage('releases');
+  else if (answer) downloadUpdate();
+}
 
-$('updateBadge').addEventListener('click', openUpdatePage);
+// The new version comes in the background: work goes on, the badge counts.
+async function downloadUpdate() {
+  try {
+    const r = await fetch('/api/update/download', { method: 'POST', headers: { 'X-Spline': '1' } });
+    if (!r.ok) throw new Error(await r.text());
+    updateJob = await r.json();
+    showUpdateBadge();
+    while (updateJob.state === 'downloading') {
+      await new Promise((done) => { setTimeout(done, 400); });
+      updateJob = await (await fetch('/api/update/status')).json();
+      showUpdateBadge();
+    }
+    if (updateJob.state !== 'ready') throw new Error(updateJob.error);
+  } catch (err) {
+    updateJob = null;
+    showUpdateBadge();
+    toast(t('updateFailed', { err: err.message }), 'error');
+    return;
+  }
+  if ($('dialog').open) toast(t('updateReadyTitle', { v: updateVersion() }));
+  else restartDialog();
+}
+
+// Nothing starts over unsaved work: Save / Don't Save / Cancel come first.
+async function restartDialog() {
+  const answer = await showDialog({
+    title: t('updateReadyTitle', { v: updateVersion() }),
+    body: `<p class="hint">${esc(t('updateReadyText'))}</p>`,
+    okLabel: t('updateRestart'), cancelLabel: t('updateLater'),
+  });
+  if (!answer || !(await confirmClose())) return;
+  const r = await fetch('/api/update/apply', { method: 'POST', headers: { 'X-Spline': '1' } });
+  if (r.status === 423) { toast(t('updateOtherWindows', { n: await r.text() }), 'error'); return; }
+  if (!r.ok) { toast(t('updateFailed', { err: await r.text() }), 'error'); return; }
+  toast(t('updateRestarting'));
+}
+
+$('updateBadge').addEventListener('click', updateDialog);
 
 // ================================================================ app window frame
 
 // Inside the Spline window (WebView2) the system title bar is removed and
 // the menu bar acts as the title bar: drag to move, double-click to
 // maximize, custom minimize / maximize / close buttons, resize at the edges.
+// Closing with unsaved edits: Save / Don't Save / Cancel. True: close.
+async function confirmClose() {
+  if (!app.dirty) return true;
+  autosave(); // now, not in 0.7 s
+  const answer = await showDialog({
+    title: t('closeUnsavedTitle', { name: app.fileName || app.project.info.familyName }),
+    body: `<p class="hint">${esc(t('closeUnsavedText'))}</p>`,
+    okLabel: t('save'), extra: t('dontSave'),
+  });
+  if (answer === 'extra') return true;
+  if (!answer) return false;
+  await save();
+  return !app.dirty; // a failed save keeps the window open
+}
+
+// A file opened from disk whose last autosave still had unsaved edits (the
+// window was closed or the program crashed before saving): offer them back.
+async function offerUnsaved(filePath, fileName) {
+  let saved = null;
+  try { saved = JSON.parse(store.get(AUTOSAVE_KEY) || 'null'); } catch { /* broken autosave */ }
+  if (!saved?.dirty || saved.serverFile !== filePath || !saved.project) return;
+  const answer = await showDialog({
+    title: t('restoreTitle'),
+    body: `<p class="hint">${esc(t('restoreUnsaved', { name: fileName }))}</p>`,
+    okLabel: t('restore'), cancel: false, extra: t('restoreNo'),
+    onOpen: (dlg) => dlg.querySelector('button[value=ok]').focus(),
+  });
+  // Only a clear "no" gives the copy up (the file is the truth then, and the
+  // old copy must not ask again); Esc must not lose work.
+  if (answer === 'extra') { autosave(); return; }
+  try {
+    setProject(validateProject(JSON.parse(saved.project)), { fileName, serverFile: filePath });
+    setDirty(true);
+    renderAll();
+  } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
+}
+
+// Errors nobody caught: a short message instead of a silent failure.
+// At most one every few seconds; noise from the browser itself is skipped.
+let lastErrorToast = 0;
+function reportError(err) {
+  const msg = String(err?.message || err || '').trim();
+  if (!msg || /ResizeObserver loop|Script error\.?$/i.test(msg) || Date.now() - lastErrorToast < 5000) return;
+  lastErrorToast = Date.now();
+  toast(t('unexpectedError', { err: msg.slice(0, 160) }), 'error');
+}
+window.addEventListener('error', (e) => { if (!e.filename || e.filename.startsWith(location.origin)) reportError(e.error || e.message); });
+window.addEventListener('unhandledrejection', (e) => reportError(e.reason));
+
+// The website (a browser tab): the browser's own "Leave site?" question.
+window.addEventListener('beforeunload', (e) => {
+  if (!app.dirty || typeof window.splineWindow === 'function') return; // the app window asks on its own
+  autosave();
+  e.preventDefault();
+  e.returnValue = '';
+});
+
+// Alt+F4, the taskbar and anything else that closes the window come here.
+window.splineCloseRequest = async () => {
+  await window.splineWindow('closeAsked', '');
+  if (app.dirty && $('dialog').open) return; // the open dialog is answered first
+  if (await confirmClose()) window.splineWindow('close', '');
+};
+
 function initWindowFrame() {
   if (typeof window.splineWindow !== 'function') return; // regular browser
   const call = async (action, arg = '') => {
@@ -5276,9 +5927,11 @@ function initWindowFrame() {
   document.documentElement.classList.add('native');
   $('winControls').hidden = false;
   $('resizeEdges').hidden = false;
-  $('winControls').addEventListener('click', (e) => {
+  $('winControls').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-win]');
-    if (b) call(b.dataset.win);
+    if (!b) return;
+    if (b.dataset.win === 'close' && !(await confirmClose())) return;
+    call(b.dataset.win);
   });
   const isDragArea = (el) => !el.closest('button, input, select, a, [role="menu"], [role="menuitem"], .view-switch');
   document.querySelector('.menubar').addEventListener('pointerdown', (e) => {

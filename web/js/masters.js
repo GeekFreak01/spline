@@ -3,7 +3,14 @@
 // is interpolated: instances for export, a variable font, the preview.
 //
 //   project.axis    = { tag: 'wght', min, max }
-//   project.masters = [{ id, name, loc, kerning? }]   the first one is the default
+//   project.masters = [{ id, name, loc, kerning?, italic?, italicAngle? }]
+//                     the first one is the default (always upright)
+//   project.styles  = [{ name, weight, width?, italic, export }]   the fonts
+//                     the family exports (none: every master and the
+//                     standard weights between them)
+//
+// A family, as in Glyphs: upright masters and italic masters. Upright
+// styles blend the upright masters, italic styles the italic ones.
 //   glyph.layers    = { [masterId]: { contours, advance } } for the others
 //
 // While a master other than the default is edited, its outlines sit in
@@ -73,14 +80,19 @@ export function saveForm(p) {
   return q;
 }
 
+// The project's single drawing becomes the default master (no-op when
+// there are masters already).
+export function ensureMasters(p) {
+  if (p.masters?.length) return;
+  p.axis ||= { tag: 'wght', min: 100, max: 900 };
+  p.masters = [{ id: 'm0', name: p.info.styleName || 'Regular', loc: p.info.weight || 400 }];
+}
+
 export function addMaster(p, name, loc, loc2) {
   // Contours in their final direction first: the editor turns them on
   // every edit, and the masters must keep the same point order.
   for (const g of p.glyphs) normalizeDirections(g);
-  if (!p.masters?.length) {
-    p.axis ||= { tag: 'wght', min: 100, max: 900 };
-    p.masters = [{ id: 'm0', name: p.info.styleName || 'Regular', loc: p.info.weight || 400 }];
-  }
+  ensureMasters(p);
   let n = p.masters.length;
   while (p.masters.some((m) => m.id === `m${n}`)) n++;
   const id = `m${n}`;
@@ -212,12 +224,11 @@ function flat(o, like) {
 function unflat(like, nums) {
   let k = 0;
   const contours = like.contours.map((c) => ({
-    closed: c.closed,
+    ...c, // paint, brush and corners are not blended: they stay as they are
     nodes: c.nodes.map((n) => {
-      const q = { x: nums[k++], y: nums[k++] };
+      const q = { ...n, x: nums[k++], y: nums[k++] };
       if (n.in) q.in = { x: nums[k++], y: nums[k++] };
       if (n.out) q.out = { x: nums[k++], y: nums[k++] };
-      if (n.smooth) q.smooth = true;
       return q;
     }),
   }));
@@ -227,8 +238,11 @@ function unflat(like, nums) {
 // A plain project (no masters) at a location: loc on the first axis and
 // loc2 on the second. Glyphs drawn differently in some master take the
 // default outline.
-export function instanceAt(p, loc, styleName, loc2) {
-  const src = saveForm(p);
+//
+// italic: the instance of the italic masters (null when there are none).
+export function instanceAt(p, loc, styleName, loc2, italic = false) {
+  const src = italic || p.masters?.some((m) => m.italic) ? familyGroup(p, italic) : saveForm(p);
+  if (!src) return null;
   const { norm, order } = variationModel(src);
   const def = src.masters[0];
   const target = norm([loc, ...(src.axis2 ? [loc2 ?? def.loc2 ?? 100] : [])]);
@@ -237,6 +251,9 @@ export function instanceAt(p, loc, styleName, loc2) {
   const q = clone({ ...src, glyphs: [] });
   delete q.masters; delete q.axis; delete q.axis2; delete q.activeMaster;
   q.info = { ...q.info, ...(styleName ? { styleName } : {}), weight: src.axis?.tag === 'wght' ? Math.round(loc) : q.info.weight };
+  // A master's slant is positive to the right; a font file counts the other way.
+  if (italic) q.info.italicAngle = -(def.italicAngle ?? 10);
+  else delete q.info.italicAngle;
   q.glyphs = src.glyphs.map((g) => {
     const base = get(g, def.id);
     const outs = order.map((m) => get(g, m.id));
@@ -266,16 +283,24 @@ export function instanceAt(p, loc, styleName, loc2) {
 }
 
 // Kerning at a location: every entry of every master, blended like the
-// outlines (an entry a master lacks counts as 0 there).
+// outlines. Where a master has no such entry, the pair gets what that
+// master gives it through its groups (glyph+group, group+glyph,
+// group+group, as in the font), else 0.
 function blendKerning(src, order, scal) {
   const def = src.masters[0];
   const kernOf = (m) => (m.id === def.id ? src.kerning : m.kerning ?? src.kerning) || {};
+  const byName = new Map(src.glyphs.map((g) => [g.name, g]));
+  const sides = (key, prop) => (key.startsWith('@') || !byName.get(key)?.[prop] ? [key] : [key, `@${byName.get(key)[prop]}`]);
+  const effective = (k, a, b) => {
+    for (const x of sides(a, 'kernRight')) for (const y of sides(b, 'kernLeft')) if (k[x]?.[y] !== undefined) return k[x][y];
+    return 0;
+  };
   const keys = new Set();
   for (const m of src.masters) for (const [a, row] of Object.entries(kernOf(m))) for (const b of Object.keys(row)) keys.add(`${a}\u0000${b}`);
   const out = {};
   for (const key of keys) {
     const [a, b] = key.split('\u0000');
-    const val = (m) => kernOf(m)[a]?.[b] ?? 0;
+    const val = (m) => effective(kernOf(m), a, b);
     const base = val(def);
     // order holds { id, i, nl, region }: the master itself is src.masters[i].
     const deltas = [];
@@ -301,3 +326,145 @@ export function setWidthAxis(p, on) {
     for (const m of p.masters || []) delete m.loc2;
   }
 }
+
+// ---------------------------------------------------------------- family
+
+export const isItalicMaster = (m) => !!m?.italic;
+export const hasItalic = (p) => !!p.masters?.some(isItalicMaster);
+
+// The upright or the italic masters as a project of their own, in the saved
+// form: the group's master nearest the default location is its default.
+// null when the group has no master.
+export function familyGroup(p, italic) {
+  const src = saveForm(p);
+  const ms = (src.masters || []).filter((m) => !!m.italic === !!italic);
+  if (!ms.length) return null;
+  const def = src.masters[0];
+  const dist = (m) => Math.abs(m.loc - def.loc) + Math.abs((m.loc2 ?? 100) - (def.loc2 ?? 100));
+  const head = [...ms].sort((a, b) => dist(a) - dist(b))[0];
+  const order = [head, ...ms.filter((m) => m !== head)];
+  const layer = (g, id) => (id === def.id ? take(g) : g.layers?.[id] || take(g));
+  const q = { ...src, masters: order.map((m) => ({ ...m })) };
+  // Anchors and components are shared by all masters and drawn upright:
+  // in an italic they lean with the letters, or accents would miss them.
+  const lean = italic ? Math.tan((head.italicAngle ?? 10) * Math.PI / 180) : 0;
+  const cy = (p.info.xHeight || 500) / 2;
+  const leaning = (g) => (lean ? {
+    ...(g.anchors ? { anchors: g.anchors.map((a) => ({ ...a, x: Math.round(a.x + (a.y - cy) * lean) })) } : {}),
+    ...(g.components ? { components: g.components.map((c) => ({ ...c, x: Math.round((c.x || 0) + (c.y || 0) * lean) })) } : {}),
+  } : {});
+  q.kerning = head.id === def.id ? src.kerning : (head.kerning ?? src.kerning);
+  delete q.masters[0].kerning;
+  q.glyphs = src.glyphs.map((g) => {
+    const base = layer(g, head.id);
+    const layers = {};
+    for (const m of order.slice(1)) layers[m.id] = layer(g, m.id);
+    return { ...g, ...leaning(g), contours: base.contours, advance: base.advance, layers };
+  });
+  return q;
+}
+
+// Kerning of master id, wherever it is kept right now.
+export function kerningOf(p, id) {
+  if (id === activeId(p)) return p.kerning || {};
+  const m = p.masters.find((x) => x.id === id);
+  if (m?.kerning) return m.kerning;
+  const d = p.masters.find((x) => x.id === defaultId(p));
+  return (activeId(p) === defaultId(p) ? p.kerning : d?.kerning) || {};
+}
+
+// Contours slanted by `angle` degrees to the right, around the middle of
+// the x-height (cy), so the letters do not drift sideways.
+export function slantContours(cs, angle, cy) {
+  const k = Math.tan(angle * Math.PI / 180);
+  const s = (q) => ({ x: Math.round(q.x + (q.y - cy) * k), y: q.y });
+  return cs.map((c) => ({ ...c, nodes: c.nodes.map((n) => ({ ...n, ...s(n), ...(n.in ? { in: s(n.in) } : {}), ...(n.out ? { out: s(n.out) } : {}) })) }));
+}
+
+// Italic companions of the upright masters: each a slanted copy at the
+// same place, marked italic. Returns how many were added.
+export function addItalicMasters(p, angle, name = (m) => m) {
+  ensureMasters(p);
+  const cy = (p.info.xHeight || 500) / 2;
+  let n = 0;
+  for (const m of p.masters.filter((x) => !x.italic)) {
+    const same = (x) => x.italic && x.loc === m.loc && (x.loc2 ?? 100) === (m.loc2 ?? 100);
+    if (p.masters.some(same)) continue;
+    const kern = clone(kerningOf(p, m.id));
+    const id = addMaster(p, name(m.name), m.loc, m.loc2);
+    const it = p.masters.find((x) => x.id === id);
+    it.italic = true;
+    it.italicAngle = angle;
+    it.kerning = kern;
+    for (const g of p.glyphs) {
+      const src = layerOf(p, g, m.id);
+      g.layers[id] = { contours: slantContours(clone(src.contours), angle, cy), advance: src.advance };
+    }
+    n++;
+  }
+  fitAxis(p);
+  return n;
+}
+
+// The axis ranges follow the masters.
+export function fitAxis(p) {
+  if (!p.masters?.length) return;
+  p.axis.min = Math.min(...p.masters.map((m) => m.loc));
+  p.axis.max = Math.max(...p.masters.map((m) => m.loc));
+  if (p.axis2) {
+    p.axis2.min = Math.min(...p.masters.map((m) => m.loc2 ?? 100));
+    p.axis2.max = Math.max(...p.masters.map((m) => m.loc2 ?? 100));
+  }
+}
+
+export const WEIGHT_NAMES = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black' };
+
+// "Bold" + italic -> "Bold Italic"; "Regular" + italic -> "Italic".
+export function styleNameFor(weight, italic) {
+  const w = WEIGHT_NAMES[weight] || String(weight);
+  if (!italic) return w;
+  return w === 'Regular' ? 'Italic' : `${w} Italic`;
+}
+
+// The styles a family exports when none are set: in each group (upright,
+// italic) its masters and the standard weights between them.
+export function defaultStyles(p) {
+  if (!hasMasters(p)) return [];
+  const out = [];
+  const def2 = p.masters[0].loc2;
+  for (const italic of hasItalic(p) ? [false, true] : [false]) {
+    const ms = p.masters.filter((m) => !!m.italic === italic);
+    const lo = Math.min(...ms.map((m) => m.loc)), hi = Math.max(...ms.map((m) => m.loc));
+    const seen = new Set();
+    const add = (weight, name, width) => {
+      const key = `${weight}/${width ?? ''}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ name, weight, ...(p.axis2 ? { width: width ?? def2 ?? 100 } : {}), italic, export: true });
+    };
+    // A master on another width keeps its own name ("Bold Condensed").
+    for (const m of ms) add(m.loc, p.axis?.tag === 'wght' && WEIGHT_NAMES[m.loc] && (m.loc2 ?? def2) === def2 ? styleNameFor(m.loc, italic) : m.name, m.loc2);
+    if (p.axis?.tag === 'wght') for (let w = 100; w <= 900; w += 100) if (w > lo && w < hi) add(w, styleNameFor(w, italic), def2);
+  }
+  return out.sort((a, b) => (a.italic - b.italic) || (a.weight - b.weight));
+}
+
+// Names must differ: the fonts of a family and their files are told apart by them.
+export function uniqueStyles(styles) {
+  const used = new Set();
+  return styles.map((s) => {
+    let name = s.name.trim();
+    for (let n = 2; used.has(name.toLowerCase()); n++) name = `${s.name.trim()} ${n}`;
+    used.add(name.toLowerCase());
+    return { ...s, name };
+  });
+}
+
+// The next style to add: the first standard weight the list does not have.
+export function nextStyle(p, styles) {
+  const w = [400, 500, 300, 600, 700, 200, 800, 100, 900].find((x) => !styles.some((s) => !s.italic && s.weight === x)) ?? 500;
+  return { name: styleNameFor(w, false), weight: w, ...(p.axis2 ? { width: p.masters[0].loc2 ?? 100 } : {}), italic: false, export: true };
+}
+
+// The styles to export: the project's own list, or the default one.
+export const familyStyles = (p) => (p.styles?.length ? p.styles : defaultStyles(p));

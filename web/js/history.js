@@ -1,5 +1,18 @@
 // Undo / redo. Each step stores a snapshot of one glyph or of the kerning.
 const LIMIT = 300;
+// About this many points in all snapshots together (~100 bytes each): a
+// complex glyph with masters and a background is MBs per step.
+const POINT_LIMIT = 1_500_000;
+
+// Points in a snapshot: its outlines, the other masters, the background.
+function weigh(s) {
+  let n = 0;
+  const add = (cs) => { for (const c of cs || []) n += c.nodes?.length || 0; };
+  add(s.contours);
+  add(s.background);
+  for (const l of Object.values(s.layers || {})) add(l.contours);
+  return n + 1;
+}
 export const KERNING = '#kerning';
 export const GROUPS = '#groups';
 
@@ -24,8 +37,12 @@ export class History {
   pushGroups(project) { this.#add(groupsSnap(project)); }
 
   #add(s) {
+    s.weight = weigh(s);
     this.undoStack.push(s);
-    if (this.undoStack.length > LIMIT) this.undoStack.shift();
+    let total = this.undoStack.reduce((a, x) => a + (x.weight || 1), 0);
+    while (this.undoStack.length > 1 && (this.undoStack.length > LIMIT || total > POINT_LIMIT)) {
+      total -= this.undoStack.shift().weight || 1;
+    }
     this.redoStack = [];
   }
 
@@ -63,6 +80,8 @@ export class History {
     if (s.anchors) g.anchors = structuredClone(s.anchors); else delete g.anchors;
     if (s.components) g.components = structuredClone(s.components); else delete g.components;
     if (s.background) g.background = structuredClone(s.background); else delete g.background;
+    // Other masters' outlines: "edit all masters" changes them too.
+    if (s.layers) g.layers = structuredClone(s.layers); else delete g.layers;
     return g.name;
   }
 }
@@ -79,4 +98,5 @@ const snap = (g) => ({
   background: g.background && structuredClone(g.background),
   components: g.components && structuredClone(g.components),
   anchors: g.anchors && structuredClone(g.anchors),
+  layers: g.layers && structuredClone(g.layers),
 });

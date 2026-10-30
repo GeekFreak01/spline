@@ -3,6 +3,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 )
@@ -25,4 +27,10 @@ func openWindow(url string) (opened, blocked bool) {
 		}
 	}
 	return false, false
+}
+
+// fatal reports an error that stops the program (in a terminal here).
+func fatal(msg string) {
+	fmt.Fprintln(os.Stderr, msg)
+	os.Exit(1)
 }

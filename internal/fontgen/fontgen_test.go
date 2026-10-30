@@ -239,3 +239,50 @@ func TestComponentsExported(t *testing.T) {
 		t.Fatalf("component glyph has no outline: %v", err)
 	}
 }
+
+// Style linking: every style of a family gets a four-style name for old
+// apps (family + Regular/Italic/Bold/Bold Italic) and the full name in the
+// typographic names.
+func TestFamilyNames(t *testing.T) {
+	for style, want := range map[string][4]string{
+		"Regular":         {"Spline", "Regular", "", ""},
+		"Bold Italic":     {"Spline", "Bold Italic", "", ""},
+		"Light":           {"Spline Light", "Regular", "Spline", "Light"},
+		"Light Italic":    {"Spline Light", "Italic", "Spline", "Light Italic"},
+		"SemiBold Italic": {"Spline SemiBold", "Italic", "Spline", "SemiBold Italic"},
+	} {
+		n := makeNames(project.Info{FamilyName: "Spline", StyleName: style, Version: "1.000"})
+		if got := [4]string{n.family, n.style, n.typoFamily, n.typoStyle}; got != want {
+			t.Errorf("%s: %q, want %q", style, got, want)
+		}
+	}
+}
+
+// Only Bold and Bold Italic carry the bold flag: Word would embolden the rest.
+func TestBoldFlag(t *testing.T) {
+	cases := []struct {
+		style  string
+		weight int
+		bold   bool
+	}{
+		{"Regular", 400, false}, {"Bold", 700, true}, {"Bold Italic", 700, true},
+		{"ExtraBold", 800, false}, {"Black", 900, false}, {"Black Italic", 900, false},
+	}
+	for _, c := range cases {
+		in := project.Info{StyleName: c.style, Weight: c.weight}
+		if got := fsSelection(in)&0x20 != 0; got != c.bold {
+			t.Errorf("%s: fsSelection bold = %v", c.style, got)
+		}
+		if got := macStyle(in)&1 != 0; got != c.bold {
+			t.Errorf("%s: macStyle bold = %v", c.style, got)
+		}
+	}
+}
+
+func TestItalicStyle(t *testing.T) {
+	for in, want := range map[string]string{"Regular": "Italic", "": "Italic", "Bold": "Bold Italic", "Medium": "Medium Italic", "Bold Italic": "Bold Italic", "Italic": "Italic"} {
+		if got := italicStyle(in); got != want {
+			t.Errorf("italicStyle(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

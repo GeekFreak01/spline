@@ -260,7 +260,11 @@ func prepareVar(p *project.Project, fd *fontData, src []project.Glyph) error {
 			}
 			if float64(w) > vf.axes[0].Min && float64(w) < vf.axes[0].Max && !seen[key(l)] {
 				seen[key(l)] = true
-				list = append(list, inst{names[w], l})
+				name := names[w]
+				if p.Masters[0].Italic {
+					name = italicStyle(name)
+				}
+				list = append(list, inst{name, l})
 			}
 		}
 	}
