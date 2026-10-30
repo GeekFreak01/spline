@@ -94,7 +94,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          mv artifacts/notes.md notes.md
-          (cd artifacts && sha256sum * > SHA256SUMS.txt)
-          gh release create "${GITHUB_REF_NAME}" artifacts/* --draft --verify-tag \
+          mkdir release
+          find artifacts -type f -not -name notes.md -exec mv {} release/ \;
+          find artifacts -type f -name notes.md -exec mv {} notes.md \;
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          gh release create "${GITHUB_REF_NAME}" release/* --draft --verify-tag \
             --title "${GITHUB_REF_NAME}" --notes-file notes.md --generate-notes
