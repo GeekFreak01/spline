@@ -257,3 +257,32 @@ func TestFamilyNames(t *testing.T) {
 		}
 	}
 }
+
+// Only Bold and Bold Italic carry the bold flag: Word would embolden the rest.
+func TestBoldFlag(t *testing.T) {
+	cases := []struct {
+		style  string
+		weight int
+		bold   bool
+	}{
+		{"Regular", 400, false}, {"Bold", 700, true}, {"Bold Italic", 700, true},
+		{"ExtraBold", 800, false}, {"Black", 900, false}, {"Black Italic", 900, false},
+	}
+	for _, c := range cases {
+		in := project.Info{StyleName: c.style, Weight: c.weight}
+		if got := fsSelection(in)&0x20 != 0; got != c.bold {
+			t.Errorf("%s: fsSelection bold = %v", c.style, got)
+		}
+		if got := macStyle(in)&1 != 0; got != c.bold {
+			t.Errorf("%s: macStyle bold = %v", c.style, got)
+		}
+	}
+}
+
+func TestItalicStyle(t *testing.T) {
+	for in, want := range map[string]string{"Regular": "Italic", "": "Italic", "Bold": "Bold Italic", "Medium": "Medium Italic", "Bold Italic": "Bold Italic", "Italic": "Italic"} {
+		if got := italicStyle(in); got != want {
+			t.Errorf("italicStyle(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

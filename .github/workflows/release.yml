@@ -66,12 +66,13 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          if (-not (Get-ChildItem "${env:ProgramFiles}*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
       - name: Build installer
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q "/DAppVersion=$version" installer\spline.iss
+          $iscc = (Get-ChildItem "${env:ProgramFiles}*\Inno Setup*\ISCC.exe" | Select-Object -First 1).FullName
+          & $iscc /Q "/DAppVersion=$version" installer\spline.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:

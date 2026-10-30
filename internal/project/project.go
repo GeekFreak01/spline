@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode/utf8"
 )
 
 // FormatName is the value of the "format" field in every .sp file.
@@ -103,6 +104,9 @@ type Glyph struct {
 type Layer struct {
 	Contours []Contour `json:"contours"`
 	Advance  float64   `json:"advance"`
+	// Flat: Contours is the whole outline, with smart parts, corners and
+	// brushes already expanded (sent by the page for an export).
+	Flat bool `json:"flat,omitempty"`
 }
 
 // Axis is the design axis the masters sit on (weight for now).
@@ -368,7 +372,7 @@ func (p *Project) Validate() error {
 		return errors.New("too many styles")
 	}
 	for _, st := range p.Styles {
-		if strings.TrimSpace(st.Name) == "" || len(st.Name) > 64 || !finite(st.Weight) || !finite(st.Width) {
+		if strings.TrimSpace(st.Name) == "" || utf8.RuneCountInString(st.Name) > 64 || !finite(st.Weight) || !finite(st.Width) {
 			return errors.New("invalid style")
 		}
 	}

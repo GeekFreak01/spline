@@ -176,3 +176,53 @@ func TestDeepPlist(t *testing.T) {
 		t.Fatal("no error for a deeply nested plist")
 	}
 }
+
+// Masters whose names make one folder name both survive.
+func TestSameMasterNames(t *testing.T) {
+	p := demo(t)
+	p.Axis = &project.Axis{Tag: "wght", Min: 400, Max: 900}
+	p.Masters = []project.Master{{ID: "m0", Name: "Regular", Loc: 400}, {ID: "m1", Name: "Bold", Loc: 700}, {ID: "m2", Name: "BOLD", Loc: 900}}
+	for i := range p.Glyphs {
+		g := &p.Glyphs[i]
+		g.Layers = map[string]project.Layer{"m1": {Advance: g.Advance + 1, Contours: g.Contours}, "m2": {Advance: g.Advance + 2, Contours: g.Contours}}
+	}
+	data, _, err := Export(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, _, err := Import(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Masters) != 3 {
+		t.Fatalf("%d masters come back", len(q.Masters))
+	}
+}
+
+// A designspace from Glyphs or fontmake: sources use design values, the map
+// turns them into the weights people see.
+func TestDesignspaceMap(t *testing.T) {
+	m := []dsMap{{Input: 400, Output: 80}, {Input: 700, Output: 160}, {Input: 900, Output: 200}}
+	for design, want := range map[float64]float64{80: 400, 120: 550, 160: 700, 200: 900, 40: 400, 300: 900} {
+		if got := userValue(m, design); got != want {
+			t.Errorf("userValue(%v) = %v, want %v", design, got, want)
+		}
+	}
+	if got := userValue(nil, 123); got != 123 {
+		t.Errorf("no map: %v", got)
+	}
+}
+
+// A layer the page has expanded is written as it is, not with the default's parts.
+func TestFlatLayer(t *testing.T) {
+	p := demo(t)
+	g := p.Glyphs[0]
+	own := project.Contour{Closed: true, Nodes: []project.Node{{X: 1, Y: 1}, {X: 777, Y: 1}, {X: 777, Y: 777}}}
+	g.RefContours = []project.Contour{{Closed: true, Nodes: []project.Node{{X: 9, Y: 9}, {X: 555, Y: 9}, {X: 555, Y: 555}}}}
+	g.Contours = []project.Contour{{Closed: true, Nodes: []project.Node{{X: 0, Y: 0, Corner: "_corner.a"}, {X: 5, Y: 0}, {X: 5, Y: 5}}}}
+	g.Layers = map[string]project.Layer{"m1": {Advance: 500, Contours: []project.Contour{own}, Flat: true}}
+	got := string(glif(g, "m1"))
+	if !strings.Contains(got, `x="777"`) || strings.Contains(got, `x="555"`) {
+		t.Errorf("flat layer:\n%s", got)
+	}
+}

@@ -520,6 +520,7 @@ type dsXML struct {
 		Minimum float64 `xml:"minimum,attr"`
 		Default float64 `xml:"default,attr"`
 		Maximum float64 `xml:"maximum,attr"`
+		Map     []dsMap `xml:"map"`
 	} `xml:"axes>axis"`
 	Sources []struct {
 		Filename  string `xml:"filename,attr"`
@@ -531,6 +532,34 @@ type dsXML struct {
 			XValue float64 `xml:"xvalue,attr"`
 		} `xml:"location>dimension"`
 	} `xml:"sources>source"`
+}
+
+// dsMap: an axis value people see (input) and the one the sources use (output).
+type dsMap struct {
+	Input  float64 `xml:"input,attr"`
+	Output float64 `xml:"output,attr"`
+}
+
+// userValue turns a source's location into the value on the axis, which is
+// what Spline keeps. Between two map points it is a straight line.
+func userValue(m []dsMap, design float64) float64 {
+	if len(m) == 0 {
+		return design
+	}
+	pts := append([]dsMap(nil), m...)
+	sort.Slice(pts, func(i, j int) bool { return pts[i].Output < pts[j].Output })
+	if design <= pts[0].Output {
+		return pts[0].Input
+	}
+	for i := 1; i < len(pts); i++ {
+		if a, b := pts[i-1], pts[i]; design <= b.Output {
+			if b.Output == a.Output {
+				return b.Input
+			}
+			return a.Input + (design-a.Output)/(b.Output-a.Output)*(b.Input-a.Input)
+		}
+	}
+	return pts[len(pts)-1].Input
 }
 
 // importDesignspace makes masters out of the sources: the one at the
@@ -587,7 +616,7 @@ func importDesignspace(files map[string][]byte, dsName string, roots []string) (
 			loc[k] = a.Default
 			for _, d := range s.Location {
 				if d.Name == a.Name || d.Name == a.Tag {
-					loc[k] = d.XValue
+					loc[k] = userValue(a.Map, d.XValue)
 				}
 			}
 		}
@@ -627,7 +656,7 @@ func importDesignspace(files map[string][]byte, dsName string, roots []string) (
 	for i, s := range srcs {
 		m := project.Master{ID: fmt.Sprintf("m%d", i), Name: s.name, Loc: s.loc[0], Italic: s.italic}
 		if s.italic {
-			m.ItalicAngle = math.Abs(s.font.project.Info.ItalicAngle)
+			m.ItalicAngle = -s.font.project.Info.ItalicAngle
 			if m.ItalicAngle == 0 {
 				m.ItalicAngle = 10
 			}

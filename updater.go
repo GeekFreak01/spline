@@ -400,21 +400,20 @@ func copyFile(from, to string) error {
 	return out.Close()
 }
 
-// cleanupUpdate removes what the update left behind, once the old copy has
-// let go of its file.
+// cleanupUpdate removes what the update left behind, once the old copy and
+// the installer have let go of their files.
 func cleanupUpdate() {
-	if dir, err := os.UserCacheDir(); err == nil {
+	exe, _ := os.Executable()
+	dir, _ := os.UserCacheDir()
+	for i := 0; i < 100; i++ {
+		os.Remove(exe + ".old")
 		os.RemoveAll(filepath.Join(dir, "Spline", "update"))
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return
-	}
-	for i := 0; i < 50; i++ {
-		if err := os.Remove(exe + ".old"); err == nil || errors.Is(err, os.ErrNotExist) {
+		_, oldErr := os.Stat(exe + ".old")
+		_, dirErr := os.Stat(filepath.Join(dir, "Spline", "update"))
+		if errors.Is(oldErr, os.ErrNotExist) && errors.Is(dirErr, os.ErrNotExist) {
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 

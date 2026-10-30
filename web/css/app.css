@@ -147,7 +147,7 @@ button { cursor: pointer; }
 }
 .btn:hover { background: var(--bg-active); }
 .btn:active { background: var(--bg-panel-2); }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
 .btn-primary { background: var(--accent-fill); border-color: var(--accent-strong); color: var(--on-accent); }
 .btn-primary:hover { background: var(--accent-strong); }
 .btn-danger { color: var(--danger); }
@@ -649,10 +649,11 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   background: var(--bg-panel); color: var(--text); box-shadow: var(--shadow-pop);
 }
 .dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
-.dialog h2 { cursor: move; user-select: none; touch-action: none; margin: 0; padding: 0 14px; height: 34px; display: flex; align-items: center; font-size: var(--fs); font-weight: 600; background: var(--bg-panel-2); border-bottom: 1px solid var(--line); }
+.dialog h2 { cursor: move; user-select: none; touch-action: none; margin: 0; padding: 7px 14px; min-height: 34px; display: flex; align-items: center; font-size: var(--fs); font-weight: 600; background: var(--bg-panel-2); border-bottom: 1px solid var(--line); }
 .dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
 .dialog .body { padding: 14px; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
 .dialog h2, .dialog .actions { flex: none; }
+.dialog .body:empty { display: none; }
 .dialog .field { display: flex; flex-direction: column; gap: 4px; color: var(--text-2); }
 .dialog .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
 .dialog h3 { margin: 6px 0 0; font-size: var(--fs-s); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); }
@@ -695,6 +696,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   background: var(--tooltip-bg); color: var(--tooltip-text); font-size: var(--fs-s); box-shadow: var(--shadow-pop); white-space: nowrap;
 }
 .tooltip[hidden] { display: none; }
+.tooltip[popover], .toasts[popover] { margin: 0; border: 0; overflow: visible; }
+.tooltip[popover] { inset: auto; }
+.toasts[popover] { inset: auto 12px 34px auto; padding: 0; background: none; }
 .tooltip kbd { font: inherit; color: var(--tooltip-key); margin-left: 6px; }
 
 .drop-overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
@@ -801,6 +805,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .sm-slider .with-unit { display: flex; align-items: center; gap: 6px; }
 .seg.sm-states { grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); }
 .dialog .ms-row.two { grid-template-columns: minmax(0, 1fr) 96px 96px 72px 76px; }
+.dialog.ms-simple .ms-row { grid-template-columns: minmax(0, 1fr) 120px 90px; }
+.ms-select { min-height: 30px; max-width: 170px; }
 
 .snap-pop { position: relative; }
 .ms-toggle[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
@@ -812,6 +818,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .snap-menu .check { width: 100%; }
 
 /* Family dialog: masters, quick additions, the list of styles. */
+.dialog.family-dlg .body > * { flex-shrink: 0; }
 .dialog.family-dlg { width: min(580px, calc(100vw - 32px)); }
 .fam-masters { display: grid; gap: 2px; }
 .fam-master { display: grid; grid-template-columns: minmax(0, 1fr) 56px 120px; gap: 8px; align-items: center; padding: 4px 8px; background: var(--bg-input); border-radius: var(--radius); }

@@ -9,7 +9,7 @@ import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { isSmart, editingState, editState, saveSmart, addProp, removeProp, smartProblems } from './smart.js';
 import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis, layerOf,
-  incompatibility, hasItalic, familyGroup, familyStyles, defaultStyles, addItalicMasters, fitAxis } from './masters.js';
+  incompatibility, hasItalic, familyGroup, familyStyles, uniqueStyles, nextStyle, defaultStyles, addItalicMasters, fitAxis } from './masters.js';
 import { makeZip } from './zip.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
@@ -93,11 +93,18 @@ const app = {
 
 // ================================================================ helpers
 
+// An open dialog covers everything on the page: tooltips and toasts are
+// popovers, shown last, so they stay above it.
+function onTop(el) {
+  try { if (el.matches(':popover-open')) el.hidePopover(); el.showPopover(); } catch { /* an old browser: below the dialog */ }
+}
+
 function toast(msg, kind = 'ok') {
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
   el.innerHTML = icon(kind === 'error' ? 'alert' : 'check', 16) + `<span>${esc(msg)}</span>`;
   $('toasts').append(el);
+  onTop($('toasts'));
   setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 200); }, kind === 'error' ? 6000 : 2500);
 }
 
@@ -159,7 +166,7 @@ function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', c
       e.preventDefault();
       form.querySelector('button[value=ok]').click();
     });
-    dlg.addEventListener('close', () => resolve(data), { once: true });
+    dlg.addEventListener('close', () => { hideTip(); resolve(data); }, { once: true });
     dlg.showModal();
     dragDialog(dlg, cls);
     const pos = cls && dialogPos.get(cls);
@@ -386,7 +393,7 @@ function menuDefs() {
       { label: 'bgCopy', key: keyLabel('bgCopy'), run: () => backgroundOp('copy'), enabled: inEditor, ext: true },
       { label: 'bgSwap', run: () => backgroundOp('swap'), enabled: inEditor, ext: true },
       { label: 'cmAddMenu', run: addComponentDialog, enabled: inEditor, ext: true },
-      { label: 'msMenu', run: mastersDialog, ext: true },
+      { label: 'msMenu', run: mastersDialog },
       '-',
       { label: 'wAnchors', run: () => openWindow('anchors'), enabled: inEditor, ext: true },
       { label: 'wPaint', run: () => openWindow('paint'), enabled: inEditor, ext: true },
@@ -518,6 +525,7 @@ function showTip(el) {
   if (!text) return;
   tip.innerHTML = esc(text) + (el.dataset.key ? `<kbd>${esc(el.dataset.key)}</kbd>` : '');
   tip.hidden = false;
+  onTop(tip);
   const r = el.getBoundingClientRect();
   const tr = tip.getBoundingClientRect();
   const left = el.closest('.toolstrip') ? r.right + 6 : Math.min(window.innerWidth - tr.width - 4, Math.max(4, r.left + r.width / 2 - tr.width / 2));
@@ -1634,7 +1642,7 @@ function fontInfoExtended(i) {
   const text = (k, long) => `<label class="field">${esc(t('fi_' + k))}${long
     ? `<textarea name="${k}" rows="2" maxlength="5000">${esc(i[k] || '')}</textarea>`
     : `<input type="text" name="${k}" value="${esc(i[k] || '')}" maxlength="500">`}</label>`;
-  const num = (k) => `<label class="field" data-tip="${esc(t('fi_' + k + 'Tip'))}">${esc(t('fi_' + k))}<input type="number" name="${k}" value="${i[k] ?? ''}" step="${k === 'italicAngle' ? '0.5' : '1'}" placeholder="${k === 'italicAngle' ? '0' : t('fiAuto')}"></label>`;
+  const num = (k) => `<label class="field" data-tip="${esc(t('fi_' + k + 'Tip'))}">${esc(t('fi_' + k))}<input type="number" name="${k}" value="${k === 'italicAngle' && i[k] ? -i[k] : i[k] ?? ''}" step="${k === 'italicAngle' ? '0.5' : '1'}" placeholder="${k === 'italicAngle' ? '0' : t('fiAuto')}"></label>`;
   return `<div class="field-row">${num('overshoot')}<span></span></div>
     <h3>${esc(t('fiStyle'))}</h3>
     <div class="field-row">
@@ -1661,7 +1669,7 @@ function readFontInfoExtended(i, data) {
   for (const k of FI_NUM) {
     const raw = String(data.get(k) ?? '').trim();
     const v = Number(raw);
-    if (raw !== '' && Number.isFinite(v) && v !== 0) i[k] = k === 'italicAngle' ? Math.max(-45, Math.min(45, v)) : k === 'overshoot' ? Math.max(0, Math.min(100, Math.round(v))) : Math.round(v);
+    if (raw !== '' && Number.isFinite(v) && v !== 0) i[k] = k === 'italicAngle' ? -Math.max(-45, Math.min(45, v)) : k === 'overshoot' ? Math.max(0, Math.min(100, Math.round(v))) : Math.round(v);
     else delete i[k];
   }
 }
@@ -2123,8 +2131,17 @@ function lineKey(e) {
   saveLine();
   const input = $('lineText');
   if (input && document.activeElement !== input) input.value = lineText();
+  followCaret();
   editor.render();
   return true;
+}
+
+// The canvas moves along so the caret stays in sight.
+function followCaret() {
+  const x = editor.toScreen({ x: editor.caretX(editor.lineCursor), y: 0 }).x;
+  const margin = Math.min(80, editor.w / 4);
+  if (x > editor.w - margin) editor.view.ox -= x - (editor.w - margin);
+  else if (x < margin) editor.view.ox += margin - x;
 }
 
 // The line field of the Text tool's options bar.
@@ -3763,9 +3780,11 @@ function masterBarHTML() {
   const toggles = app.mode === 'editor' && app.extended ? `
     <button class="btn btn-icon ms-toggle" type="button" data-cmd="msShowAll" aria-pressed="${app.showAllMasters}" aria-label="${esc(t('msShowAll'))}" data-tip="${esc(t('msShowAllTip'))}">${icon('layers', 14)}</button>
     <button class="btn btn-icon ms-toggle" type="button" data-cmd="msEditAll" aria-pressed="${app.editAllMasters}" aria-label="${esc(t('msEditAll'))}" data-tip="${esc(t('msEditAllTip'))}">${icon('link', 14)}</button>` : '';
-  return `<div class="group"><div class="seg" role="radiogroup" aria-label="${esc(t('msMasters'))}">
+  const many = p.masters.length > 4; // a row of buttons would push the rest off the bar
+  return `<div class="group">${many ? `<select class="ms-select" data-master-select aria-label="${esc(t('msMasters'))}">
+    ${p.masters.map((m) => `<option value="${esc(m.id)}" ${m.id === act ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>` : `<div class="seg" role="radiogroup" aria-label="${esc(t('msMasters'))}">
     ${p.masters.map((m) => `<button type="button" role="radio" data-master="${esc(m.id)}" aria-checked="${m.id === act}" data-tip="${esc(p.axis.tag)} ${m.loc}${p.axis2 ? ` · ${esc(p.axis2.tag)} ${m.loc2}` : ''}">${esc(m.name)}</button>`).join('')}
-    </div>${toggles}<button class="btn btn-icon" type="button" data-cmd="mastersDialog" aria-label="${esc(t('msMenu'))}" data-tip="${esc(t('msMenu'))}">${icon('settings', 14)}</button></div><div class="sep"></div>`;
+    </div>`}${toggles}<button class="btn btn-icon" type="button" data-cmd="mastersDialog" aria-label="${esc(t('msMenu'))}" data-tip="${esc(t('msMenu'))}">${icon('settings', 14)}</button></div><div class="sep"></div>`;
 }
 
 // The other masters of a glyph (extended mode): [{ id, name, layer }],
@@ -3812,6 +3831,10 @@ function toggleMastersView(key, prop) {
   editor.render();
 }
 
+document.addEventListener('change', (e) => {
+  if (e.target.matches?.('[data-master-select]')) selectMaster(e.target.value);
+});
+
 function selectMaster(id) {
   endTransform();
   // A smart part state being drawn goes back to its place first: the
@@ -3840,22 +3863,24 @@ function setSlant(m, a) {
 async function mastersDialog() {
   const p = app.project;
   const ms = p.masters || [];
-  const w2 = !!p.axis2;
+  const full = app.extended; // the second axis and the slant are extended tools
+  const w2 = full && !!p.axis2;
   const loc2 = (name, v) => (w2 ? `<input type="number" name="${name}" value="${v ?? ''}" step="1" placeholder="100" aria-label="${esc(t('msLoc2'))}">` : '');
   const rows = ms.map((m, i) => `<div class="field-row ms-row${w2 ? ' two' : ''}">
       <input type="text" name="name${i}" value="${esc(m.name)}" aria-label="${esc(t('msName'))}" required maxlength="40">
       <input type="number" name="loc${i}" value="${m.loc}" step="1" aria-label="${esc(t('msLoc'))}">
       ${loc2(`loc2_${i}`, m.loc2)}
-      <input type="number" name="ang${i}" value="${m.italic ? m.italicAngle ?? 10 : 0}" step="0.5" min="-45" max="45" ${i === 0 ? 'disabled' : ''} aria-label="${esc(t('msAngle'))}" title="${esc(t('msAngleTip'))}">
+      ${full ? `<input type="number" name="ang${i}" value="${m.italic ? m.italicAngle ?? 10 : 0}" step="0.5" min="-45" max="45" ${i === 0 ? 'disabled' : ''} aria-label="${esc(t('msAngle'))}" title="${esc(t('msAngleTip'))}">` : ''}
       <label class="check"><input type="checkbox" name="del${i}" ${i === 0 ? 'disabled' : ''}>${esc(t('msDelete'))}</label></div>`).join('');
   const data = await showDialog({
     title: t('msMasters'),
-    body: `${ms.length ? `<div class="field-row ms-row ms-head${w2 ? ' two' : ''}"><span>${esc(t('msName'))}</span><span>${esc(t('msLoc'))}</span>${w2 ? `<span>${esc(t('msLoc2'))}</span>` : ''}<span title="${esc(t('msAngleTip'))}">${esc(t('msAngle'))}</span><span></span></div>${rows}` : ''}
+    body: `${ms.length ? `<div class="field-row ms-row ms-head${w2 ? ' two' : ''}"><span>${esc(t('msName'))}</span><span>${esc(t('msLoc'))}</span>${w2 ? `<span>${esc(t('msLoc2'))}</span>` : ''}${full ? `<span title="${esc(t('msAngleTip'))}">${esc(t('msAngle'))}</span>` : ''}<span></span></div>${rows}` : ''}
       <h3>${esc(t('msNew'))}</h3>
       <div class="field-row ms-row${w2 ? ' two' : ''}">
         <input type="text" name="newName" placeholder="Bold" maxlength="40" aria-label="${esc(t('msName'))}">
-        <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}">${loc2('newLoc2', '')}<input type="number" name="newAng" placeholder="0" step="0.5" min="-45" max="45" aria-label="${esc(t('msAngle'))}" title="${esc(t('msAngleTip'))}"><span></span></div>
-      ${ms.length ? `<label class="check"><input type="checkbox" name="axis2" ${w2 ? 'checked' : ''}>${esc(t('msAxis2'))}</label>` : ''}`,
+        <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}">${loc2('newLoc2', '')}${full ? `<input type="number" name="newAng" placeholder="0" step="0.5" min="-45" max="45" aria-label="${esc(t('msAngle'))}" title="${esc(t('msAngleTip'))}">` : ''}<span></span></div>
+      ${ms.length && full ? `<label class="check"><input type="checkbox" name="axis2" ${w2 ? 'checked' : ''}>${esc(t('msAxis2'))}</label>` : ''}`,
+    cls: full ? '' : 'ms-simple',
     okLabel: t('ok'),
   });
   if (!data) return;
@@ -3866,17 +3891,20 @@ async function mastersDialog() {
     if (Number.isFinite(v)) m.loc = Math.round(v);
     const v2 = Number(data.get(`loc2_${i}`));
     if (w2 && Number.isFinite(v2) && String(data.get(`loc2_${i}`)).trim() !== '') m.loc2 = Math.round(v2);
-    if (i > 0) setSlant(m, Number(data.get(`ang${i}`)));
+    if (i > 0 && full) setSlant(m, Number(data.get(`ang${i}`)));
   });
-  if (ms.length) setWidthAxis(p, !!data.get('axis2'));
-  for (const m of [...ms].reverse()) if (data.get(`del${ms.indexOf(m)}`)) deleteMaster(p, m.id);
+  if (ms.length && full) setWidthAxis(p, !!data.get('axis2'));
+  const gone = ms.filter((m, i) => data.get(`del${i}`));
+  if (gone.length && await confirmDialog(t('msConfirmDelete', { names: gone.map((m) => m.name).join(', ') }), t('delete'))) {
+    for (const m of gone) deleteMaster(p, m.id);
+  }
   const nn = String(data.get('newName') || '').trim();
   if (nn) {
     const loc = Number(data.get('newLoc'));
     const l2 = Number(data.get('newLoc2'));
     addMaster(p, nn, Number.isFinite(loc) && String(data.get('newLoc')).trim() !== '' ? Math.round(loc) : 700,
       p.axis2 && String(data.get('newLoc2') || '').trim() !== '' && Number.isFinite(l2) ? Math.round(l2) : undefined);
-    setSlant(p.masters[p.masters.length - 1], Number(data.get('newAng')));
+    if (full) setSlant(p.masters[p.masters.length - 1], Number(data.get('newAng')));
   }
   if (p.masters) {
     p.axis.min = Math.min(...p.masters.map((m) => m.loc));
@@ -3977,6 +4005,7 @@ function addWeightMaster(name, loc, delta) {
   const shift = (q) => ({ x: Math.round(q.x + delta), y: q.y });
   for (const g of p.glyphs) {
     const l = g.layers[id];
+    if (l && !l.contours.length && g.components?.length) l.advance = Math.max(0, Math.round(l.advance + 2 * delta)); // made of other glyphs
     if (!l?.contours.length || !delta) continue;
     let cs;
     try { cs = offsetContours(l.contours, delta); } catch { cs = null; }
@@ -4028,7 +4057,7 @@ async function familyDialog() {
     <div class="fam-actions">
       <button type="button" class="btn" data-fam="bold" aria-pressed="${open === 'bold'}">${icon('plus', 14)}<span>${esc(t('famBold'))}</span></button>
       <button type="button" class="btn" data-fam="light" aria-pressed="${open === 'light'}">${icon('plus', 14)}<span>${esc(t('famLight'))}</span></button>
-      <button type="button" class="btn" data-fam="italic" aria-pressed="${open === 'italic'}" ${hasItalic(p) ? `disabled data-tip="${esc(t('famHasItalic'))}"` : ''}>${icon('plus', 14)}<span>${esc(t('famItalicAdd'))}</span></button>
+      <button type="button" class="btn" data-fam="italic" aria-pressed="${open === 'italic'}" ${hasItalic(p) ? `aria-disabled="true" data-tip="${esc(t('famHasItalic'))}"` : ''}>${icon('plus', 14)}<span>${esc(t('famItalicAdd'))}</span></button>
       ${hasMasters(p) ? `<button type="button" class="btn" data-fam="masters">${icon('settings', 14)}<span>${esc(t('famEditMasters'))}</span></button>` : ''}
     </div>
     ${open ? quick() : ''}
@@ -4038,15 +4067,31 @@ async function familyDialog() {
       <button type="button" class="btn" data-fam="standard">${esc(t('famStandard'))}</button>
       <button type="button" class="btn" data-fam="addStyle">${icon('plus', 14)}<span>${esc(t('famAddStyle'))}</span></button></div>` : ''}`;
 
-  const data = await showDialog({
+  // Masters are added at once, so the window has only "Done": there is
+  // nothing "Cancel" could take back.
+  await showDialog({
     title: t('famTitle', { name: p.info.familyName }),
     cls: 'family-dlg',
     body: body(),
-    okLabel: t('ok'),
+    okLabel: t('famDone'), cancel: false,
     onOpen: (dlg) => {
       const form = dlg.querySelector('form');
       const box = dlg.querySelector('.body');
-      const redraw = () => { box.innerHTML = body(); };
+      // The body is drawn anew: focus goes on, to `sel` or the same button.
+      const redraw = (sel) => {
+        const act = document.activeElement?.dataset?.fam;
+        box.innerHTML = body();
+        const to = (sel && dlg.querySelector(sel)) || (act && dlg.querySelector(`[data-fam="${act}"]`));
+        to?.focus();
+        to?.scrollIntoView({ block: 'nearest' });
+      };
+      dlg.querySelector('button[value=ok]').focus();
+      // Enter in the quick form adds, it does not close the window.
+      form.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || !e.target.closest('.fam-quick') || !e.target.matches('input')) return;
+        e.preventDefault();
+        dlg.querySelector('[data-fam="do"]').click();
+      }, true);
       form.addEventListener('input', (e) => {
         const [i, k] = (e.target.dataset.st || '').split(':');
         if (!k) return;
@@ -4060,12 +4105,21 @@ async function familyDialog() {
         const b = e.target.closest('[data-fam]');
         if (!b) return;
         e.preventDefault();
+        if (b.getAttribute('aria-disabled') === 'true') return; // disabled would hide its tooltip
         const act = b.dataset.fam;
-        if (act === 'bold' || act === 'light' || act === 'italic') { open = open === act ? null : act; redraw(); return; }
+        if (act === 'bold' || act === 'light' || act === 'italic') { open = open === act ? null : act; redraw(open && '.fam-quick input'); return; }
         if (act === 'masters') { toMasters = true; dlg.close(); return; }
         if (act === 'standard') styles = defaultStyles(p);
-        if (act === 'addStyle') styles.push({ name: 'Medium', weight: 500, ...(p.axis2 ? { width: p.masters[0].loc2 ?? 100 } : {}), italic: false, export: true });
-        if (act === 'del') styles.splice(Number(b.dataset.i), 1);
+        if (act === 'addStyle') {
+          styles.push(nextStyle(p, styles));
+          redraw(`[data-st="${styles.length - 1}:name"]`);
+          return;
+        }
+        if (act === 'del') {
+          styles.splice(Number(b.dataset.i), 1);
+          redraw(`[data-fam="del"][data-i="${Math.min(Number(b.dataset.i), styles.length - 1)}"]`);
+          return;
+        }
         if (act === 'do') {
           const q = (k) => dlg.querySelector(`[data-q="${k}"]`)?.value;
           const before = defaultStyles(p);
@@ -4082,18 +4136,20 @@ async function familyDialog() {
           if (!custom) styles = defaultStyles(p);
           open = null;
           mastersChanged();
+          redraw('[data-fam="bold"]');
+          return;
         }
         redraw();
       });
     },
   });
-  if (toMasters) { mastersDialog(); return; }
-  if (!data) return;
-  const clean = styles.filter((s) => s.name.trim() && Number.isFinite(s.weight));
+  // Done, Esc or a step to the Masters window: what was typed stays.
+  const clean = uniqueStyles(styles.filter((s) => s.name.trim() && Number.isFinite(s.weight)));
   if (JSON.stringify(clean) === JSON.stringify(defaultStyles(p))) delete p.styles;
   else p.styles = clean;
   markChanged();
   renderMenus();
+  if (toMasters) mastersDialog();
 }
 
 // The fonts of the family, one per style that is switched on: [{ name, q }].
@@ -4106,7 +4162,7 @@ function familyFonts() {
     const q = instanceAt(p, s.weight, s.name, s.width, s.italic);
     if (!q) continue;
     refreshComponents(q); recompose(q);
-    out.push({ file: `${fam}-${s.name.replace(/\s+/g, '')}`, name: s.name, q });
+    out.push({ file: `${fam}-${s.name.replace(/[\s\\/:*?"<>|]+/g, '')}`, name: s.name, q });
   }
   return out;
 }
@@ -5162,10 +5218,31 @@ async function associateFiles() {
   }
 }
 
+// UFO has no smart parts, corners or brushes: a glyph with them is written
+// as its whole outline, and each master needs its own.
+function ufoJSON() {
+  const p = app.project;
+  const q = JSON.parse(projectJSON());
+  if (!hasMasters(p)) return JSON.stringify(q);
+  const hasParts = (g) => g.components?.some((c) => c.props && Object.keys(c.props).length) || g.contours.some((c) => c.brush || c.nodes.some((n) => n.corner));
+  const byName = new Map(q.glyphs.map((g) => [g.name, g]));
+  for (const m of q.masters.slice(1)) {
+    const inst = instanceAt(p, m.loc, undefined, m.loc2, !!m.italic);
+    if (!inst) continue;
+    refreshComponents(inst); recompose(inst);
+    for (const g of inst.glyphs.filter(hasParts)) {
+      const out = byName.get(g.name);
+      if (!out?.layers?.[m.id] || incompatibility(out, out.layers[m.id])) continue;
+      out.layers[m.id] = { contours: [...g.contours.filter((c) => !c.brush), ...(g.refContours || [])], advance: g.advance, flat: true };
+    }
+  }
+  return JSON.stringify(q);
+}
+
 async function exportFont(format) {
   try {
     const r = await fetch(`/api/export?format=${format}`, {
-      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON(),
+      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: format === 'ufo' ? ufoJSON() : projectJSON(),
     });
     if (!r.ok) throw new Error(await r.text());
     const name = safeFileName('.' + (r.headers.get('X-File-Ext') || format));
@@ -5798,8 +5875,15 @@ async function offerUnsaved(filePath, fileName) {
   let saved = null;
   try { saved = JSON.parse(store.get(AUTOSAVE_KEY) || 'null'); } catch { /* broken autosave */ }
   if (!saved?.dirty || saved.serverFile !== filePath || !saved.project) return;
-  // Declined: the file is the truth now, the old copy must not ask again.
-  if (!(await confirmDialog(t('restoreUnsaved', { name: fileName }), t('restore'), false))) { autosave(); return; }
+  const answer = await showDialog({
+    title: t('restoreTitle'),
+    body: `<p class="hint">${esc(t('restoreUnsaved', { name: fileName }))}</p>`,
+    okLabel: t('restore'), cancel: false, extra: t('restoreNo'),
+    onOpen: (dlg) => dlg.querySelector('button[value=ok]').focus(),
+  });
+  // Only a clear "no" gives the copy up (the file is the truth then, and the
+  // old copy must not ask again); Esc must not lose work.
+  if (answer === 'extra') { autosave(); return; }
   try {
     setProject(validateProject(JSON.parse(saved.project)), { fileName, serverFile: filePath });
     setDirty(true);
@@ -5826,6 +5910,13 @@ window.addEventListener('beforeunload', (e) => {
   e.preventDefault();
   e.returnValue = '';
 });
+
+// Alt+F4, the taskbar and anything else that closes the window come here.
+window.splineCloseRequest = async () => {
+  await window.splineWindow('closeAsked', '');
+  if (app.dirty && $('dialog').open) return; // the open dialog is answered first
+  if (await confirmClose()) window.splineWindow('close', '');
+};
 
 function initWindowFrame() {
   if (typeof window.splineWindow !== 'function') return; // regular browser

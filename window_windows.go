@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 	"unsafe"
 
 	webview2 "github.com/jchv/go-webview2"
@@ -67,7 +68,13 @@ type ncCalcSizeParams struct {
 var (
 	oldWndProc uintptr
 	newWndProc = syscall.NewCallback(framelessWndProc)
+
+	askClose     = func() {}
+	closeAllowed bool
+	closeAsked   time.Time // since when the page has not answered
 )
+
+const closeWait = 3 * time.Second
 
 // framelessWndProc removes the system title bar and border: the whole window
 // becomes client area, and the page draws its own title bar. The window
@@ -84,6 +91,15 @@ func framelessWndProc(hwnd, msg, wp, lp uintptr) uintptr {
 			p.rgrc[0].top += fy
 			p.rgrc[0].bottom -= fy
 		}
+		return 0
+	}
+	// Closing goes through the page, which asks about unsaved work. A page
+	// that does not answer must not keep the window open.
+	if msg == wmClose && !closeAllowed && (closeAsked.IsZero() || time.Since(closeAsked) < closeWait) {
+		if closeAsked.IsZero() {
+			closeAsked = time.Now()
+		}
+		askClose()
 		return 0
 	}
 	r, _, _ := procCallWindowProcW.Call(oldWndProc, hwnd, msg, wp, lp)
@@ -132,7 +148,10 @@ func windowAction(hwnd uintptr, action, arg string) string {
 		} else {
 			procShowWindow.Call(hwnd, swMaximize)
 		}
+	case "closeAsked":
+		closeAsked = time.Time{}
 	case "close":
+		closeAllowed = true
 		procPostMessageW.Call(hwnd, wmClose, 0, 0)
 	case "drag", "resize":
 		// Hand the mouse to Windows' own move/size loop, exactly as if the
@@ -182,6 +201,7 @@ func openWindow(url string) (opened, blocked bool) {
 	// The page reports its title (font name, unsaved marker) to the window.
 	w.Bind("splineSetTitle", func(title string) { w.SetTitle(title) })
 	w.Bind("splineWindow", func(action, arg string) string { return windowAction(hwnd, action, arg) })
+	askClose = func() { w.Eval("window.splineCloseRequest?.()") }
 	w.Navigate(url)
 	w.Run()
 	return true, true

@@ -224,12 +224,11 @@ function flat(o, like) {
 function unflat(like, nums) {
   let k = 0;
   const contours = like.contours.map((c) => ({
-    closed: c.closed,
+    ...c, // paint, brush and corners are not blended: they stay as they are
     nodes: c.nodes.map((n) => {
-      const q = { x: nums[k++], y: nums[k++] };
+      const q = { ...n, x: nums[k++], y: nums[k++] };
       if (n.in) q.in = { x: nums[k++], y: nums[k++] };
       if (n.out) q.out = { x: nums[k++], y: nums[k++] };
-      if (n.smooth) q.smooth = true;
       return q;
     }),
   }));
@@ -252,8 +251,8 @@ export function instanceAt(p, loc, styleName, loc2, italic = false) {
   const q = clone({ ...src, glyphs: [] });
   delete q.masters; delete q.axis; delete q.axis2; delete q.activeMaster;
   q.info = { ...q.info, ...(styleName ? { styleName } : {}), weight: src.axis?.tag === 'wght' ? Math.round(loc) : q.info.weight };
-  // Italic fonts carry their slant (negative leans right), upright ones none.
-  if (italic) q.info.italicAngle = -Math.abs(def.italicAngle || 10);
+  // A master's slant is positive to the right; a font file counts the other way.
+  if (italic) q.info.italicAngle = -(def.italicAngle ?? 10);
   else delete q.info.italicAngle;
   q.glyphs = src.glyphs.map((g) => {
     const base = get(g, def.id);
@@ -346,13 +345,21 @@ export function familyGroup(p, italic) {
   const order = [head, ...ms.filter((m) => m !== head)];
   const layer = (g, id) => (id === def.id ? take(g) : g.layers?.[id] || take(g));
   const q = { ...src, masters: order.map((m) => ({ ...m })) };
+  // Anchors and components are shared by all masters and drawn upright:
+  // in an italic they lean with the letters, or accents would miss them.
+  const lean = italic ? Math.tan((head.italicAngle ?? 10) * Math.PI / 180) : 0;
+  const cy = (p.info.xHeight || 500) / 2;
+  const leaning = (g) => (lean ? {
+    ...(g.anchors ? { anchors: g.anchors.map((a) => ({ ...a, x: Math.round(a.x + (a.y - cy) * lean) })) } : {}),
+    ...(g.components ? { components: g.components.map((c) => ({ ...c, x: Math.round((c.x || 0) + (c.y || 0) * lean) })) } : {}),
+  } : {});
   q.kerning = head.id === def.id ? src.kerning : (head.kerning ?? src.kerning);
   delete q.masters[0].kerning;
   q.glyphs = src.glyphs.map((g) => {
     const base = layer(g, head.id);
     const layers = {};
     for (const m of order.slice(1)) layers[m.id] = layer(g, m.id);
-    return { ...g, contours: base.contours, advance: base.advance, layers };
+    return { ...g, ...leaning(g), contours: base.contours, advance: base.advance, layers };
   });
   return q;
 }
@@ -435,10 +442,28 @@ export function defaultStyles(p) {
       seen.add(key);
       out.push({ name, weight, ...(p.axis2 ? { width: width ?? def2 ?? 100 } : {}), italic, export: true });
     };
-    for (const m of ms) add(m.loc, p.axis?.tag === 'wght' && WEIGHT_NAMES[m.loc] ? styleNameFor(m.loc, italic) : m.name, m.loc2);
+    // A master on another width keeps its own name ("Bold Condensed").
+    for (const m of ms) add(m.loc, p.axis?.tag === 'wght' && WEIGHT_NAMES[m.loc] && (m.loc2 ?? def2) === def2 ? styleNameFor(m.loc, italic) : m.name, m.loc2);
     if (p.axis?.tag === 'wght') for (let w = 100; w <= 900; w += 100) if (w > lo && w < hi) add(w, styleNameFor(w, italic), def2);
   }
   return out.sort((a, b) => (a.italic - b.italic) || (a.weight - b.weight));
+}
+
+// Names must differ: the fonts of a family and their files are told apart by them.
+export function uniqueStyles(styles) {
+  const used = new Set();
+  return styles.map((s) => {
+    let name = s.name.trim();
+    for (let n = 2; used.has(name.toLowerCase()); n++) name = `${s.name.trim()} ${n}`;
+    used.add(name.toLowerCase());
+    return { ...s, name };
+  });
+}
+
+// The next style to add: the first standard weight the list does not have.
+export function nextStyle(p, styles) {
+  const w = [400, 500, 300, 600, 700, 200, 800, 100, 900].find((x) => !styles.some((s) => !s.italic && s.weight === x)) ?? 500;
+  return { name: styleNameFor(w, false), weight: w, ...(p.axis2 ? { width: p.masters[0].loc2 ?? 100 } : {}), italic: false, export: true };
 }
 
 // The styles to export: the project's own list, or the default one.

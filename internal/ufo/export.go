@@ -27,8 +27,15 @@ func Export(p *project.Project) ([]byte, string, error) {
 	if len(p.Masters) > 1 && p.Axis != nil {
 		ext = "zip"
 		var sources []string
+		used := map[string]bool{}
 		for i, m := range p.Masters {
-			dir := fmt.Sprintf("%s-%s.ufo", family, safeName(m.Name, fmt.Sprintf("Master%d", i+1)))
+			base := fmt.Sprintf("%s-%s", family, safeName(m.Name, fmt.Sprintf("Master%d", i+1)))
+			dir := base + ".ufo"
+			// Two names can make one folder name, and file systems ignore case.
+			for n := 2; used[strings.ToLower(dir)]; n++ {
+				dir = fmt.Sprintf("%s-%d.ufo", base, n)
+			}
+			used[strings.ToLower(dir)] = true
 			if err := writeUFO(z, dir, p, i); err != nil {
 				return nil, "", err
 			}
@@ -98,7 +105,7 @@ func writeUFO(z *zip.Writer, dir string, p *project.Project, mi int) error {
 	}
 	info := p.Info
 	if len(p.Masters) > 1 && p.Masters[mi].Italic {
-		info.ItalicAngle = -math.Abs(p.Masters[mi].ItalicAngle)
+		info.ItalicAngle = -p.Masters[mi].ItalicAngle
 	}
 	if err := put("fontinfo.plist", writePlist(fontInfo(info, style, weight))); err != nil {
 		return err
@@ -262,12 +269,13 @@ var markColors = map[string]string{
 // glif writes glyph g (in master masterID; "" = the default) in GLIF 2.
 func glif(g project.Glyph, masterID string) []byte {
 	contours, advance := g.Contours, g.Advance
+	whole := false
 	if l, ok := g.Layers[masterID]; ok && masterID != "" {
-		contours, advance = l.Contours, l.Advance
+		contours, advance, whole = l.Contours, l.Advance, l.Flat
 	}
 	// Smart parts, corner details and brushes have no UFO counterpart: the
 	// glyph is written with its whole outline instead of components.
-	flat := false
+	flat := whole
 	for _, c := range g.Components {
 		flat = flat || len(c.Props) > 0
 	}
@@ -277,7 +285,7 @@ func glif(g project.Glyph, masterID string) []byte {
 			flat = flat || n.Corner != ""
 		}
 	}
-	if flat {
+	if flat && !whole {
 		if masterID == "" {
 			contours = g.Outline()
 		} else {
