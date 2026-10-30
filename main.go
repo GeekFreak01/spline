@@ -76,6 +76,7 @@ func main() {
 	webHosts := flag.String("host", "", "web mode: allowed host names, comma separated (empty = any)")
 	siteDir := flag.String("site-dir", "", "web mode: folder with site-specific files (head.html, sidebar.html, robots.txt, ...)")
 	trustProxy := flag.Bool("trust-proxy", false, "web mode: take the visitor address from X-Forwarded-For (behind Caddy/nginx)")
+	restarted := flag.Bool("restarted", false, "started by an update: wait for the old copy's port")
 	flag.Parse()
 
 	if *webAddr != "" {
@@ -95,7 +96,18 @@ func main() {
 	// The browser keeps autosaves per port, so prefer a stable one.
 	var ln net.Listener
 	var err error
-	for p := *port; p < *port+20; p++ {
+	if *restarted {
+		// Autosaves stay with the port, and the old copy is about to free it.
+		for i := 0; i < 50 && ln == nil; i++ {
+			if ln, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *port)); err != nil {
+				ln = nil
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		s.port = *port
+		go cleanupUpdate()
+	}
+	for p := *port; ln == nil && p < *port+20; p++ {
 		ln, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
 		if err == nil {
 			s.port = p
@@ -181,6 +193,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/ping", s.handlePing)
 	mux.HandleFunc("/api/associate", s.handleAssociate)
 	mux.HandleFunc("/api/update", s.handleUpdate)
+	mux.HandleFunc("/api/update/download", s.handleUpdateDownload)
+	mux.HandleFunc("/api/update/status", s.handleUpdateStatus)
+	mux.HandleFunc("/api/update/apply", s.handleUpdateApply)
 	mux.HandleFunc("/api/open-page", s.handleOpenPage)
 	mux.HandleFunc("/api/import-font", handleImportFont)
 	mux.HandleFunc("/api/install-font", s.handleInstallFont)

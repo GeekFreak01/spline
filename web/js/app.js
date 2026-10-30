@@ -133,7 +133,7 @@ function dragDialog(dlg, cls) {
 
 // Modal dialog. Resolves with FormData (OK) or null (cancel).
 // extra: a third button between Cancel and OK; the promise then gives 'extra'.
-function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true, onOpen = null, cls = '', extra = '' }) {
+function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', cancel = true, cancelLabel = t('cancel'), onOpen = null, cls = '', extra = '' }) {
   const dlg = $('dialog');
   dlg.className = `dialog ${cls}`.trim();
   dlg.removeAttribute('style');
@@ -141,7 +141,7 @@ function showDialog({ title, body, okLabel = t('ok'), okClass = 'btn-primary', c
     <h2>${esc(title)}</h2>
     <div class="body">${body}</div>
     <div class="actions">
-      ${cancel ? `<button class="btn" value="cancel" formnovalidate>${esc(t('cancel'))}</button>` : ''}
+      ${cancel ? `<button class="btn" value="cancel" formnovalidate>${esc(cancelLabel)}</button>` : ''}
       ${extra ? `<button class="btn" value="extra" formnovalidate>${esc(extra)}</button>` : ''}
       <button class="btn ${okClass}" value="ok">${esc(okLabel)}</button>
     </div>
@@ -5644,7 +5644,7 @@ async function start() {
   else if (m && findGlyph(decodeURIComponent(m[1]))) openEditor(decodeURIComponent(m[1]), false);
   else history.replaceState({}, '', location.pathname);
   if (!app.platform.web) {
-    checkUpdates();
+    checkUpdates(false, true);
     setInterval(() => checkUpdates(), 3 * 3600 * 1000);
   }
 }
@@ -5670,6 +5670,7 @@ function openGuide() {
 }
 
 let updateInfo = null;
+let updateJob = null; // the download in the background
 
 // "v1.2.3" newer than "v1.2.0"?
 function newerVersion(a, b) {
@@ -5680,9 +5681,9 @@ function newerVersion(a, b) {
 }
 
 // Checks GitHub for a newer release: at start, every few hours while the
-// app is open, and from the Help menu. A badge in the status bar links to
-// the release page.
-async function checkUpdates(manual = false) {
+// app is open, and from the Help menu. At start a new version is offered
+// once; after that the badge in the status bar stays.
+async function checkUpdates(manual = false, atStart = false) {
   try {
     // The Go side keeps GitHub's answer for an hour, so asking often is cheap.
     const r = await fetch(`/api/update${manual ? '?force=1' : ''}`);
@@ -5695,25 +5696,81 @@ async function checkUpdates(manual = false) {
   }
   showUpdateBadge();
   if (manual && !updateAvailable()) toast(t('upToDate', { v: updateInfo.current }));
-  if (manual && updateAvailable()) openUpdatePage();
+  if (manual && updateAvailable()) updateDialog();
+  if (atStart && updateAvailable() && !$('dialog').open && store.get('spline.updateSeen') !== updateInfo.latest) {
+    store.set('spline.updateSeen', updateInfo.latest);
+    updateDialog();
+  }
 }
 
 const updateAvailable = () => !!updateInfo && newerVersion(updateInfo.latest, app.platform.version || updateInfo.current);
+const updateVersion = () => updateInfo.latest.replace(/^v/, '');
 
 function showUpdateBadge() {
   const b = $('updateBadge');
   const show = updateAvailable();
   b.hidden = !show;
-  if (show) {
-    b.textContent = t('updateBadge', { v: updateInfo.latest.replace(/^v/, '') });
-    b.dataset.tip = t('updateBadgeTip');
-  }
+  if (!show) return;
+  const pct = updateJob?.total ? Math.floor(updateJob.done / updateJob.total * 100) : 0;
+  b.textContent = updateJob?.state === 'downloading' ? t('updateDownloading', { p: pct })
+    : updateJob?.state === 'ready' ? t('updateRestartBadge') : t('updateBadge', { v: updateVersion() });
+  b.dataset.tip = t('updateBadgeTip');
 }
 
-// The latest release on GitHub: download the installer there.
-function openUpdatePage() { openPage('releases'); }
+// What is new in the release, and the way to get it.
+async function updateDialog() {
+  if (updateJob?.state === 'downloading') return;
+  if (updateJob?.state === 'ready') { restartDialog(); return; }
+  const can = updateInfo.canInstall;
+  const notes = (updateInfo.notes || '').replace(/^#+\s*/gm, '').replaceAll('**', '');
+  const answer = await showDialog({
+    title: t('updateTitle', { v: updateVersion() }),
+    body: `<p class="hint">${esc(t('updateCurrent', { v: (app.platform.version || updateInfo.current).replace(/^v/, '') }))}</p>
+      ${notes ? `<pre class="update-notes" tabindex="0">${esc(notes)}</pre>` : ''}`,
+    okLabel: t(can ? 'updateInstall' : 'updateOpenPage'), cancelLabel: t('updateLater'), extra: can ? t('updateOpenPage') : '',
+  });
+  if (answer === 'extra' || (answer && !can)) openPage('releases');
+  else if (answer) downloadUpdate();
+}
 
-$('updateBadge').addEventListener('click', openUpdatePage);
+// The new version comes in the background: work goes on, the badge counts.
+async function downloadUpdate() {
+  try {
+    const r = await fetch('/api/update/download', { method: 'POST', headers: { 'X-Spline': '1' } });
+    if (!r.ok) throw new Error(await r.text());
+    updateJob = await r.json();
+    showUpdateBadge();
+    while (updateJob.state === 'downloading') {
+      await new Promise((done) => { setTimeout(done, 400); });
+      updateJob = await (await fetch('/api/update/status')).json();
+      showUpdateBadge();
+    }
+    if (updateJob.state !== 'ready') throw new Error(updateJob.error);
+  } catch (err) {
+    updateJob = null;
+    showUpdateBadge();
+    toast(t('updateFailed', { err: err.message }), 'error');
+    return;
+  }
+  if ($('dialog').open) toast(t('updateReadyTitle', { v: updateVersion() }));
+  else restartDialog();
+}
+
+// Nothing starts over unsaved work: Save / Don't Save / Cancel come first.
+async function restartDialog() {
+  const answer = await showDialog({
+    title: t('updateReadyTitle', { v: updateVersion() }),
+    body: `<p class="hint">${esc(t('updateReadyText'))}</p>`,
+    okLabel: t('updateRestart'), cancelLabel: t('updateLater'),
+  });
+  if (!answer || !(await confirmClose())) return;
+  const r = await fetch('/api/update/apply', { method: 'POST', headers: { 'X-Spline': '1' } });
+  if (r.status === 423) { toast(t('updateOtherWindows', { n: await r.text() }), 'error'); return; }
+  if (!r.ok) { toast(t('updateFailed', { err: await r.text() }), 'error'); return; }
+  toast(t('updateRestarting'));
+}
+
+$('updateBadge').addEventListener('click', updateDialog);
 
 // ================================================================ app window frame
 
