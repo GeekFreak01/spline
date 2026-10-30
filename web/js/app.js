@@ -174,6 +174,16 @@ async function confirmDialog(msg, okLabel, danger = true) {
   return !!(await showDialog({ title: msg, body: '', okLabel, okClass: danger ? 'btn-danger' : 'btn-primary' }));
 }
 
+// The field being edited survives a redraw of its panel: arrows keep
+// stepping the value and Tab keeps its place.
+function keepFocus(render) {
+  const el = document.activeElement;
+  const attrs = el?.matches('input, select, textarea') ? [...el.attributes].filter((a) => a.name.startsWith('data-')) : [];
+  const key = el?.id ? `#${CSS.escape(el.id)}` : attrs.map((a) => `[${a.name}="${CSS.escape(a.value)}"]`).join('');
+  render();
+  if (key) document.querySelector(key)?.focus();
+}
+
 function glyphSVG(g, cls = 'glyph') {
   const { ascender: asc, descender: desc } = app.project.info;
   const pal = app.project.palette;
@@ -690,7 +700,7 @@ function onMetricChange(e) {
   const g = app.mode === 'editor' ? app.current : selectedGlyphs()[0];
   if (!g) return;
   applyMetric(g, role, Number(e.target.value));
-  if (app.mode === 'editor') { editor.afterEdit(false); } else { markChanged(); updateTile(g); renderSideMetrics(); renderInspector(); }
+  if (app.mode === 'editor') { editor.afterEdit(false); } else { markChanged(); updateTile(g); keepFocus(() => { renderSideMetrics(); renderInspector(); }); }
 }
 $('sideMetrics').addEventListener('change', onMetricChange);
 
@@ -967,7 +977,7 @@ function fontSection() {
 }
 
 function renderInspector() {
-  renderInspectorBody();
+  keepFocus(renderInspectorBody);
   recordOrder($('inspector'));
   if (app.mode === 'grid') layoutPanels();
 }
@@ -1004,7 +1014,7 @@ function renderInspectorBody() {
 }
 
 function renderGlyphPanel() {
-  renderGlyphPanelBody();
+  keepFocus(renderGlyphPanelBody);
   recordOrder($('glyphPanel'));
   if (app.mode === 'editor') layoutPanels();
 }
@@ -2442,7 +2452,9 @@ function onKernPanels(type, fn) {
   }
 }
 
-function renderKernPanel() {
+function renderKernPanel() { keepFocus(renderKernPanelBody); }
+
+function renderKernPanelBody() {
   const pr = kernView.pair();
   const n = kernPairs(app.project).length;
   $('kernPanel').innerHTML = section('kernPair', t('kernPair'), kernPairHTML(pr))
