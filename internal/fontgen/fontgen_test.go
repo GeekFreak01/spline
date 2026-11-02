@@ -1,6 +1,7 @@
 package fontgen
 
 import (
+	"encoding/binary"
 	"os"
 	"testing"
 
@@ -284,5 +285,45 @@ func TestItalicStyle(t *testing.T) {
 		if got := italicStyle(in); got != want {
 			t.Errorf("italicStyle(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A big font's kerning does not fit one 64 KB subtable: it is split, whole
+// left glyphs at a time, behind Extension records.
+func TestManyKerningPairs(t *testing.T) {
+	var pairs []kernPair
+	for l := 1; l <= 400; l++ {
+		for r := 1; r <= 400; r++ {
+			pairs = append(pairs, kernPair{left: l, right: r, value: -10})
+		}
+	}
+	l, err := pairLookup(pairs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u16 := func(at int) int { return int(l[at])<<8 | int(l[at+1]) }
+	if u16(0) != 9 || u16(4) < 2 {
+		t.Fatalf("lookup type %d with %d subtables", u16(0), u16(4))
+	}
+	seen := map[int]bool{}
+	prev := 0
+	for i := 0; i < u16(4); i++ {
+		ext := u16(6 + 2*i)
+		sub := ext + int(binary.BigEndian.Uint32(l[ext+4:]))
+		if u16(ext) != 1 || u16(ext+2) != 2 || sub <= prev || u16(sub) != 1 {
+			t.Fatalf("subtable %d: format %d, type %d, at %d", i, u16(ext), u16(ext+2), sub)
+		}
+		prev = sub
+		cov := sub + u16(sub+2)
+		for k := 0; k < u16(cov+2); k++ {
+			g := u16(cov + 4 + 2*k)
+			if seen[g] {
+				t.Fatalf("glyph %d is in two subtables", g)
+			}
+			seen[g] = true
+		}
+	}
+	if len(seen) != 400 {
+		t.Errorf("%d left glyphs covered", len(seen))
 	}
 }

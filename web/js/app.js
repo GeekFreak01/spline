@@ -5567,7 +5567,9 @@ async function updatePreview() {
     $('previewOut').hidden = false;
     msg.textContent = '';
   } catch (err) {
-    if (seq === previewSeq) msg.textContent = `${t('previewError')}: ${err.message}`;
+    if (seq !== previewSeq) return;
+    msg.textContent = `${t('previewError')}: ${err.message}`;
+    $('previewOut').hidden = true; // not the previous font under the new name
   }
 }
 
@@ -5934,8 +5936,8 @@ function initWindowFrame() {
     call(b.dataset.win);
   });
   const isDragArea = (el) => !el.closest('button, input, select, a, [role="menu"], [role="menuitem"], .view-switch');
-  document.querySelector('.menubar').addEventListener('pointerdown', (e) => {
-    if (e.button === 0 && e.detail === 1 && isDragArea(e.target)) call('drag');
+  document.querySelector('.menubar').addEventListener('mousedown', (e) => {
+    if (e.button === 0 && e.detail === 1 && isDragArea(e.target)) call('drag'); // mouse events count clicks, pointer events do not
   });
   document.querySelector('.menubar').addEventListener('dblclick', (e) => {
     if (isDragArea(e.target)) call('toggleMaximize');

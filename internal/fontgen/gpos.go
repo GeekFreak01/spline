@@ -141,18 +141,29 @@ type layoutFeature struct {
 // that language's system, which also has all the general features.
 func buildLayout(features []layoutFeature, lookups [][]byte) ([]byte, error) {
 	sort.SliceStable(features, func(i, j int) bool { return features[i].tag < features[j].tag })
-	lookupList := &writer{}
-	lookupList.u16(uint16(len(lookups)))
+	// A lookup must start within 64 KB of the list, however long it is: the
+	// large ones (kerning) go last. Their order in the table stays.
+	order := make([]int, len(lookups))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool { return len(lookups[order[i]]) < len(lookups[order[j]]) })
+	offsets := make([]int, len(lookups))
 	off := 2 + 2*len(lookups)
-	for _, l := range lookups {
+	for _, i := range order {
 		if off > 0xFFFF {
 			return nil, errors.New("too many layout rules")
 		}
-		lookupList.u16(uint16(off))
-		off += len(l)
+		offsets[i] = off
+		off += len(lookups[i])
 	}
-	for _, l := range lookups {
-		lookupList.bytes(l)
+	lookupList := &writer{}
+	lookupList.u16(uint16(len(lookups)))
+	for _, o := range offsets {
+		lookupList.u16(uint16(o))
+	}
+	for _, i := range order {
+		lookupList.bytes(lookups[i])
 	}
 	featureList := &writer{}
 	featureList.u16(uint16(len(features)))
