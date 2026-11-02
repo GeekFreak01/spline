@@ -2420,6 +2420,25 @@ function kernSpacingHTML(pr) {
   return row('left', pr.left) + row('right', pr.right);
 }
 
+const KERN_ROWS = 300;
+const KERN_ORDER = new Intl.Collator();
+
+// The first n items as a sort would give them, without sorting them all.
+function firstInOrder(items, compare, n) {
+  const out = [];
+  for (const x of items) {
+    if (out.length === n && compare(x, out[n - 1]) >= 0) continue;
+    let lo = 0, hi = out.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (compare(x, out[mid]) < 0) hi = mid; else lo = mid + 1;
+    }
+    out.splice(lo, 0, x);
+    if (out.length > n) out.pop();
+  }
+  return out;
+}
+
 function kernListHTML(pr) {
   const p = app.project;
   const all = kernPairs(p);
@@ -2434,8 +2453,12 @@ function kernListHTML(pr) {
     && (show !== 'exc' || isException(k))
     && (show !== 'over' || pairIsOverkern(k))
     && (show !== 'pair' || (near && (near.L.includes(k.left) || near.R.includes(k.right)))));
-  const key = { left: (k) => kernKeyLabel(k.left), right: (k) => kernKeyLabel(k.right) };
-  list.sort((a, b) => (sortBy === 'value' ? a.value - b.value : key[sortBy](a).localeCompare(key[sortBy](b)) || a.value - b.value) * Number(dir));
+  // A font can hold hundreds of thousands of pairs: the list shows the first
+  // ones in order, the search reaches the rest.
+  const labels = new Map();
+  const label = (k) => { let v = labels.get(k); if (v === undefined) { v = kernKeyLabel(k); labels.set(k, v); } return v; };
+  const compare = (a, b) => (sortBy === 'value' ? a.value - b.value : KERN_ORDER.compare(label(a[sortBy]), label(b[sortBy])) || a.value - b.value) * Number(dir);
+  const rows = firstInOrder(list, compare, KERN_ROWS);
   const head = (id, label) => `<button type="button" data-ksort="${id}" aria-sort="${sortBy === id ? (dir === '1' ? 'ascending' : 'descending') : 'none'}">${esc(label)}${sortBy === id ? (dir === '1' ? ' ↑' : ' ↓') : ''}</button>`;
   const opt = (v, label) => `<option value="${v}" ${show === v ? 'selected' : ''}>${esc(t(label))}</option>`;
   return `
@@ -2445,7 +2468,7 @@ function kernListHTML(pr) {
     </div>
     <div class="kern-list">
       <div class="row head"><div class="pick">${head('left', t('kernColLeft'))}${head('right', t('kernColRight'))}</div>${head('value', t('kernColValue'))}<span></span></div>
-      ${list.length ? list.map((k) => {
+      ${rows.length ? rows.map((k) => {
         const over = pairIsOverkern(k);
         return `<div class="row${isException(k) ? ' exc' : ''}${over ? ' over' : ''}">
           <button type="button" class="pick" data-kpick data-l="${esc(k.left)}" data-r="${esc(k.right)}" ${isException(k) ? `data-tip="${esc(t('kernException'))}"` : ''}>
@@ -2454,7 +2477,8 @@ function kernListHTML(pr) {
           <span class="val ${k.value < 0 ? 'neg' : 'pos'}" ${over ? `data-tip="${esc(t('kernOverTip'))}"` : ''}>${k.value}</span>
           <button type="button" class="btn btn-icon" data-kdel data-l="${esc(k.left)}" data-r="${esc(k.right)}" aria-label="${esc(t('delete'))}" data-tip="${esc(t('delete'))}">${icon('close', 13)}</button>
         </div>`;
-      }).join('') : `<p class="hint" style="padding:8px">${esc(t(all.length ? 'kernNoMatch' : 'kernEmpty'))}</p>`}</div>
+      }).join('') : `<p class="hint" style="padding:8px">${esc(t(all.length ? 'kernNoMatch' : 'kernEmpty'))}</p>`}
+      ${list.length > rows.length ? `<p class="hint" style="padding:8px">${esc(t('kernMore', { n: list.length - rows.length }))}</p>` : ''}</div>
     <div class="btn-row">
       <button class="btn" type="button" data-kclean data-tip="${esc(t('kernCleanTip'))}">${esc(t('kernClean'))}</button>
       <button class="btn" type="button" data-kcompress data-tip="${esc(t('kernCompressTip'))}">${esc(t('kernCompress'))}</button>
@@ -5567,7 +5591,9 @@ async function updatePreview() {
     $('previewOut').hidden = false;
     msg.textContent = '';
   } catch (err) {
-    if (seq === previewSeq) msg.textContent = `${t('previewError')}: ${err.message}`;
+    if (seq !== previewSeq) return;
+    msg.textContent = `${t('previewError')}: ${err.message}`;
+    $('previewOut').hidden = true; // not the previous font under the new name
   }
 }
 
@@ -5934,8 +5960,8 @@ function initWindowFrame() {
     call(b.dataset.win);
   });
   const isDragArea = (el) => !el.closest('button, input, select, a, [role="menu"], [role="menuitem"], .view-switch');
-  document.querySelector('.menubar').addEventListener('pointerdown', (e) => {
-    if (e.button === 0 && e.detail === 1 && isDragArea(e.target)) call('drag');
+  document.querySelector('.menubar').addEventListener('mousedown', (e) => {
+    if (e.button === 0 && e.detail === 1 && isDragArea(e.target)) call('drag'); // mouse events count clicks, pointer events do not
   });
   document.querySelector('.menubar').addEventListener('dblclick', (e) => {
     if (isDragArea(e.target)) call('toggleMaximize');

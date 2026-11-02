@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	maxGlyphs     = 3000 // the editor stays responsive below this
-	maxKernGlyphs = 500  // kerning is read pair by pair, so keep it bounded
+	maxGlyphs     = 3000      // the editor stays responsive below this
+	maxKernGlyphs = maxGlyphs // every encoded glyph: fonts keep Cyrillic after the first hundreds
 )
 
 // Result is the imported project plus what had to be left out.

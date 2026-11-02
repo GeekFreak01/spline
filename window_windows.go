@@ -20,6 +20,7 @@ var (
 	procCallWindowProcW          = user32.NewProc("CallWindowProcW")
 	procSetWindowPos             = user32.NewProc("SetWindowPos")
 	procReleaseCapture           = user32.NewProc("ReleaseCapture")
+	procGetCursorPos             = user32.NewProc("GetCursorPos")
 	procPostMessageW             = user32.NewProc("PostMessageW")
 	procSendMessageW             = user32.NewProc("SendMessageW")
 	procShowWindow               = user32.NewProc("ShowWindow")
@@ -163,8 +164,11 @@ func windowAction(hwnd uintptr, action, arg string) string {
 				return "ignored"
 			}
 		}
+		// Windows counts the move from the point in lParam.
+		var pt struct{ x, y int32 }
+		procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
 		procReleaseCapture.Call()
-		procPostMessageW.Call(hwnd, wmNCLButtonDown, hit, 0)
+		procPostMessageW.Call(hwnd, wmNCLButtonDown, hit, uintptr(uint16(pt.x))|uintptr(uint16(pt.y))<<16)
 	}
 	if zoomed() {
 		return "maximized"

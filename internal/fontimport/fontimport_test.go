@@ -36,3 +36,34 @@ func TestImportRoundTrip(t *testing.T) {
 		t.Error("garbage accepted")
 	}
 }
+
+// Kerning of glyphs far down the code table (Cyrillic, in many fonts) is kept.
+func TestImportKerningOfLastGlyphs(t *testing.T) {
+	res, err := Import(goregular.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := res.Project
+	var encoded []string
+	for _, g := range p.Glyphs {
+		if g.Unicode > 0x20 && len(g.Contours) > 0 {
+			encoded = append(encoded, g.Name)
+		}
+	}
+	if len(encoded) <= 500 {
+		t.Skipf("only %d glyphs", len(encoded))
+	}
+	l, r := encoded[len(encoded)-2], encoded[len(encoded)-1]
+	p.Kerning = map[string]map[string]float64{l: {r: -123}}
+	data, err := fontgen.Build(p, fontgen.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Import(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := back.Project.Kerning[l][r]; got != -123 {
+		t.Errorf("kerning of %s %s = %v", l, r, got)
+	}
+}

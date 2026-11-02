@@ -86,15 +86,83 @@ func collectKerning(p *project.Project, gid map[string]int) []kernPair {
 	return out
 }
 
-// pairLookup writes the kerning lookup: PairPos format 1 with the
-// XAdvance of the first glyph. When some pairs vary (a variable font with
-// kerning per master), every value also gets a device offset, pointing to
-// a VariationIndex table for the varying ones (0 for the fixed ones).
+// maxPairSubtable keeps a subtable's own 16-bit offsets in range.
+const maxPairSubtable = 0xF000
+
+// pairLookup writes the kerning lookup. A subtable holds at most 64 KB, so
+// a large font gets several, each with whole left glyphs (the first
+// subtable that covers a glyph is the only one applied to it). They sit
+// behind Extension records, whose offsets are 32-bit.
 func pairLookup(pairs []kernPair) ([]byte, error) {
 	vary := false
 	for _, p := range pairs {
 		vary = vary || p.row > 0
 	}
+	record := 4
+	if vary {
+		record = 12 // the value's device offset and its VariationIndex table
+	}
+	var chunks [][]kernPair
+	size := 0
+	for i, p := range pairs {
+		cost := record
+		if i == 0 || pairs[i-1].left != p.left {
+			cost += 6 // its PairSet offset, coverage entry and pair count
+		}
+		// Only between left glyphs: the pairs of one glyph stay together.
+		if len(chunks) == 0 || (cost > record && size+remaining(pairs[i:], record) > maxPairSubtable) {
+			chunks = append(chunks, nil)
+			size = 16
+		}
+		size += cost
+		chunks[len(chunks)-1] = append(chunks[len(chunks)-1], p)
+	}
+	subs := make([][]byte, len(chunks))
+	for i, c := range chunks {
+		sub, err := pairSubtable(c, vary)
+		if err != nil {
+			return nil, err
+		}
+		subs[i] = sub
+	}
+	if len(subs) == 1 {
+		return lookupTable(2, subs[0]), nil
+	}
+	w := &writer{}
+	w.u16(9) // Extension
+	w.u16(0) // lookupFlag
+	w.u16(uint16(len(subs)))
+	head := 6 + 2*len(subs)
+	for i := range subs {
+		w.u16(uint16(head + 8*i))
+	}
+	at := 8 * len(subs) // from the first Extension record to the first subtable
+	for i, sub := range subs {
+		w.u16(1) // posFormat
+		w.u16(2) // the lookup type inside: PairPos
+		w.u32(uint32(at - 8*i))
+		at += len(sub)
+	}
+	for _, sub := range subs {
+		w.bytes(sub)
+	}
+	return w.buf, nil
+}
+
+// remaining: the size of the left glyph's pairs at the start of pairs.
+func remaining(pairs []kernPair, record int) int {
+	n := 0
+	for n < len(pairs) && pairs[n].left == pairs[0].left {
+		n++
+	}
+	return n*record + 6
+}
+
+// pairSubtable writes PairPos format 1 with the XAdvance of the first
+// glyph. When some pairs vary (a variable font with kerning per master),
+// every value also gets a device offset, pointing to a VariationIndex
+// table for the varying ones (0 for the fixed ones).
+func pairSubtable(pairs []kernPair, vary bool) ([]byte, error) {
 	var firsts []int
 	sets := map[int][]kernPair{}
 	for _, p := range pairs {
@@ -167,7 +235,7 @@ func pairLookup(pairs []kernPair) ([]byte, error) {
 	sub.bytes(coverage.buf)
 	sub.bytes(pairSets.buf)
 	sub.bytes(devices.buf)
-	return lookupTable(2, sub.buf), nil
+	return sub.buf, nil
 }
 
 // buildKern writes the legacy 'kern' table (format 0) used by older
