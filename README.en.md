@@ -178,7 +178,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>🔁 Import and export</h3>
-      SVG from Illustrator, Figma, Inkscape: as a file, by drag and drop or by pasting code (<code>Ctrl+V</code>); files named <code>A.svg</code>, <code>uni0416.svg</code>, <code>Ж.svg</code> go to their glyphs · glyphs from another <code>.sp</code> · a ready <code>.ttf</code>/<code>.otf</code> or a UFO (<code>.ufoz</code>, a <code>.zip</code> with a <code>.designspace</code>) opens as a project · copying glyphs between projects · export to <code>.ttf</code> (TrueType) and <code>.otf</code> (CFF) with kerning, alternates and ligatures · a family (Glyph → Family…): bold, light and italic, styles from Thin to Black, every style exported as one <code>.zip</code>.
+      SVG from Illustrator, Figma, Inkscape: as a file, by drag and drop or by pasting code (<code>Ctrl+V</code>); files named <code>A.svg</code>, <code>uni0416.svg</code>, <code>Ж.svg</code> go to their glyphs · glyphs from another <code>.sp</code> · a ready <code>.ttf</code>/<code>.otf</code> or a UFO (<code>.ufoz</code>, a <code>.zip</code> with a <code>.designspace</code>) opens as a project · copying glyphs between projects · export to <code>.ttf</code> (TrueType) and <code>.otf</code> (CFF) with kerning, alternates and ligatures · a family (File → Family…): bold, light and italic, styles from Thin to Black, every style exported as one <code>.zip</code>.
     </td>
     <td width="50%" valign="top">
       <h3>🪄 Comfort</h3>

@@ -13,7 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
+	"github.com/GeekFreak01/spline/internal/fontgen"
 	"github.com/GeekFreak01/spline/internal/project"
 )
 
@@ -180,8 +182,12 @@ func writeUFO(z *zip.Writer, dir string, p *project.Project, mi int) error {
 }
 
 func fontInfo(in project.Info, style string, weight int) map[string]any {
+	named := in
+	named.StyleName = style
 	m := map[string]any{
 		"familyName": in.FamilyName, "styleName": style,
+		// ufo2ft makes these from the family name, which fails on Cyrillic.
+		"postscriptFontName": fontgen.PostScriptName(named), "postscriptFullName": fontgen.FullName(named),
 		"unitsPerEm": in.UnitsPerEm, "ascender": in.Ascender, "descender": in.Descender,
 		"xHeight": in.XHeight, "capHeight": in.CapHeight,
 	}
@@ -219,9 +225,18 @@ func fontInfo(in project.Info, style string, weight int) map[string]any {
 	if in.UnderlineW != 0 {
 		m["postscriptUnderlineThickness"] = in.UnderlineW
 	}
-	if o := in.Overshoot; o > 0 {
-		m["postscriptBlueValues"] = []any{-o, 0, in.XHeight, in.XHeight + o, in.CapHeight, in.CapHeight + o, in.Ascender, in.Ascender + o}
-		m["postscriptOtherBlues"] = []any{in.Descender - o, in.Descender}
+	list := func(v []int) []any {
+		out := make([]any, len(v))
+		for i, x := range v {
+			out[i] = x
+		}
+		return out
+	}
+	if blues, other := fontgen.BlueZones(in); blues != nil {
+		m["postscriptBlueValues"] = list(blues)
+		if other != nil {
+			m["postscriptOtherBlues"] = list(other)
+		}
 	}
 	return m
 }
@@ -250,7 +265,11 @@ func glifFileName(name string, used map[string]bool) string {
 		base = "_" + base
 	}
 	if len(base) > 200 {
-		base = base[:200]
+		cut := 200
+		for cut > 0 && !utf8.RuneStart(base[cut]) {
+			cut-- // not inside a letter: the name must stay valid UTF-8
+		}
+		base = base[:cut]
 	}
 	file := base + ".glif"
 	for n := 1; used[strings.ToLower(file)]; n++ {

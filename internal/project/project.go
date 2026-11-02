@@ -376,10 +376,15 @@ func (p *Project) Validate() error {
 			return errors.New("invalid style")
 		}
 	}
+	ids := map[string]bool{}
 	for _, m := range p.Masters {
 		if !finite(m.ItalicAngle) || math.Abs(m.ItalicAngle) > 45 {
 			return fmt.Errorf("master %q has an invalid italic angle", m.Name)
 		}
+		if ids[m.ID] {
+			return fmt.Errorf("two masters have the id %q", m.ID)
+		}
+		ids[m.ID] = true
 	}
 	if len(p.Glyphs) > maxGlyphs {
 		return fmt.Errorf("too many glyphs (%d, max %d)", len(p.Glyphs), maxGlyphs)

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/GeekFreak01/spline/internal/project"
 )
@@ -224,5 +225,59 @@ func TestFlatLayer(t *testing.T) {
 	got := string(glif(g, "m1"))
 	if !strings.Contains(got, `x="777"`) || strings.Contains(got, `x="555"`) {
 		t.Errorf("flat layer:\n%s", got)
+	}
+}
+
+// A designspace of italic sources only is an italic family: its default
+// master stays a plain one.
+func TestDesignspaceOnlyItalic(t *testing.T) {
+	p := demo(t)
+	p.Axis = &project.Axis{Tag: "wght", Min: 400, Max: 700}
+	p.Masters = []project.Master{{ID: "m0", Name: "Italic", Loc: 400, Italic: true, ItalicAngle: 10},
+		{ID: "m1", Name: "Bold Italic", Loc: 700, Italic: true, ItalicAngle: 10}}
+	for i := range p.Glyphs {
+		g := &p.Glyphs[i]
+		g.Layers = map[string]project.Layer{"m1": {Advance: g.Advance, Contours: g.Contours}}
+	}
+	data, _, err := Export(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, _, err := Import(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Masters) != 2 || q.Masters[0].Italic || q.Masters[1].Italic || q.Masters[0].Loc != 400 {
+		t.Fatalf("masters %+v", q.Masters)
+	}
+}
+
+// A long name is cut between letters, not inside one.
+func TestLongGlifName(t *testing.T) {
+	file := glifFileName(strings.Repeat("ж", 150), map[string]bool{})
+	if !utf8.ValidString(file) || len(file) > 205 {
+		t.Errorf("%d bytes, valid %v", len(file), utf8.ValidString(file))
+	}
+}
+
+// fontinfo: zones in order without a repeat, and the PostScript names.
+func TestFontInfoNames(t *testing.T) {
+	in := project.Info{FamilyName: "Шрифт", UnitsPerEm: 1000, Ascender: 700, Descender: -200, XHeight: 500, CapHeight: 700, Overshoot: 10}
+	m := fontInfo(in, "Bold", 700)
+	blues := m["postscriptBlueValues"].([]any)
+	if len(blues) != 6 {
+		t.Errorf("blues %v", blues)
+	}
+	for i := 1; i < len(blues); i++ {
+		if blues[i].(int) < blues[i-1].(int) {
+			t.Errorf("blues out of order: %v", blues)
+		}
+	}
+	ps, _ := m["postscriptFontName"].(string)
+	if ps == "" || strings.ContainsAny(ps, " Ш") || !strings.HasSuffix(ps, "-Bold") {
+		t.Errorf("postscriptFontName %q", ps)
+	}
+	if m["postscriptFullName"] == "" {
+		t.Error("no full name")
 	}
 }

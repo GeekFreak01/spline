@@ -45,6 +45,11 @@ export function isDrawn(g) {
   return hasOutline(g) || g.unicode === 32;
 }
 
+// Contours that are not a list of shapes with numeric points.
+const badPoint = (q) => !q || !Number.isFinite(q.x) || !Number.isFinite(q.y);
+const badContours = (cs) => !Array.isArray(cs) || cs.some((c) => !c || typeof c !== 'object' || (c.nodes !== undefined && !Array.isArray(c.nodes))
+  || (c.nodes || []).some((n) => badPoint(n) || (n.in && badPoint(n.in)) || (n.out && badPoint(n.out))));
+
 // Accepts any parsed JSON and returns a clean project or throws.
 export function validateProject(p) {
   if (!p || p.format !== FORMAT) throw new Error('not a Spline (.sp) file');
@@ -93,6 +98,8 @@ export function validateProject(p) {
     p.axis = axis(p.axis, 'wght', 100, 900);
     if (p.axis2) p.axis2 = axis(p.axis2, 'wdth', 100, 100);
     for (const m of p.masters) if (typeof m.name !== 'string') m.name = m.id;
+    const ids = new Set(p.masters.map((m) => m.id));
+    if (ids.size !== p.masters.length) throw new Error('the file is damaged: two masters have one id');
     p.masters.forEach((m, i) => {
       if (i === 0 || m.italic !== true) { delete m.italic; delete m.italicAngle; return; }
       m.italicAngle = Number.isFinite(m.italicAngle) ? Math.max(-45, Math.min(45, m.italicAngle)) : 10;
@@ -103,19 +110,26 @@ export function validateProject(p) {
   if (!p.masters || !p.axis2 || typeof p.axis2 !== 'object') delete p.axis2;
   else for (const m of p.masters) if (!Number.isFinite(m.loc2)) m.loc2 = 100;
   delete p.activeMaster;
-  // The styles of a family: name, weight, width, upright or italic.
+  // The styles of a family: name, weight, width, upright or italic. An
+  // empty list is kept: the family then exports nothing.
+  const noStyles = Array.isArray(p.styles) && !p.styles.length;
   p.styles = (Array.isArray(p.styles) && p.masters ? p.styles : [])
     .filter((s) => s && typeof s.name === 'string' && s.name.trim() && Number.isFinite(s.weight))
     .slice(0, 64)
     .map((s) => ({ name: s.name.trim().slice(0, 64), weight: s.weight, ...(Number.isFinite(s.width) ? { width: s.width } : {}), italic: s.italic === true, export: s.export !== false }));
-  if (!p.styles.length) delete p.styles;
+  if (!p.styles.length && !(noStyles && p.masters)) delete p.styles;
   p.palette = (Array.isArray(p.palette) ? p.palette : []).filter((c) => typeof c === 'string' && /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(c)).slice(0, 64);
   if (!p.palette.length) delete p.palette;
   for (const g of p.glyphs) {
     if (!p.masters || !g.layers || typeof g.layers !== 'object') delete g.layers;
+    for (const [id, l] of Object.entries(g.layers || {})) {
+      if (!l || typeof l !== 'object' || !Number.isFinite(l.advance) || badContours(l.contours)) throw new Error(`the file is damaged: glyph "${g.name}" in master "${id}"`);
+      for (const c of l.contours) if (c.closed === undefined) c.closed = true;
+    }
     if (g.smart && !(Array.isArray(g.smart.props) && g.smart.props.length && g.smart.states && typeof g.smart.states === 'object')) delete g.smart;
     if (g.smart) { delete g.smart.editing; delete g.smart.base; }
     g.contours = Array.isArray(g.contours) ? g.contours : [];
+    if (badContours(g.contours)) throw new Error(`the file is damaged: glyph "${g.name}"`);
     g.advance = Number.isFinite(g.advance) ? g.advance : 600;
     if (!(Number.isInteger(g.unicode) && g.unicode > 0 && g.unicode <= 0x10FFFF)) delete g.unicode;
     if (!COLORS.includes(g.color)) delete g.color;
