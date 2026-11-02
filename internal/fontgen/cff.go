@@ -258,14 +258,16 @@ func csInt(w *writer, v int) {
 // (the baseline zone and the zones above the x-height, cap height and
 // ascender) and OtherBlues (below the descender), each as deltas.
 // Overlapping zones (two lines at one height) are written once.
-func writeBlues(w *writer, in project.Info) {
+// BlueZones gives the alignment zones of the overshoot, in order and
+// without overlaps: blues above the baseline, other the descender's.
+// Both are empty without an overshoot.
+func BlueZones(in project.Info) (blues, other []int) {
 	o := in.Overshoot
 	if o <= 0 || o > 100 {
-		return
+		return nil, nil
 	}
 	top := [][2]int{{-o, 0}, {in.XHeight, in.XHeight + o}, {in.CapHeight, in.CapHeight + o}, {in.Ascender, in.Ascender + o}}
 	sort.Slice(top, func(i, j int) bool { return top[i][0] < top[j][0] })
-	var blues []int
 	last := math.MinInt
 	for _, z := range top {
 		if z[0] <= last {
@@ -274,6 +276,18 @@ func writeBlues(w *writer, in project.Info) {
 		blues = append(blues, z[0], z[1])
 		last = z[1]
 	}
+	if d := in.Descender; d < -o {
+		other = []int{d - o, d}
+	}
+	return blues, other
+}
+
+func writeBlues(w *writer, in project.Info) {
+	blues, other := BlueZones(in)
+	if blues == nil {
+		return
+	}
+	o := in.Overshoot
 	put := func(vals []int, op byte) {
 		prev := 0
 		for _, v := range vals {
@@ -283,8 +297,8 @@ func writeBlues(w *writer, in project.Info) {
 		w.u8(op)
 	}
 	put(blues, 6) // BlueValues
-	if d := in.Descender; d < -o {
-		put([]int{d - o, d}, 7) // OtherBlues
+	if other != nil {
+		put(other, 7) // OtherBlues
 	}
 	if o >= 25 { // BlueScale × the tallest zone must stay under 1
 		dictReal(w, 0.9/float64(o))

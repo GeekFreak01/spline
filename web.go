@@ -63,7 +63,7 @@ type asset struct {
 func runWeb(addr, hosts, siteDir string, trustProxy, dev bool) {
 	static, _ := fs.Sub(webFS, "web")
 	if dev {
-		static = os.DirFS("web")
+		static = devWeb()
 	}
 	ws := &webServer{
 		hosts:      map[string]bool{},

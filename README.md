@@ -178,7 +178,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>🔁 Импорт и экспорт</h3>
-      SVG из Illustrator, Figma, Inkscape: файлом, перетаскиванием или вставкой кода (<code>Ctrl+V</code>), файлы <code>A.svg</code>, <code>uni0416.svg</code>, <code>Ж.svg</code> сами попадают в свои буквы · буквы из другого <code>.sp</code> · готовый <code>.ttf</code>/<code>.otf</code> или UFO (<code>.ufoz</code>, <code>.zip</code> с <code>.designspace</code>) открывается как проект · копирование букв между проектами · экспорт <code>.ttf</code> (TrueType) и <code>.otf</code> (CFF) с кернингом, вариантами и лигатурами · семейство («Буква → Семейство…»): жирный, тонкий и курсив, начертания от Thin до Black, экспорт всех начертаний одним <code>.zip</code>.
+      SVG из Illustrator, Figma, Inkscape: файлом, перетаскиванием или вставкой кода (<code>Ctrl+V</code>), файлы <code>A.svg</code>, <code>uni0416.svg</code>, <code>Ж.svg</code> сами попадают в свои буквы · буквы из другого <code>.sp</code> · готовый <code>.ttf</code>/<code>.otf</code> или UFO (<code>.ufoz</code>, <code>.zip</code> с <code>.designspace</code>) открывается как проект · копирование букв между проектами · экспорт <code>.ttf</code> (TrueType) и <code>.otf</code> (CFF) с кернингом, вариантами и лигатурами · семейство («Файл → Семейство…»): жирный, тонкий и курсив, начертания от Thin до Black, экспорт всех начертаний одним <code>.zip</code>.
     </td>
     <td width="50%" valign="top">
       <h3>🪄 Удобство</h3>

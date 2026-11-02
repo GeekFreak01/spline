@@ -91,7 +91,7 @@ const S = [
   },
   {
     id: 'family', icon: 'layers', title: { ru: 'Семейство', en: 'Family' },
-    lead: { ru: '«Буква → Семейство…»: Regular, Bold, Light, курсив и всё между ними из одного проекта.', en: 'Glyph → Family…: Regular, Bold, Light, italics and everything between them from one project.' },
+    lead: { ru: '«Файл → Семейство…»: Regular, Bold, Light, курсив и всё между ними из одного проекта.', en: 'File → Family…: Regular, Bold, Light, italics and everything between them from one project.' },
     items: [
       ['layers', { ru: 'Жирный и тонкий', en: 'Bold and light' }, '', { ru: 'Кнопки «Жирный» и «Тонкий» добавляют мастер: копию букв с утолщёнными или утончёнными штрихами. Потом дорисуйте его вручную.', en: 'The Bold and Light buttons add a master: a copy of the glyphs with bolder or lighter strokes. Refine it by hand afterwards.' }],
       ['type', { ru: 'Курсив', en: 'Italic' }, '', { ru: 'Кнопка «Курсив» добавляет наклонённую копию каждого мастера. Наклон — заготовка: настоящий курсив рисуют заново (а, е, f).', en: 'The Italic button adds a slanted copy of every master. The slant is a start: a true italic is redrawn (a, e, f).' }],

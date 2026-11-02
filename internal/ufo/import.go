@@ -635,6 +635,17 @@ func importDesignspace(files map[string][]byte, dsName string, roots []string) (
 	if len(srcs) < 2 {
 		return nil, 0, errors.New("designspace: the sources are missing")
 	}
+	// Only italic sources: an italic family on its own. Its masters are
+	// plain ones, the slant stays in the font info.
+	upright := false
+	for _, s := range srcs {
+		upright = upright || !s.italic
+	}
+	if !upright {
+		for i := range srcs {
+			srcs[i].italic = false
+		}
+	}
 	// The default source first.
 	def := 0
 	for i, s := range srcs {

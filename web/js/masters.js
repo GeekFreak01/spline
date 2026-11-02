@@ -467,4 +467,4 @@ export function nextStyle(p, styles) {
 }
 
 // The styles to export: the project's own list, or the default one.
-export const familyStyles = (p) => (p.styles?.length ? p.styles : defaultStyles(p));
+export const familyStyles = (p) => (Array.isArray(p.styles) ? p.styles : defaultStyles(p));

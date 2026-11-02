@@ -180,10 +180,22 @@ func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// devWeb is the web folder for -dev: in the current folder, or else next
+// to the program.
+func devWeb() fs.FS {
+	if fi, err := os.Stat("web"); err == nil && fi.IsDir() {
+		return os.DirFS("web")
+	}
+	if exe, err := os.Executable(); err == nil {
+		return os.DirFS(filepath.Join(filepath.Dir(exe), "web"))
+	}
+	return os.DirFS("web")
+}
+
 func (s *server) routes() http.Handler {
 	static, _ := fs.Sub(webFS, "web")
 	if s.dev {
-		static = os.DirFS("web")
+		static = devWeb()
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(static)))
@@ -227,13 +239,16 @@ type sessionInfo struct {
 	Version string `json:"version"`
 	// CanAssociate is true on Windows, where Spline can register itself
 	// for .sp files; Associated tells whether that is already done.
-	CanAssociate bool            `json:"canAssociate"`
-	CanInstall   bool            `json:"canInstall"`
-	Associated   bool            `json:"associated"`
-	FilePath     string          `json:"filePath,omitempty"`
-	FileName     string          `json:"fileName,omitempty"`
-	Project      json.RawMessage `json:"project,omitempty"`
-	Error        string          `json:"error,omitempty"`
+	CanAssociate bool   `json:"canAssociate"`
+	CanInstall   bool   `json:"canInstall"`
+	Associated   bool   `json:"associated"`
+	FilePath     string `json:"filePath,omitempty"`
+	FileName     string `json:"fileName,omitempty"`
+	// Stamp is the version of the file this page read; its saves send it
+	// back, so two tabs of one server do not overwrite each other.
+	Stamp   string          `json:"stamp,omitempty"`
+	Project json.RawMessage `json:"project,omitempty"`
+	Error   string          `json:"error,omitempty"`
 }
 
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +261,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		info.FileName = filepath.Base(path)
 		s.mu.Lock()
 		s.stamp = fileStamp(path)
+		info.Stamp = s.stamp
 		s.mu.Unlock()
 		data, err := os.ReadFile(path)
 		switch {
@@ -454,9 +470,13 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Changed on disk since this window read or wrote it (another window,
-	// another program): the page asks before overwriting.
-	if st := fileStamp(s.filePath); st != s.stamp && st != "" && r.Header.Get("X-Spline-Overwrite") != "1" {
+	// Changed on disk since this page read or wrote it (another window or
+	// tab, another program): the page asks before overwriting.
+	seen := s.stamp
+	if v := r.Header.Get("X-Spline-Stamp"); v != "" {
+		seen = v
+	}
+	if st := fileStamp(s.filePath); st != seen && st != "" && r.Header.Get("X-Spline-Overwrite") != "1" {
 		http.Error(w, "the file was changed by another window or program", http.StatusConflict)
 		return
 	}
@@ -465,7 +485,7 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.stamp = fileStamp(s.filePath)
-	writeJSON(w, map[string]string{"filePath": s.filePath})
+	writeJSON(w, map[string]string{"filePath": s.filePath, "stamp": s.stamp})
 }
 
 // fileStamp identifies a version of a file on disk ("" when it is missing).
