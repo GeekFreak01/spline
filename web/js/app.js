@@ -5844,11 +5844,15 @@ function initPreview() {
 // ================================================================ start
 
 $('fontNameBtn').addEventListener('click', editFontInfo);
-$('exportBtn').addEventListener('click', () => exportFont('ttf'));
+// The top Export button takes the whole family once there is one.
+const exportsFamily = () => hasMasters(app.project || {}) && familyStyles(app.project).some((s) => s.export);
+const syncExportTip = () => { $('exportBtn').dataset.tip = t(exportsFamily() ? 'famExportTTF' : 'exportTTF'); };
+$('exportBtn').addEventListener('click', () => (exportsFamily() ? exportFamily('ttf') : exportFont('ttf')));
+['pointerover', 'focus'].forEach((ev) => $('exportBtn').addEventListener(ev, syncExportTip));
 
 function refreshLang() {
   applyStatic();
-  $('exportBtn').dataset.tip = t('exportTTF');
+  syncExportTip();
   renderAll();
   renderPreviewText();
   if (app.mode === 'editor') { renderToolbar(); renderEditorOptions(); renderGlyphPanel(); editor.updateAria(); editor.render(); }
