@@ -214,14 +214,24 @@ func (ws *webServer) clientIP(r *http.Request) string {
 		// Caddy appends the real client address as the last entry.
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
-			return strings.TrimSpace(parts[len(parts)-1])
+			return limitKey(strings.TrimSpace(parts[len(parts)-1]))
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
-	return host
+	return limitKey(host)
+}
+
+// limitKey is the rate limiter's key for an address: IPv6 clients get a
+// whole /64, as one home or server usually has all of it.
+func limitKey(addr string) string {
+	ip := net.ParseIP(addr)
+	if ip == nil || ip.To4() != nil {
+		return addr
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 func (ws *webServer) handleExport(w http.ResponseWriter, r *http.Request) {

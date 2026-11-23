@@ -26,6 +26,11 @@ const (
 	maxRules    = 2000
 	maxNodes    = 20000
 	maxCoord    = 30000
+	maxMasters  = 64
+	// Kerning pairs once groups are expanded, in all masters together: a
+	// pair of big groups multiplies out, and the font builder holds every
+	// pair in memory.
+	maxKernPairs = 2_000_000
 )
 
 // Point is a position in font units.
@@ -348,6 +353,9 @@ func (p *Project) Validate() error {
 			}
 		}
 	}
+	if n := kernPairs(p, kernings); n > maxKernPairs {
+		return fmt.Errorf("too much kerning (%d pairs with groups expanded, max %d)", n, maxKernPairs)
+	}
 	if len(p.Contextual) > maxRules || len(p.Ligatures) > maxRules {
 		return errors.New("too many substitution rules")
 	}
@@ -375,6 +383,9 @@ func (p *Project) Validate() error {
 		if strings.TrimSpace(st.Name) == "" || utf8.RuneCountInString(st.Name) > 64 || !finite(st.Weight) || !finite(st.Width) {
 			return errors.New("invalid style")
 		}
+	}
+	if len(p.Masters) > maxMasters {
+		return fmt.Errorf("too many masters (%d, max %d)", len(p.Masters), maxMasters)
 	}
 	ids := map[string]bool{}
 	for _, m := range p.Masters {
@@ -467,3 +478,36 @@ func (p *Project) Validate() error {
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 func okCoord(v float64) bool { return finite(v) && math.Abs(v) <= maxCoord }
+
+// kernPairs is how many glyph pairs the kerning becomes with its groups
+// expanded (an upper bound: overlapping entries are counted twice).
+func kernPairs(p *Project, kernings []map[string]map[string]float64) int {
+	first, second := map[string]int{}, map[string]int{}
+	for _, g := range p.Glyphs {
+		if g.KernRight != "" {
+			first["@"+g.KernRight]++
+		}
+		if g.KernLeft != "" {
+			second["@"+g.KernLeft]++
+		}
+	}
+	size := func(key string, groups map[string]int) int {
+		if strings.HasPrefix(key, "@") {
+			return groups[key]
+		}
+		return 1
+	}
+	n := 0
+	for _, k := range kernings {
+		for left, rights := range k {
+			l := size(left, first)
+			for right := range rights {
+				n += l * size(right, second)
+				if n > maxKernPairs {
+					return n // enough to say no, without counting on
+				}
+			}
+		}
+	}
+	return n
+}

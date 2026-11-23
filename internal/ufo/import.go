@@ -19,6 +19,9 @@ import (
 const (
 	maxGlyphs = 3000
 	maxFile   = 64 << 20 // unpacked, all files together
+	// Sources of a designspace: each becomes a master with a copy of
+	// every glyph.
+	maxSources = 64
 )
 
 // IsZip tells whether data looks like a zip archive (.ufoz, .zip).
@@ -572,6 +575,9 @@ func importDesignspace(files map[string][]byte, dsName string, roots []string) (
 	if len(ds.Axes) == 0 || len(ds.Sources) < 2 {
 		return nil, 0, errors.New("designspace: needs an axis and two sources")
 	}
+	if len(ds.Sources) > maxSources {
+		return nil, 0, fmt.Errorf("designspace: too many sources (%d, max %d)", len(ds.Sources), maxSources)
+	}
 	// An Italic axis (ital) is not blended: it marks the italic masters.
 	italName := ""
 	axes := ds.Axes[:0:0]
@@ -595,6 +601,7 @@ func importDesignspace(files map[string][]byte, dsName string, roots []string) (
 		italic bool
 	}
 	var srcs []src
+	read := map[string]bool{}
 	for _, s := range ds.Sources {
 		if s.Layer != "" {
 			continue // sparse layers are not supported
@@ -607,6 +614,10 @@ func importDesignspace(files map[string][]byte, dsName string, roots []string) (
 		if !found {
 			continue
 		}
+		if read[root] {
+			continue // one UFO named by several sources is one master
+		}
+		read[root] = true
 		u, err := readUFO(files, root)
 		if err != nil {
 			return nil, 0, err
