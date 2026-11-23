@@ -713,6 +713,10 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   .view-grid > .dock { display: none; }
   .view-editor { grid-template-columns: 42px minmax(0, 1fr) 230px; }
 }
+/* Low windows: the canvas keeps most of the height. */
+@media (max-height: 720px) {
+  .preview-body { height: 15vh; }
+}
 @media (max-width: 760px) {
   body { grid-template-rows: auto auto 1fr auto 24px; overflow: auto; }
   .menubar { flex-wrap: wrap; }
