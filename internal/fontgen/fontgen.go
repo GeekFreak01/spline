@@ -29,6 +29,10 @@ const (
 	WOFF2  // TrueType packed for the web with Brotli (WOFF 2.0)
 )
 
+// clock is the build time written into the font; tests pin it, so two
+// builds a second apart give the same bytes.
+var clock = time.Now
+
 // ParseFormat converts "ttf" / "otf" to a Format.
 func ParseFormat(s string) (Format, error) {
 	switch strings.ToLower(s) {
@@ -190,7 +194,7 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 }
 
 func prepare(p *project.Project, f Format) *fontData {
-	fd := &fontData{info: p.Info, now: time.Now().UTC(), gid: map[string]int{}}
+	fd := &fontData{info: p.Info, now: clock().UTC(), gid: map[string]int{}}
 	fd.names = makeNames(p.Info)
 	upm := float64(p.Info.UnitsPerEm)
 

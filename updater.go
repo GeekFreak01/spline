@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/GeekFreak01/spline/internal/updatesig"
 )
 
 const (
@@ -46,7 +48,9 @@ type updateInfo struct {
 	CanInstall bool   `json:"canInstall"`
 	Error      string `json:"error,omitempty"`
 
-	asset releaseAsset
+	asset      releaseAsset
+	sums, sig  releaseAsset // SHA256SUMS.txt and its signature
+	releaseTag string
 }
 
 type releaseAsset struct {
@@ -214,8 +218,12 @@ func checkUpdate(ctx context.Context, force bool) *updateInfo {
 	info.Notes = shortNotes(rel.Body)
 	if exe, err := os.Executable(); err == nil && info.Available {
 		setup := installedWithSetup(exe)
-		if a, ok := pickAsset(rel.Assets, setup, runtime.GOOS, runtime.GOARCH); ok && a.usable() && canReplace(exe, setup) {
-			info.asset, info.CanInstall = a, true
+		a, ok := pickAsset(rel.Assets, setup, runtime.GOOS, runtime.GOARCH)
+		sums, sig := findAsset(rel.Assets, "SHA256SUMS.txt"), findAsset(rel.Assets, "SHA256SUMS.txt.sig")
+		// Only a signed release installs by itself; an unsigned one, or a
+		// copy built without the key, gets the release page.
+		if ok && a.usable() && sums.usable() && sig.usable() && updatePublicKey != "" && canReplace(exe, setup) {
+			info.asset, info.sums, info.sig, info.releaseTag, info.CanInstall = a, sums, sig, rel.Tag, true
 		}
 	}
 	updateCache, updateCached = info, time.Now()
@@ -227,6 +235,64 @@ func (s *server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// hammer GitHub.
 	force := r.URL.Query().Get("force") == "1" && r.Header.Get("X-Spline") == "1"
 	writeJSON(w, checkUpdate(r.Context(), force))
+}
+
+func findAsset(assets []releaseAsset, name string) releaseAsset {
+	for _, a := range assets {
+		if a.Name == name {
+			return a
+		}
+	}
+	return releaseAsset{}
+}
+
+// fetchSmall reads a small release file (the checksums or the signature)
+// and checks it against GitHub's digest.
+func fetchSmall(ctx context.Context, a releaseAsset) ([]byte, error) {
+	if a.Size > 1<<20 {
+		return nil, errors.New(a.Name + " is too large")
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
+	req.Header.Set("User-Agent", "Spline/"+version)
+	resp, err := (&http.Client{Timeout: time.Minute}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New(resp.Status)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, a.Size+1))
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(b)
+	if int64(len(b)) != a.Size || hex.EncodeToString(sum[:]) != sha256Of(a) {
+		return nil, errors.New(a.Name + " is damaged")
+	}
+	return b, nil
+}
+
+// verifySigned checks that the release is signed with the Spline key and
+// that the signed checksum of the file is the one about to be downloaded:
+// GitHub's digest alone would not catch a release put up by someone else.
+func verifySigned(ctx context.Context, info *updateInfo, key string) error {
+	sums, err := fetchSmall(ctx, info.sums)
+	if err != nil {
+		return err
+	}
+	sig, err := fetchSmall(ctx, info.sig)
+	if err != nil {
+		return err
+	}
+	want, err := updatesig.Checksum(key, info.releaseTag, sums, sig, info.asset.Name)
+	if err != nil {
+		return err
+	}
+	if want != sha256Of(info.asset) {
+		return errors.New("the release file differs from the signed one")
+	}
+	return nil
 }
 
 // verifyFile compares a downloaded file with its published checksum.
@@ -313,9 +379,13 @@ func (s *server) handleUpdateDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	job = updateJob{State: "downloading", Total: info.asset.Size, asset: info.asset}
-	go func(a releaseAsset) {
-		dir, err := os.UserCacheDir()
-		var path string
+	go func(info *updateInfo) {
+		a := info.asset
+		err := verifySigned(context.Background(), info, updatePublicKey)
+		var dir, path string
+		if err == nil {
+			dir, err = os.UserCacheDir()
+		}
 		if err == nil {
 			path, err = downloadAsset(context.Background(), a, filepath.Join(dir, "Spline", "update"))
 		}
@@ -326,7 +396,7 @@ func (s *server) handleUpdateDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		job.State, job.path = "ready", path
-	}(info.asset)
+	}(info)
 	writeJSON(w, job)
 }
 
