@@ -14,6 +14,8 @@ export function newProject({ family = 'Мой шрифт', sets = ['latin', 'cyr
     },
     glyphs: [],
     guides: [], // ruler guides: { axis: 'x' | 'y', pos }
+    // The same empty lists a loaded file gets (see validateProject).
+    kerning: {}, contextual: [], ligatures: [],
   };
   for (const s of sets) for (const ch of SETS[s] || []) addGlyphForChar(p, ch);
   return p;
