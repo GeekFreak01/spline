@@ -4324,11 +4324,11 @@ async function exportFamily(format = 'ttf') {
 async function installFamily() {
   if (!hasMasters(app.project)) return;
   let n = 0;
+  const ask = { force: false };
   for (const f of familyFonts()) {
     try {
-      const r = await fetch('/api/install-font', { method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(f.q) });
-      if (!r.ok) throw new Error(await r.text());
-      n++;
+      if (await postInstall(serialize(f.q), ask)) n++;
+      else break;
     } catch (err) { toast(`${f.name}: ${err.message}`, 'error'); }
   }
   if (n) toast(t('famInstalled', { n }));
@@ -5134,15 +5134,29 @@ async function openFontFile(file, ask = false) {
 // Word, Photoshop and other programs.
 async function installFont() {
   try {
-    const r = await fetch('/api/install-font', {
-      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON(),
-    });
-    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
-    const { name } = await r.json();
-    toast(t('installed', { name }));
+    const name = await postInstall(projectJSON(), { force: false });
+    if (name) toast(t('installed', { name }));
   } catch (err) {
     toast(t('installError', { err: err.message }), 'error');
   }
+}
+
+// Installs one font and returns its name. A font of that name that Spline
+// did not install is not replaced without asking; the answer holds for the
+// rest of a family (ask.force). null: the person said no.
+async function postInstall(body, ask) {
+  const send = () => fetch(`/api/install-font${ask.force ? '?force=1' : ''}`, {
+    method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body,
+  });
+  let r = await send();
+  if (r.status === 409) {
+    const { taken } = await r.json();
+    if (!(await confirmDialog(t('installTaken', { name: taken }), t('installAnyway')))) return null;
+    ask.force = true;
+    r = await send();
+  }
+  if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  return (await r.json()).name;
 }
 
 // ================================================================ files

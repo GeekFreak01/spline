@@ -13,8 +13,9 @@ import (
 const canInstallFonts = runtime.GOOS == "darwin" || runtime.GOOS == "linux"
 
 // installFont copies the font to the user's font folder, replacing an
-// earlier install of the same font.
-func installFont(data []byte, fullName, fileName string) (string, error) {
+// earlier install by Spline. A file of that name from anywhere else gives
+// errFontTaken; with force the font goes next to it and the file stays.
+func installFont(data []byte, fullName, fileName string, force bool) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -32,9 +33,16 @@ func installFont(data []byte, fullName, fileName string) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, fileName+".ttf")
+	if _, err := os.Stat(path); err == nil && !isOurs(path) {
+		if !force {
+			return "", errFontTaken
+		}
+		path = filepath.Join(dir, fileName+"-Spline.ttf")
+	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", err
 	}
+	remember(path, "")
 	if runtime.GOOS == "linux" {
 		exec.Command("fc-cache", "-f", dir).Run()
 	}

@@ -24,10 +24,12 @@ var (
 const fontsKey = `Software\Microsoft\Windows NT\CurrentVersion\Fonts`
 
 // installFont installs the font for the current user only (no admin rights
-// needed, as Windows 10 1809+ does it). A font that is already installed
-// under the same name is replaced. Each install gets a new file name: the
-// old file may still be held open by running programs.
-func installFont(data []byte, fullName, fileName string) (string, error) {
+// needed, as Windows 10 1809+ does it). An earlier install by Spline under
+// the same name is replaced. A font of that name from anywhere else gives
+// errFontTaken unless force is set, and its file is never deleted. Each
+// install gets a new file name: the old file may still be held open by
+// running programs.
+func installFont(data []byte, fullName, fileName string, force bool) (string, error) {
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Microsoft", "Windows", "Fonts")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -38,12 +40,22 @@ func installFont(data []byte, fullName, fileName string) (string, error) {
 	}
 	defer k.Close()
 	value := fullName + " (TrueType)"
-	if old, _, err := k.GetStringValue(value); err == nil && old != "" {
-		if !filepath.IsAbs(old) {
-			old = filepath.Join(dir, old)
+	if !force && systemHasFont(value) {
+		return "", errFontTaken
+	}
+	old, _, _ := k.GetStringValue(value)
+	if old != "" && !filepath.IsAbs(old) {
+		old = filepath.Join(dir, old)
+	}
+	if old != "" {
+		ours := isOurs(old)
+		if !ours && !force {
+			return "", errFontTaken
 		}
 		callWide(procRemoveFontResourceW, old)
-		os.Remove(old) // fails while some program uses it; that is fine
+		if ours {
+			os.Remove(old) // fails while some program uses it; that is fine
+		}
 	}
 	path := filepath.Join(dir, fmt.Sprintf("%s-%d.ttf", fileName, time.Now().Unix()))
 	if err := os.WriteFile(path, data, 0o644); err != nil {
@@ -53,12 +65,24 @@ func installFont(data []byte, fullName, fileName string) (string, error) {
 		os.Remove(path)
 		return "", err
 	}
+	remember(path, old)
 	if callWide(procAddFontResourceW, path) == 0 {
 		return "", fmt.Errorf("Windows did not accept the font")
 	}
 	const hwndBroadcast, wmFontChange = 0xFFFF, 0x001D
 	procPostMessageW.Call(hwndBroadcast, wmFontChange, 0, 0)
 	return path, nil
+}
+
+// systemHasFont: the font is installed for all users (Windows fonts).
+func systemHasFont(value string) bool {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, fontsKey, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	_, _, err = k.GetStringValue(value)
+	return err == nil
 }
 
 func callWide(p *syscall.LazyProc, s string) uintptr {

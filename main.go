@@ -469,7 +469,14 @@ func (s *server) handleInstallFont(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := fontgen.FullName(p.Info)
-	path, err := installFont(data, name, safeFileName(fontgen.PostScriptName(p.Info)))
+	force := r.URL.Query().Get("force") == "1"
+	path, err := installFont(data, name, safeFileName(fontgen.PostScriptName(p.Info)), force)
+	if errors.Is(err, errFontTaken) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"taken": name})
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
