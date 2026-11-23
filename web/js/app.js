@@ -9,12 +9,12 @@ import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { isSmart, editingState, editState, saveSmart, addProp, removeProp, smartProblems } from './smart.js';
 import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis, layerOf,
-  incompatibility, hasItalic, familyGroup, familyStyles, uniqueStyles, nextStyle, defaultStyles, addItalicMasters, fitAxis } from './masters.js';
+  incompatibility, hasItalic, emptyIn, fillEmpty, familyGroup, familyStyles, uniqueStyles, nextStyle, defaultStyles, addItalicMasters, fitAxis } from './masters.js';
 import { makeZip } from './zip.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
-import { History, KERNING, GROUPS } from './history.js';
+import { History, KERNING, GROUPS, MANY } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
 import { Editor } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
@@ -76,7 +76,7 @@ const app = {
   extended: (() => { try { return localStorage.getItem('spline.extended') === '1'; } catch { return false; } })(),
   gridView: (() => { try { return localStorage.getItem('spline.gridView') || 'tiles'; } catch { return 'tiles'; } })(),
   smartFilter: null, tagFilter: null, tableSort: null,
-  history: new History(),
+  history: new History(() => activeId(app.project || {})),
   selected: new Set(), // glyph names
   anchor: null,
   focusName: null,
@@ -210,7 +210,16 @@ function glyphSVG(g, cls = 'glyph') {
       : `<path transform="scale(1 -1)" d="${svgPath(g)}" fill="currentColor"/>`}</svg>`;
 }
 
-const findGlyph = (name) => app.project.glyphs.find((g) => g.name === name);
+// Glyphs by name, built again after each change (markChanged) or when the
+// list is replaced. A stale entry or a miss falls back to a plain search.
+let glyphIndex = { glyphs: null, gen: -1, map: new Map() };
+app.gen = 0;
+function findGlyph(name) {
+  const list = app.project.glyphs;
+  if (glyphIndex.glyphs !== list || glyphIndex.gen !== app.gen) glyphIndex = { glyphs: list, gen: app.gen, map: new Map(list.map((g) => [g.name, g])) };
+  const g = glyphIndex.map.get(name);
+  return g && g.name === name ? g : list.find((x) => x.name === name);
+}
 const hex = (g) => (g.unicode ? g.unicode.toString(16).toUpperCase().padStart(4, '0') : '');
 const selectedGlyphs = () => [...app.selected].map(findGlyph).filter(Boolean);
 
@@ -251,9 +260,13 @@ function updateTitle() {
 }
 
 let autosaveTimer;
-function markChanged() {
-  const touched = new Set([...refreshComponents(app.project), ...recompose(app.project)]);
-  if (app.mode === 'grid') touched.forEach(updateTile);
+// outlines: false for changes that leave every outline as it is (kerning).
+function markChanged({ outlines = true } = {}) {
+  app.gen++;
+  if (outlines) {
+    const touched = new Set([...refreshComponents(app.project), ...recompose(app.project)]);
+    if (app.mode === 'grid') touched.forEach(updateTile);
+  }
   setDirty(true);
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(autosave, 700);
@@ -579,8 +592,8 @@ function visibleGlyphs() {
   const q = app.search.trim().toLowerCase();
   const list = app.project.glyphs.filter((g) => {
     const ch = charOf(g);
-    if (app.category === 'empty') { if (isDrawn(g)) return false; } else if (app.category === 'done') {
-      if (!isDrawn(g)) return false;
+    if (app.category === 'empty') { if (isDrawn(g) || blankByDesign(g)) return false; } else if (app.category === 'done') {
+      if (!isDrawn(g) || blankByDesign(g)) return false;
     } else if (cat && !cat.test(ch)) return false;
     if (app.colorFilter && g.color !== app.colorFilter) return false;
     if (app.extended && app.smartFilter && !SMART_FILTERS[app.smartFilter]?.(g)) return false;
@@ -600,15 +613,19 @@ function visibleGlyphs() {
     .map((x) => x.g);
 }
 
+// Spaces have nothing to draw: they count neither as drawn nor as waiting.
+const blankByDesign = (g) => { const ch = charOf(g); return !!ch && !ch.trim(); };
+
 function renderSidebar() {
   const glyphs = app.project.glyphs;
-  const drawn = glyphs.filter(isDrawn).length;
-  $('progressLabel').textContent = t('progress', { n: drawn, total: glyphs.length });
-  $('progressFill').style.width = `${glyphs.length ? (drawn / glyphs.length) * 100 : 0}%`;
+  const todo = glyphs.filter((g) => !blankByDesign(g));
+  const drawn = todo.filter(isDrawn).length;
+  $('progressLabel').textContent = t('progress', { n: drawn, total: todo.length });
+  $('progressFill').style.width = `${todo.length ? (drawn / todo.length) * 100 : 0}%`;
 
   const items = [
     ...CATEGORIES.map((c) => ({ id: c.id, n: glyphs.filter((g) => c.test(charOf(g))).length })),
-    { id: 'empty', n: glyphs.length - drawn },
+    { id: 'empty', n: todo.length - drawn },
     { id: 'done', n: drawn },
   ].filter((c) => c.n > 0 || c.id === 'all' || c.id === app.category);
   $('catList').innerHTML = items.map((c) => `<button type="button" data-cat="${c.id}" aria-current="${c.id === app.category}">
@@ -708,7 +725,7 @@ function onMetricKeyChange(e) {
 }
 
 function updateAllMetrics() {
-  const changed = updateMetrics(app.project, app.project.glyphs, (g) => app.history.push(g));
+  const changed = app.history.group(() => updateMetrics(app.project, app.project.glyphs, (g) => app.history.push(g)));
   if (changed.length) {
     markChanged();
     if (app.mode === 'editor') { editor.render(); renderGlyphPanel(); } else { changed.forEach(updateTile); renderSideMetrics(); renderInspector(); }
@@ -748,7 +765,7 @@ function tileHTML(g) {
   return `<button type="button" class="tile${drawn ? ' drawn' : ''}" role="option" data-name="${esc(g.name)}"
       ${g.color ? `data-color="${esc(g.color)}"` : ''} aria-selected="${app.selected.has(g.name)}"
       tabindex="${g.name === app.focusName ? 0 : -1}" aria-label="${esc(label)}">
-      ${body}<span class="label"><span>${esc(g.name)}</span><span class="code">${hex(g)}</span></span></button>`;
+      ${body}<span class="label"><span>${esc(tileName(g))}</span><span class="code">${hex(g)}</span></span></button>`;
 }
 
 function setGridView(v) {
@@ -920,7 +937,12 @@ function renderGridOptions() {
 
 $('optionsBar').addEventListener('input', (e) => {
   if (e.target.id === 'lineText') { onLineInput(e.target.value); return; }
-  if (e.target.id === 'searchInput') { app.search = e.target.value; renderGrid(); updateStatus(); }
+  if (e.target.id === 'searchInput') {
+    app.search = e.target.value;
+    // Thousands of tiles are drawn again once the typing pauses.
+    clearTimeout(app.searchTimer);
+    app.searchTimer = setTimeout(() => { renderGrid(); updateStatus(); }, app.project.glyphs.length > 500 ? 150 : 0);
+  }
   if (e.target.id === 'tileSize') {
     $('glyphGrid').style.setProperty('--tile', `${e.target.value}px`);
     store.set('spline.tile', e.target.value);
@@ -1467,7 +1489,7 @@ function liveTransform(final) {
 }
 
 function xfApply(v) {
-  if (!xf.pushed) { for (const it of xf.items) app.history.push(it.g); xf.pushed = true; }
+  if (!xf.pushed) { app.history.group(() => { for (const it of xf.items) app.history.push(it.g); }); xf.pushed = true; }
   xf.v = v;
   const s = v.scale / 100, k = Math.tan((v.slant * Math.PI) / 180);
   const a = (v.rotate * Math.PI) / 180, cos = Math.cos(a), sin = Math.sin(a);
@@ -1528,7 +1550,7 @@ async function glyphAction(act) {
     return;
   }
   if (act === 'spacing') {
-    for (const g of targets) {
+    app.history.group(() => { for (const g of targets) {
       const box = glyphBox(g);
       if (!box) continue;
       app.history.push(g);
@@ -1536,7 +1558,7 @@ async function glyphAction(act) {
       translateGlyph(g, side - box.minX, 0);
       g.advance = Math.round(box.maxX - box.minX + side * 2);
       if (app.mode === 'grid') updateTile(g);
-    }
+    } });
     if (app.mode === 'editor') editor.afterEdit(false); else { markChanged(); renderInspector(); renderSideMetrics(); }
   }
 }
@@ -2359,6 +2381,12 @@ function kernKeyLabel(key) {
 
 // What shows for a glyph: its character; ␣ for a space or another
 // invisible character; the name for a glyph without a code.
+// A made-up name (uni041F, u1F600) says less than the letter itself.
+function tileName(g) {
+  const mark = glyphMark(g);
+  return /^(uni[0-9A-F]{4}|u[0-9A-F]{4,6})$/.test(g.name) && mark !== g.name ? mark : g.name;
+}
+
 function glyphMark(g) {
   const ch = charOf(g);
   if (ch && ch.trim() && !/^[\p{Cf}\p{Cc}]$/u.test(ch)) return ch;
@@ -2387,11 +2415,13 @@ function membersText(glyphs, max = 12) {
 
 const isException = (k) => !(isGroup(k.left) && isGroup(k.right));
 
-function pairIsOverkern(k) {
-  const L = keyGlyphs(k.left, 'right'), R = keyGlyphs(k.right, 'left');
-  if (!L.length || !R.length) return false;
-  const minAdv = (gs) => gs.reduce((m, g) => Math.min(m, g.advance), Infinity);
-  return isOverkern(k.value, { advance: minAdv(L) }, { advance: minAdv(R) });
+// minAdv(key, side): the narrowest width behind a key; a list passes a
+// cached one, as a group is looked up for each of its pairs.
+const narrowest = (key, side) => keyGlyphs(key, side).reduce((m, g) => Math.min(m, g.advance), Infinity);
+function pairIsOverkern(k, minAdv = narrowest) {
+  const l = minAdv(k.left, 'right'), r = minAdv(k.right, 'left');
+  if (l === Infinity || r === Infinity) return false;
+  return isOverkern(k.value, { advance: l }, { advance: r });
 }
 
 function kernPairHTML(pr) {
@@ -2482,9 +2512,15 @@ function kernListHTML(pr) {
     L: [pr.left.name, groupKey(pr.left.kernRight)].filter(Boolean),
     R: [pr.right.name, groupKey(pr.right.kernLeft)].filter(Boolean),
   };
+  const widths = new Map();
+  const cachedNarrowest = (key, side) => {
+    const id = `${side}:${key}`;
+    if (!widths.has(id)) widths.set(id, narrowest(key, side));
+    return widths.get(id);
+  };
   const list = all.filter((k) => (!q || `${kernKeyLabel(k.left)}${kernKeyLabel(k.right)} ${k.left} ${k.right}`.toLowerCase().includes(q))
     && (show !== 'exc' || isException(k))
-    && (show !== 'over' || pairIsOverkern(k))
+    && (show !== 'over' || pairIsOverkern(k, cachedNarrowest))
     && (show !== 'pair' || (near && (near.L.includes(k.left) || near.R.includes(k.right)))));
   // A font can hold hundreds of thousands of pairs: the list shows the first
   // ones in order, the search reaches the rest.
@@ -3326,7 +3362,7 @@ function groupDatalists() {
 function cleanGroupName(v) { return String(v).trim().replace(/^@+/, ''); }
 
 app.onKernChanged = () => {
-  markChanged();
+  markChanged({ outlines: false });
   kernView.render();
   const input = $('kernValue');
   const pr = kernView.pair();
@@ -3420,11 +3456,15 @@ onKernPanels('keydown', (e) => {
 onKernPanels('input', (e) => {
   if (e.target.id === 'kernFilter') {
     store.set('spline.kernFilter', e.target.value);
-    const pos = e.target.selectionStart;
-    renderKernPanel();
-    const f = $('kernFilter');
-    f.focus();
-    f.setSelectionRange(pos, pos);
+    // A big list is filtered once the typing pauses.
+    clearTimeout(app.kernFilterTimer);
+    app.kernFilterTimer = setTimeout(() => {
+      const pos = $('kernFilter')?.selectionStart;
+      renderKernPanel();
+      const f = $('kernFilter');
+      f?.focus();
+      f?.setSelectionRange(pos, pos);
+    }, 150);
   }
 });
 onKernPanels('click', (e) => {
@@ -3501,13 +3541,19 @@ function stepGlyph(dir) {
 
 // Ctrl+Z during free transform cancels the transform itself (the glyph
 // returns to how it was before Ctrl+T), like in Photoshop.
+// A step made in another master first switches back to that master.
 function undo() {
   if (app.mode === 'editor' && editor.xform) { editor.cancelTransform(); return; }
+  stepMaster(app.history.undoMaster());
   applyHistory(app.history.undo(app.project));
 }
 function redo() {
   if (app.mode === 'editor' && editor.xform) editor.commitTransform();
+  stepMaster(app.history.redoMaster());
   applyHistory(app.history.redo(app.project));
+}
+function stepMaster(id) {
+  if (id && id !== activeId(app.project)) selectMaster(id);
 }
 
 // Other edits apply an open free transform first, so it cannot undo them.
@@ -3515,6 +3561,11 @@ const endTransform = () => { if (app.mode === 'editor' && editor.xform) editor.c
 function applyHistory(name) {
   if (!name) return;
   markChanged();
+  if (name === MANY) {
+    renderAll();
+    if (app.mode === 'editor') { editor.sel.clear(); editor.render(); renderGlyphPanel(); syncTransformFields(); }
+    return;
+  }
   if (name === KERNING || name === GROUPS) {
     kernView.render();
     if (app.mode === 'kern') renderKernPanel();
@@ -3656,6 +3707,12 @@ function batchSection(sel) {
 
 function batch(op) {
   const sel = selectedGlyphs();
+  const n = app.history.group(() => batchRun(op, sel));
+  if (n) { markChanged(); renderGrid(); renderSidebar(); renderInspector(); }
+  toast(t('btDone', { n }));
+}
+
+function batchRun(op, sel) {
   let n = 0;
   for (const g of sel) {
     if (op === 'extremes') {
@@ -3679,8 +3736,7 @@ function batch(op) {
     updateTile(g);
   }
   if (op === 'metrics') n = updateMetrics(app.project, sel, (g) => app.history.push(g)).length;
-  if (n) { markChanged(); renderGrid(); renderSidebar(); renderInspector(); }
-  toast(t('btDone', { n }));
+  return n;
 }
 
 function setExtended(on) {
@@ -3899,8 +3955,6 @@ function selectMaster(id) {
   // master switch moves glyph.contours, which then holds that state.
   if (id !== activeId(app.project)) settleSmart();
   if (!switchMaster(app.project, id)) return;
-  // Undo steps hold outlines of the master they were made in.
-  app.history.clear();
   refreshComponents(app.project);
   recompose(app.project);
   markChanged();
@@ -3909,6 +3963,7 @@ function selectMaster(id) {
   if (app.mode === 'grid') renderGridOptions();
   // Kerning belongs to the master too.
   if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
+  renderPreviewText(); // the preview follows the master being drawn
 }
 
 // A master's slant from the dialog: 0 is upright, anything else italic.
@@ -3937,6 +3992,7 @@ async function mastersDialog() {
       <div class="field-row ms-row${w2 ? ' two' : ''}">
         <input type="text" name="newName" placeholder="Bold" maxlength="40" aria-label="${esc(t('msName'))}">
         <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}">${loc2('newLoc2', '')}${full ? `<input type="number" name="newAng" placeholder="0" step="0.5" min="-45" max="45" aria-label="${esc(t('msAngle'))}" title="${esc(t('msAngleTip'))}">` : ''}<span></span></div>
+      <label class="ms-start">${esc(t('msStart'))}<select name="newStart"><option value="copy">${esc(t('msStartCopy'))}</option><option value="empty">${esc(t('msStartEmpty'))}</option></select></label>
       ${ms.length && full ? `<label class="check"><input type="checkbox" name="axis2" ${w2 ? 'checked' : ''}>${esc(t('msAxis2'))}</label>` : ''}`,
     cls: full ? '' : 'ms-simple',
     okLabel: t('ok'),
@@ -3961,7 +4017,7 @@ async function mastersDialog() {
     const loc = Number(data.get('newLoc'));
     const l2 = Number(data.get('newLoc2'));
     addMaster(p, nn, Number.isFinite(loc) && String(data.get('newLoc')).trim() !== '' ? Math.round(loc) : 700,
-      p.axis2 && String(data.get('newLoc2') || '').trim() !== '' && Number.isFinite(l2) ? Math.round(l2) : undefined);
+      p.axis2 && String(data.get('newLoc2') || '').trim() !== '' && Number.isFinite(l2) ? Math.round(l2) : undefined, data.get('newStart') === 'empty');
     if (full) setSlant(p.masters[p.masters.length - 1], Number(data.get('newAng')));
   }
   if (p.masters) {
@@ -4055,11 +4111,12 @@ function mastersChanged() {
 // outline offset by delta, the sidebearings kept. Glyphs where the offset
 // would change the points stay a plain copy, to be drawn by hand. Returns
 // how many those are.
-function addWeightMaster(name, loc, delta) {
+function addWeightMaster(name, loc, delta, empty = false) {
   const p = app.project;
   settleSmart();
-  const id = addMaster(p, name, loc);
+  const id = addMaster(p, name, loc, undefined, empty);
   let rough = 0;
+  if (empty) delta = 0;
   const shift = (q) => ({ x: Math.round(q.x + delta), y: q.y });
   for (const g of p.glyphs) {
     const l = g.layers[id];
@@ -4073,7 +4130,7 @@ function addWeightMaster(name, loc, delta) {
   }
   // A family with italics gets the italic twin of the new master too.
   const it = p.masters.find((m) => m.italic);
-  if (it) addItalicMasters(p, it.italicAngle, italicName);
+  if (it) addItalicMasters(p, it.italicAngle, italicName, empty);
   fitAxis(p);
   return rough;
 }
@@ -4090,9 +4147,11 @@ async function familyDialog() {
   const preset = (kind) => WEIGHT_PRESETS[kind].find(([, w]) => !p.masters?.some((m) => !m.italic && m.loc === w)) || WEIGHT_PRESETS[kind][0];
   const masterRows = () => (p.masters?.length ? p.masters : [{ name: p.info.styleName || 'Regular', loc: p.info.weight || 400 }])
     .map((m) => `<div class="fam-master"><span>${esc(m.name)}</span><span class="mono">${esc(m.loc)}</span>${m.italic ? `<span class="fam-tag">${esc(t('famItalic'))} ${esc(m.italicAngle)}°</span>` : '<span></span>'}</div>`).join('');
+  const startSel = (copy) => `<label>${esc(t('msStart'))}<select data-q="start"><option value="copy">${esc(t(copy))}</option><option value="empty">${esc(t('msStartEmpty'))}</option></select></label>`;
   const quick = () => {
     if (open === 'italic') {
       return `<div class="fam-quick"><label>${esc(t('famAngle'))}<input type="number" data-q="angle" value="10" min="1" max="30" step="1"><em>°</em></label>
+        ${startSel('msStartSlant')}
         <button type="button" class="btn btn-primary" data-fam="do">${esc(t('famAdd'))}</button></div>`;
     }
     const [name, w, d] = preset(open);
@@ -4100,6 +4159,7 @@ async function familyDialog() {
       <label>${esc(t('famName'))}<input type="text" data-q="name" value="${esc(name)}" maxlength="40"></label>
       <label>${esc(t('famWeight'))}<input type="number" data-q="loc" value="${w}" min="1" max="1000" step="1"></label>
       <label data-tip="${esc(t('famOffsetTip'))}">${esc(t('famOffset'))}<input type="number" data-q="delta" value="${d}" min="-100" max="100" step="1"></label>
+      ${startSel('msStartCopy')}
       <button type="button" class="btn btn-primary" data-fam="do">${esc(t('famAdd'))}</button></div>`;
   };
   // A weight outside the masters is drawn as the nearest master.
@@ -4154,6 +4214,12 @@ async function familyDialog() {
         dlg.querySelector('[data-fam="do"]').click();
       }, true);
       form.addEventListener('input', (e) => {
+        // Blank glyphs have nothing to slant or make bolder.
+        if (e.target.dataset.q === 'start') {
+          const off = dlg.querySelector('[data-q="delta"]');
+          if (off) off.disabled = e.target.value === 'empty';
+          return;
+        }
         const [i, k] = (e.target.dataset.st || '').split(':');
         if (!k) return;
         const s = styles[Number(i)];
@@ -4189,13 +4255,14 @@ async function familyDialog() {
           const q = (k) => dlg.querySelector(`[data-q="${k}"]`)?.value;
           const before = defaultStyles(p);
           const custom = JSON.stringify(styles) !== JSON.stringify(before);
+          const empty = q('start') === 'empty';
           if (open === 'italic') {
-            addItalicMasters(p, Math.max(1, Math.min(30, Number(q('angle')) || 10)), italicName);
+            addItalicMasters(p, Math.max(1, Math.min(30, Number(q('angle')) || 10)), italicName, empty);
             if (custom) for (const s of styles.filter((x) => !x.italic)) styles.push({ ...s, name: italicName(s.name), italic: true });
             toast(t('famItalicDone'));
           } else {
             const name = String(q('name') || '').trim() || preset(open)[0];
-            const rough = addWeightMaster(name, Math.round(Number(q('loc')) || preset(open)[1]), Math.round(Number(q('delta')) || 0));
+            const rough = addWeightMaster(name, Math.round(Number(q('loc')) || preset(open)[1]), Math.round(Number(q('delta')) || 0), empty);
             toast(rough ? t('famRough', { name, n: rough }) : t('famWeightDone', { name }));
           }
           if (!custom) styles = defaultStyles(p);
@@ -4222,6 +4289,9 @@ function familyFonts() {
   settleSmart();
   const p = app.project;
   const fam = (p.info.familyName || '').replace(/[\s\\/:*?"<>|]+/g, '') || 'Font';
+  // Glyphs left blank in a master come out blended from the others.
+  const blank = p.glyphs.filter((g) => emptyIn(p, g).length).map((g) => charOf(g) || g.name);
+  if (blank.length) toast(t('famBlank', { list: blank.slice(0, 12).join(' ') + (blank.length > 12 ? ' …' : ''), n: blank.length }), 'error');
   const out = [];
   for (const s of familyStyles(p).filter((x) => x.export)) {
     const q = instanceAt(p, s.weight, s.name, s.width, s.italic);
@@ -4445,9 +4515,9 @@ async function transformMetricsDialog() {
   });
   if (!data) return;
   let n = 0;
-  for (const g of sel) {
+  app.history.group(() => { for (const g of sel) {
     const before = JSON.stringify([g.contours, g.advance]);
-    app.history.push(g);
+    const keep = app.history.before(g); // a glyph left as it was stays composed
     for (const k of ['lsb', 'rsb', 'advance']) {
       const mode = data.get(k + 'Mode'), v = Number(data.get(k)) || 0;
       if (mode === 'keep') continue;
@@ -4459,8 +4529,8 @@ async function transformMetricsDialog() {
       const sd = sides(g);
       if (sd.lsb !== null) setMetric(g, 'lsb', (sd.lsb + sd.rsb) / 2);
     }
-    if (JSON.stringify([g.contours, g.advance]) !== before) { n++; updateTile(g); }
-  }
+    if (JSON.stringify([g.contours, g.advance]) !== before) { keep(); n++; updateTile(g); }
+  } });
   markChanged();
   if (app.mode === 'editor') { editor.render(); updateMetricInputs(); } else { renderInspector(); renderSideMetrics(); }
   toast(t('btDone', { n }));
@@ -4822,9 +4892,15 @@ const composeState = (g) => (g.compose ? 'auto' : g.composeOff ? 'manual' : 'non
 
 // Й = И + ˘: tells how the letter is made and offers the other way.
 function mastersNoteHTML(g) {
+  const name = (id) => app.project.masters.find((m) => m.id === id)?.name || id;
+  // Drawn here, blank in another master: shown in the simple mode too.
+  const empty = emptyIn(app.project, g);
+  if (empty.length) {
+    const from = layerOf(app.project, g, activeId(app.project)).contours.length ? name(activeId(app.project)) : '';
+    return `<div class="compose-note warn"><p>${esc(t('msEmptyIn', { list: empty.map(name).join(', ') }))}</p>${from ? `<button class="btn btn-block" type="button" data-cmd="fillMasters" data-tip="${esc(t('msFillTip'))}">${icon('layers', 15)}<span>${esc(t('msFill', { name: from }))}</span></button>` : ''}</div>`;
+  }
   const bad = app.extended ? problems(app.project, g) : [];
   if (!bad.length) return '';
-  const name = (id) => app.project.masters.find((m) => m.id === id)?.name || id;
   return `<div class="compose-note warn" data-tip="${esc(t('msIncompatTip'))}"><p>${esc(t('msIncompat', { list: bad.map((b) => `${name(b.id)} (${t('msWhy_' + b.why)})`).join(', ') }))}</p></div>`;
 }
 
@@ -4851,6 +4927,15 @@ function composeNoteHTML(g) {
   }
   return note(t('cmpWait', { parts }), info.missing.map((ch) => `<button class="btn btn-block" type="button" data-make-glyph="${esc(ch)}">
     ${icon(glyphByChar(ch) ? 'pen' : 'plus', 15)}<span>${esc(t(glyphByChar(ch) ? 'cmpDraw' : 'cmpCreate', { ch }))}</span></button>`).join(''));
+}
+
+function fillMasters() {
+  const g = app.mode === 'editor' ? app.current : selectedGlyphs()[0];
+  if (!g || !layerOf(app.project, g, activeId(app.project)).contours.length) return;
+  app.history.push(g);
+  fillEmpty(app.project, g);
+  markChanged();
+  afterGlyphChange(g);
 }
 
 function setComposed(on) {
@@ -5429,7 +5514,7 @@ const COMMANDS = {
   prev: () => stepGlyph(-1), next: () => stepGlyph(1),
   autoGroups, groups: () => groupsDialog(), newVariant, newLigature,
   xfReset, xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
-  simplify: simplifyGlyphs, composeOff: () => setComposed(false), composeOn: () => setComposed(true),
+  simplify: simplifyGlyphs, composeOff: () => setComposed(false), composeOn: () => setComposed(true), fillMasters,
   ulLoad: () => pickFiles('image'), ulRemove: removeUnderlay,
   ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
   ptBreak: breakContour, ptJoin: joinContours,
@@ -5505,6 +5590,9 @@ let keyCapture = null; // the shortcut being reassigned in the shortcuts dialog
 
 document.addEventListener('keydown', (e) => {
   if (keyCapture) return;
+  // Esc with a menu open (opened by mouse, the focus elsewhere) closes only
+  // the menu, not the editor behind it.
+  if (e.key === 'Escape' && openMenu !== null && !e.target.closest?.('#menus')) { e.preventDefault(); setMenu(null); return; }
   const mod = e.ctrlKey || e.metaKey;
   const key = keyOf(e);
   const combo = comboOf(e);
@@ -5595,13 +5683,28 @@ document.addEventListener('keyup', (e) => {
 // ================================================================ preview
 
 let previewTimer, previewFace, previewSeq = 0;
+let previewStale = false;
 function schedulePreview(delay = 500) {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(updatePreview, delay);
 }
 
+// The font for the preview: only the glyphs its text uses (and those
+// without a code, which ligatures and alternates may need), without
+// pictures, snapshots and other masters. A big font builds in a fraction
+// of the time, and the site's limits are not reached.
+function previewBody(q) {
+  const cps = new Set([...previewText()].map((c) => c.codePointAt(0)));
+  const glyphs = q.glyphs.filter((g) => !g.unicode || cps.has(g.unicode))
+    .map(({ image, snapshots, background, note, layers, ...g }) => g);
+  const { masters, axis, axis2, styles, activeMaster, ...rest } = q;
+  return serialize({ ...rest, glyphs });
+}
+
 async function updatePreview() {
   const msg = $('previewMsg');
+  if ($('previewBody').hidden) { previewStale = true; return; } // built when opened
+  previewStale = false;
   if (!app.project.glyphs.some(hasOutline)) {
     msg.textContent = t('previewEmpty');
     $('previewOut').hidden = true;
@@ -5609,14 +5712,21 @@ async function updatePreview() {
   }
   const seq = ++previewSeq;
   try {
-    let body = projectJSON();
-    if (hasMasters(app.project) && (app.previewLoc !== undefined || app.previewItalic)) {
-      const at = app.previewLoc ?? app.project.masters[0].loc;
-      const q = instanceAt(app.project, at, undefined, app.previewLoc2, !!app.previewItalic && hasItalic(app.project)) || instanceAt(app.project, at, undefined, app.previewLoc2);
+    let q = null;
+    // Until the sliders are moved, the preview shows the master being drawn.
+    const am = app.project.masters?.find((m) => m.id === activeId(app.project));
+    const italic = app.previewItalic ?? !!am?.italic;
+    if (hasMasters(app.project) && (app.previewLoc !== undefined || italic || activeId(app.project) !== defaultId(app.project))) {
+      const at = app.previewLoc ?? am.loc;
+      const loc2 = app.previewLoc2 ?? am.loc2;
+      q = instanceAt(app.project, at, undefined, loc2, italic && hasItalic(app.project)) || instanceAt(app.project, at, undefined, loc2);
       refreshComponents(q); recompose(q);
-      body = serialize(q);
+    } else {
+      q = saveForm(saveSmart(app.project));
+      if (q !== app.project) { refreshComponents(q); recompose(q); }
     }
-    const r = await fetch('/api/export?format=ttf', {
+    const body = previewBody(q);
+    const r = await fetch('/api/export?format=ttf&preview=1', {
       method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body,
     });
     if (!r.ok) throw new Error(await r.text());
@@ -5671,7 +5781,8 @@ function renderPreviewFeatures() {
     + (axis2 && axis2.min < axis2.max ? `<label data-tip="${esc(t('msPreviewTip'))} (${esc(axis2.tag)})">${esc(axisName(axis2))}<input type="range" data-pf-axis="2" min="${esc(axis2.min)}" max="${esc(axis2.max)}" step="1" value="${esc(loc2)}"><output class="mono">${esc(loc2)}</output></label>` : '');
   const tags = [...found.values()].filter((f) => f.tag !== 'locl');
   const langs = [...found.values()].filter((f) => f.tag === 'locl');
-  const italicHTML = hasItalic(app.project) ? `<label class="check"><input type="checkbox" data-pf-italic ${app.previewItalic ? 'checked' : ''}>${esc(t('famItalic'))}</label>` : '';
+  const italicNow = app.previewItalic ?? !!app.project.masters?.find((m) => m.id === activeId(app.project))?.italic;
+  const italicHTML = hasItalic(app.project) ? `<label class="check"><input type="checkbox" data-pf-italic ${italicNow ? 'checked' : ''}>${esc(t('famItalic'))}</label>` : '';
   bar.innerHTML = axisHTML + italicHTML + (tags.length || langs.length ? `<span class="opt-label">${esc(t('pfTitle'))}</span>` : '')
     + tags.map((f) => `<label class="check" data-tip="${esc(f.tag)}"><input type="checkbox" data-pf="${f.tag}" ${previewFeats.has(f.tag) ? 'checked' : ''}>${esc(f.label)}</label>`).join('')
     + (langs.length ? `<label>${esc(t('pfLang'))}<select data-pf-lang><option value="">—</option>${langs.map((f) => `<option value="${f.lang}" ${previewLang === f.lang ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}</select></label>` : '');
@@ -5712,6 +5823,7 @@ function initPreview() {
   $('previewInput').addEventListener('input', (e) => {
     renderPreviewText();
     store.set('spline.previewText', e.target.value);
+    schedulePreview(); // new letters need a new font
   });
   const size = $('previewSize');
   const apply = () => { $('previewOut').style.fontSize = `${size.value}px`; $('previewSizeOut').textContent = size.value; };
@@ -5723,6 +5835,7 @@ function initPreview() {
     $('previewBody').hidden = !open;
     store.set('spline.previewOpen', open ? '1' : '0');
     if (app.mode === 'editor') editor.resize();
+    if (open && previewStale) schedulePreview(0);
   };
   toggle.addEventListener('click', () => setOpen(toggle.getAttribute('aria-expanded') !== 'true'));
   setOpen(store.get('spline.previewOpen', '1') === '1');

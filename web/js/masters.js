@@ -88,7 +88,8 @@ export function ensureMasters(p) {
   p.masters = [{ id: 'm0', name: p.info.styleName || 'Regular', loc: p.info.weight || 400 }];
 }
 
-export function addMaster(p, name, loc, loc2) {
+// empty: the glyphs start blank (widths kept), to be drawn from scratch.
+export function addMaster(p, name, loc, loc2, empty = false) {
   // Contours in their final direction first: the editor turns them on
   // every edit, and the masters must keep the same point order.
   for (const g of p.glyphs) normalizeDirections(g);
@@ -99,7 +100,8 @@ export function addMaster(p, name, loc, loc2) {
   p.masters.push({ id, name, loc, ...(p.axis2 ? { loc2: loc2 ?? p.masters[0].loc2 ?? 100 } : {}) });
   // A new master starts as a copy of the default, so it is compatible.
   for (const g of p.glyphs) {
-    (g.layers ||= {})[id] = clone(layerOf(p, g, defaultId(p)));
+    const src = layerOf(p, g, defaultId(p));
+    (g.layers ||= {})[id] = empty ? { contours: [], advance: src.advance } : clone(src);
   }
   return id;
 }
@@ -138,6 +140,30 @@ export function incompatibility(a, b) {
 }
 
 // Masters in which glyph g does not match the default: [{ id, why }].
+// Masters where g has no outline while another master has one: a glyph
+// drawn after the master was added. Letters built from parts are skipped.
+export function emptyIn(p, g) {
+  if (!hasMasters(p) || g.compose || g.components?.length) return [];
+  const drawn = p.masters.filter((m) => layerOf(p, g, m.id).contours.length);
+  if (!drawn.length || drawn.length === p.masters.length) return [];
+  return p.masters.filter((m) => !drawn.includes(m)).map((m) => m.id);
+}
+
+// Fills those masters with a copy of master from (slanted for italics).
+export function fillEmpty(p, g, from = activeId(p)) {
+  const src = layerOf(p, g, from);
+  const fromIt = p.masters.find((m) => m.id === from);
+  const cy = (p.info.xHeight || 500) / 2;
+  for (const id of emptyIn(p, g)) {
+    const m = p.masters.find((x) => x.id === id);
+    let cs = clone(src.contours);
+    const angle = (m.italic ? m.italicAngle || 0 : 0) - (fromIt?.italic ? fromIt.italicAngle || 0 : 0);
+    if (angle) cs = slantContours(cs, angle, cy);
+    if (id === activeId(p)) g.contours = cs;
+    else (g.layers ||= {})[id] = { contours: cs, advance: layerOf(p, g, id).advance };
+  }
+}
+
 export function problems(p, g) {
   if (!hasMasters(p)) return [];
   const def = layerOf(p, g, defaultId(p));
@@ -383,7 +409,7 @@ export function slantContours(cs, angle, cy) {
 
 // Italic companions of the upright masters: each a slanted copy at the
 // same place, marked italic. Returns how many were added.
-export function addItalicMasters(p, angle, name = (m) => m) {
+export function addItalicMasters(p, angle, name = (m) => m, empty = false) {
   ensureMasters(p);
   const cy = (p.info.xHeight || 500) / 2;
   let n = 0;
@@ -391,12 +417,12 @@ export function addItalicMasters(p, angle, name = (m) => m) {
     const same = (x) => x.italic && x.loc === m.loc && (x.loc2 ?? 100) === (m.loc2 ?? 100);
     if (p.masters.some(same)) continue;
     const kern = clone(kerningOf(p, m.id));
-    const id = addMaster(p, name(m.name), m.loc, m.loc2);
+    const id = addMaster(p, name(m.name), m.loc, m.loc2, empty);
     const it = p.masters.find((x) => x.id === id);
     it.italic = true;
     it.italicAngle = angle;
     it.kerning = kern;
-    for (const g of p.glyphs) {
+    if (!empty) for (const g of p.glyphs) {
       const src = layerOf(p, g, m.id);
       g.layers[id] = { contours: slantContours(clone(src.contours), angle, cy), advance: src.advance };
     }

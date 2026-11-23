@@ -38,11 +38,15 @@ const isUpper = (ch) => ch !== ch.toLowerCase() && ch === ch.toUpperCase();
 
 // What a glyph could be built from in this project:
 // { base, marks, missing: [chars of absent or empty parts] } or null.
-export function composeInfo(project, g) {
+const charMap = (project) => new Map(project.glyphs.filter((x) => x.unicode).map((x) => [String.fromCodePoint(x.unicode), x]));
+
+// byChar (glyphs by their character) can be passed in when many glyphs
+// are looked at in a row.
+export function composeInfo(project, g, byChar = null) {
   const ch = g.unicode ? String.fromCodePoint(g.unicode) : '';
   const parts = partsOf(ch);
   if (!parts) return null;
-  const byChar = new Map(project.glyphs.filter((x) => x.unicode).map((x) => [String.fromCodePoint(x.unicode), x]));
+  byChar ||= charMap(project);
   let baseCh = parts.base;
   if (DOTLESS[baseCh] && parts.marks.some((m) => !BELOW.has(m.codePointAt(0))) && drawn(byChar.get(DOTLESS[baseCh]))) {
     baseCh = DOTLESS[baseCh];
@@ -94,9 +98,10 @@ function build(project, g, info) {
 // drawn. Returns the glyphs whose outline changed.
 export function recompose(project) {
   const changed = [];
+  let byChar = null;
   for (const g of project.glyphs) {
     if (g.composeOff || g.components?.length || (!g.compose && hasOutline(g))) continue;
-    const info = composeInfo(project, g);
+    const info = composeInfo(project, g, byChar ||= charMap(project));
     if (!info) { delete g.compose; continue; }
     const before = g.compose ? JSON.stringify([g.contours, g.advance]) : null;
     if (!build(project, g, info)) {

@@ -6,6 +6,8 @@ const POINT_LIMIT = 1_500_000;
 
 // Points in a snapshot: its outlines, the other masters, the background.
 function weigh(s) {
+  // Kerning and groups: a copy of every pair, about as heavy as a point.
+  if (s.kerning) return Object.values(s.kerning).reduce((a, r) => a + Object.keys(r).length, 1) + (s.groups ? Object.keys(s.groups).length : 0);
   let n = 0;
   const add = (cs) => { for (const c of cs || []) n += c.nodes?.length || 0; };
   add(s.contours);
@@ -15,29 +17,79 @@ function weigh(s) {
 }
 export const KERNING = '#kerning';
 export const GROUPS = '#groups';
+export const MANY = '#many'; // a step over several glyphs
 
 export class History {
-  constructor() { this.undoStack = []; this.redoStack = []; }
+  // masterOf() names the master being edited: glyph and kerning steps
+  // remember it, as they hold that master's outlines and kerning.
+  constructor(masterOf = () => undefined) { this.undoStack = []; this.redoStack = []; this.masterOf = masterOf; }
+
+  // The master the next undo (or redo) step was made in.
+  undoMaster() { return this.undoStack.at(-1)?.master; }
+  redoMaster() { return this.redoStack.at(-1)?.master; }
 
   clear() { this.undoStack = []; this.redoStack = []; }
 
   // Call right before changing a glyph. A letter built from parts (see
   // compose.js) that is edited by hand stops following its parts.
   push(glyph) {
-    this.#add(snap(glyph));
+    this.#add(this.#mark(snap(glyph)));
     if (glyph.compose) { delete glyph.compose; glyph.composeOff = true; }
   }
 
+  // Takes the glyph as it is now; the returned function makes that a step,
+  // for an edit that may turn out to change nothing.
+  before(glyph) {
+    const s = this.#mark(snap(glyph));
+    return () => {
+      this.#add(s);
+      if (glyph.compose) { delete glyph.compose; glyph.composeOff = true; }
+    };
+  }
+
+  // Everything pushed inside fn becomes one step: one Ctrl+Z undoes it all.
+  group(fn) {
+    if (this.#batch) return fn();
+    this.#batch = [];
+    try { return fn(); } finally {
+      const many = this.#batch;
+      this.#batch = null;
+      if (many.length === 1) this.#add(many[0]);
+      else if (many.length) this.#add(this.#mark({ many }));
+    }
+  }
+
+  #batch = null;
+
   // Call right before changing kerning values.
-  pushKerning(project) { this.#add({ kerning: structuredClone(project.kerning || {}) }); }
+  // Presses that follow each other quickly (arrow keys, ±10) make one step.
+  pushKerning(project) {
+    const last = this.undoStack.at(-1);
+    const now = Date.now();
+    if (!this.#batch && last?.kerning && !last.groups && !this.redoStack.length && last.master === this.masterOf() && now - this.#kernAt < 700) {
+      this.#kernAt = now;
+      return;
+    }
+    this.#kernAt = now;
+    this.#add(this.#mark({ kerning: structuredClone(project.kerning || {}) }));
+  }
+
+  #kernAt = 0;
 
   // Call right before changing kerning groups or substitution rules
   // (renaming a group also renames its kerning keys, so the kerning is
   // kept too).
   pushGroups(project) { this.#add(groupsSnap(project)); }
 
+  #mark(s) { s.master = this.masterOf(); return s; }
+
   #add(s) {
-    s.weight = weigh(s);
+    if (this.#batch) {
+      // One snapshot per glyph: the first one is how it was before.
+      if (!s.name || !this.#batch.some((x) => x.name === s.name)) this.#batch.push(s);
+      return;
+    }
+    s.weight = s.many ? s.many.reduce((a, x) => a + weigh(x), 0) : weigh(s);
     this.undoStack.push(s);
     let total = this.undoStack.reduce((a, x) => a + (x.weight || 1), 0);
     while (this.undoStack.length > 1 && (this.undoStack.length > LIMIT || total > POINT_LIMIT)) {
@@ -53,6 +105,17 @@ export class History {
   #move(project, from, to) {
     const s = from.pop();
     if (!s) return null;
+    if (s.many) {
+      const back = [];
+      for (const x of [...s.many].reverse()) this.#restore(project, x, back);
+      to.push({ many: back.reverse(), master: s.master, weight: s.weight });
+      return MANY;
+    }
+    return this.#restore(project, s, to);
+  }
+
+  // Puts snapshot s back and pushes the state it replaces onto to.
+  #restore(project, s, to) {
     if (s.groups) {
       to.push(groupsSnap(project));
       for (const g of project.glyphs) {
@@ -66,13 +129,13 @@ export class History {
       return GROUPS;
     }
     if (s.kerning) {
-      to.push({ kerning: structuredClone(project.kerning || {}) });
+      to.push(this.#mark({ kerning: structuredClone(project.kerning || {}) }));
       project.kerning = structuredClone(s.kerning);
       return KERNING;
     }
     const g = project.glyphs.find((x) => x.name === s.name);
     if (!g) return null;
-    to.push(snap(g));
+    to.push(this.#mark(snap(g)));
     g.contours = structuredClone(s.contours);
     g.advance = s.advance;
     if (s.compose) g.compose = structuredClone(s.compose); else delete g.compose;

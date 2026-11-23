@@ -12,17 +12,27 @@ function parseDocument(text) {
   const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
   const svg = doc.documentElement;
   if (doc.querySelector('parsererror') || svg.localName !== 'svg') throw new Error('not a valid SVG file');
-  // Nothing from the file may run or load: drop scripts, styles, external
-  // references and event handlers before the SVG touches our page.
-  svg.querySelectorAll('script, style, foreignObject, image, use, a, iframe, animate, set, animateTransform, animateMotion')
-    .forEach((el) => el.remove());
+  // Nothing from the file may run, load or navigate: only known SVG shapes
+  // and their geometry and paint are kept before the SVG touches our page.
+  for (const el of [...svg.querySelectorAll('*')].reverse()) {
+    if (el.namespaceURI !== SVG_NS || !KEEP.has(el.localName)) el.remove();
+  }
   for (const el of [svg, ...svg.querySelectorAll('*')]) {
     for (const attr of [...el.attributes]) {
-      if (/^on/i.test(attr.name) || /href$/i.test(attr.name)) el.removeAttribute(attr.name);
+      const name = attr.name.toLowerCase();
+      if (attr.namespaceURI || /^on|href$/.test(name) || (name !== 'style' && outside(attr.value))) el.removeAttribute(attr.name);
     }
+    const style = el.getAttribute('style');
+    if (style) el.setAttribute('style', style.split(';').filter((d) => !outside(d)).join(';'));
   }
   return svg;
 }
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const KEEP = new Set(['svg', 'g', 'path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line',
+  'defs', 'clipPath', 'mask', 'symbol', 'linearGradient', 'radialGradient', 'stop', 'title', 'desc']);
+// A reference to anything but this file (url(#id) is fine), or CSS that loads.
+const outside = (v) => /url\(\s*['"]?(?!#)|@import|expression\(/i.test(v);
 
 // Computed paint of an element, following inheritance through attributes
 // and inline style declarations.

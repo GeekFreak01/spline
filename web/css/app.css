@@ -620,7 +620,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 #previewInput { flex: 1; }
 .preview-size { display: flex; align-items: center; gap: 6px; color: var(--text-2); flex: none; }
 .preview-size output { width: 28px; font-family: var(--font-mono); font-size: var(--fs-s); }
-.preview-body { padding: 0 12px 10px; max-height: 26vh; overflow: auto; }
+.preview-body { padding: 0 12px 10px; height: 26vh; overflow: auto; } /* fixed: the canvas does not jump when the first glyph appears */
 .preview-body[hidden] { display: none; }
 .preview-out { white-space: pre-wrap; word-break: break-word; line-height: 1.25; color: var(--text); }
 .preview-out[hidden] { display: none; }
@@ -808,6 +808,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .seg.sm-states { grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); }
 .dialog .ms-row.two { grid-template-columns: minmax(0, 1fr) 96px 96px 72px 76px; }
 .dialog.ms-simple .ms-row { grid-template-columns: minmax(0, 1fr) 120px 90px; }
+.dialog .ms-start { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-s); margin-bottom: 6px; }
 .ms-select { min-height: 30px; max-width: 170px; }
 
 .snap-pop { position: relative; }
