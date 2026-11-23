@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/andybalholm/brotli"
 	"golang.org/x/image/font/sfnt"
@@ -37,6 +38,9 @@ func formsProject() *project.Project {
 }
 
 func TestFormsAndWOFF(t *testing.T) {
+	fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock = func() time.Time { return fixed }
+	defer func() { clock = time.Now }()
 	ttf, err := Build(formsProject(), TTF)
 	if err != nil {
 		t.Fatal(err)
