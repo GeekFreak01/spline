@@ -562,7 +562,13 @@ $('menus').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
   if (e.key === 'ArrowRight') { e.preventDefault(); setMenu(((openMenu ?? 0) + 1) % count, true); }
   if (e.key === 'ArrowLeft') { e.preventDefault(); setMenu(((openMenu ?? 0) - 1 + count) % count, true); }
-  if (e.key === 'Escape') { e.preventDefault(); const k = openMenu; setMenu(null); if (k !== null) $('menus').querySelector(`[data-menu="${k}"]`)?.focus(); }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    const k = openMenu;
+    setMenu(null);
+    // Closing the menu is all this Esc does: the editor must not see it.
+    if (k !== null) { e.stopPropagation(); $('menus').querySelector(`[data-menu="${k}"]`)?.focus(); }
+  }
 });
 document.addEventListener('pointerdown', (e) => { if (openMenu !== null && !e.target.closest('#menus')) setMenu(null); });
 
