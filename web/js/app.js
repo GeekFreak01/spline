@@ -5947,7 +5947,7 @@ function newerVersion(a, b) {
 async function checkUpdates(manual = false, atStart = false) {
   try {
     // The Go side keeps GitHub's answer for an hour, so asking often is cheap.
-    const r = await fetch(`/api/update${manual ? '?force=1' : ''}`);
+    const r = await fetch(`/api/update${manual ? '?force=1' : ''}`, { headers: { 'X-Spline': '1' } });
     if (!r.ok) throw new Error(await r.text());
     updateInfo = await r.json();
     if (updateInfo.error) throw new Error(updateInfo.error);

@@ -223,7 +223,10 @@ func checkUpdate(ctx context.Context, force bool) *updateInfo {
 }
 
 func (s *server) handleUpdate(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, checkUpdate(r.Context(), r.URL.Query().Get("force") == "1"))
+	// Only the app may skip the cache, so a stray link cannot make Spline
+	// hammer GitHub.
+	force := r.URL.Query().Get("force") == "1" && r.Header.Get("X-Spline") == "1"
+	writeJSON(w, checkUpdate(r.Context(), force))
 }
 
 // verifyFile compares a downloaded file with its published checksum.

@@ -10,7 +10,10 @@ package main
 //go:generate go run ./tools/genicons
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -64,6 +67,10 @@ type server struct {
 	dev      bool
 	lastPing time.Time
 	stamp    string // the file on disk as this window last read or wrote it
+	// token is the key the window gets at start (?k=… once, then a
+	// cookie): without it the API answers nobody, so another program or
+	// user on this computer cannot read or overwrite the open file.
+	token string
 }
 
 func main() {
@@ -119,10 +126,20 @@ func main() {
 	}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/", s.port)
-	if strings.HasPrefix(*view, "#") || strings.HasPrefix(*view, "?") {
-		url += *view
+	shown := url
+	if !s.dev {
+		s.token = newToken()
+		url += "?k=" + s.token
 	}
-	fmt.Printf("Spline %s: %s\n", version, url)
+	switch {
+	case strings.HasPrefix(*view, "?") && s.token != "":
+		url += "&" + (*view)[1:]
+		shown += *view
+	case strings.HasPrefix(*view, "#") || strings.HasPrefix(*view, "?"):
+		url += *view
+		shown += *view
+	}
+	fmt.Printf("Spline %s: %s\n", version, shown)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- http.Serve(ln, s.routes()) }()
 
@@ -174,6 +191,10 @@ func (s *server) handleAssociate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
 	s.mu.Lock()
 	s.lastPing = time.Now()
 	s.mu.Unlock()
@@ -233,6 +254,9 @@ func (s *server) guard(next http.Handler) http.Handler {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		if s.token != "" && !s.keyed(w, r) {
+			return
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
 		// Nothing loads from other sites: an imported SVG or a pasted
@@ -240,6 +264,52 @@ func (s *server) guard(next http.Handler) http.Handler {
 		w.Header().Set("Content-Security-Policy", desktopCSP)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// tokenCookie is per port: cookies ignore the port, and two copies of
+// Spline must not take each other's key.
+func (s *server) tokenCookie() string { return fmt.Sprintf("spline_k_%d", s.port) }
+
+// keyed lets the request through when it carries the window's key. The
+// first page load brings it in the address (?k=…); it moves into a cookie
+// and leaves the address, so it does not linger in history.
+func (s *server) keyed(w http.ResponseWriter, r *http.Request) bool {
+	if k := r.URL.Query().Get("k"); k != "" && r.Method == http.MethodGet {
+		if !sameKey(k, s.token) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
+		http.SetCookie(w, &http.Cookie{Name: s.tokenCookie(), Value: s.token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+		q := r.URL.Query()
+		q.Del("k")
+		to := r.URL.Path
+		if len(q) > 0 {
+			to += "?" + q.Encode()
+		}
+		http.Redirect(w, r, to, http.StatusSeeOther)
+		return false
+	}
+	// The app's own files are public; the API is not.
+	if !strings.HasPrefix(r.URL.Path, "/api/") {
+		return true
+	}
+	if c, err := r.Cookie(s.tokenCookie()); err == nil && sameKey(c.Value, s.token) {
+		return true
+	}
+	http.Error(w, "forbidden", http.StatusForbidden)
+	return false
+}
+
+func sameKey(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func newToken() string {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		fatal("Spline cannot start: no random numbers (" + err.Error() + ")")
+	}
+	return hex.EncodeToString(b)
 }
 
 type sessionInfo struct {
