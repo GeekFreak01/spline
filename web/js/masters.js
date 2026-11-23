@@ -88,7 +88,8 @@ export function ensureMasters(p) {
   p.masters = [{ id: 'm0', name: p.info.styleName || 'Regular', loc: p.info.weight || 400 }];
 }
 
-export function addMaster(p, name, loc, loc2) {
+// empty: the glyphs start blank (widths kept), to be drawn from scratch.
+export function addMaster(p, name, loc, loc2, empty = false) {
   // Contours in their final direction first: the editor turns them on
   // every edit, and the masters must keep the same point order.
   for (const g of p.glyphs) normalizeDirections(g);
@@ -99,7 +100,8 @@ export function addMaster(p, name, loc, loc2) {
   p.masters.push({ id, name, loc, ...(p.axis2 ? { loc2: loc2 ?? p.masters[0].loc2 ?? 100 } : {}) });
   // A new master starts as a copy of the default, so it is compatible.
   for (const g of p.glyphs) {
-    (g.layers ||= {})[id] = clone(layerOf(p, g, defaultId(p)));
+    const src = layerOf(p, g, defaultId(p));
+    (g.layers ||= {})[id] = empty ? { contours: [], advance: src.advance } : clone(src);
   }
   return id;
 }
@@ -383,7 +385,7 @@ export function slantContours(cs, angle, cy) {
 
 // Italic companions of the upright masters: each a slanted copy at the
 // same place, marked italic. Returns how many were added.
-export function addItalicMasters(p, angle, name = (m) => m) {
+export function addItalicMasters(p, angle, name = (m) => m, empty = false) {
   ensureMasters(p);
   const cy = (p.info.xHeight || 500) / 2;
   let n = 0;
@@ -391,12 +393,12 @@ export function addItalicMasters(p, angle, name = (m) => m) {
     const same = (x) => x.italic && x.loc === m.loc && (x.loc2 ?? 100) === (m.loc2 ?? 100);
     if (p.masters.some(same)) continue;
     const kern = clone(kerningOf(p, m.id));
-    const id = addMaster(p, name(m.name), m.loc, m.loc2);
+    const id = addMaster(p, name(m.name), m.loc, m.loc2, empty);
     const it = p.masters.find((x) => x.id === id);
     it.italic = true;
     it.italicAngle = angle;
     it.kerning = kern;
-    for (const g of p.glyphs) {
+    if (!empty) for (const g of p.glyphs) {
       const src = layerOf(p, g, m.id);
       g.layers[id] = { contours: slantContours(clone(src.contours), angle, cy), advance: src.advance };
     }

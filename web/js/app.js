@@ -76,7 +76,7 @@ const app = {
   extended: (() => { try { return localStorage.getItem('spline.extended') === '1'; } catch { return false; } })(),
   gridView: (() => { try { return localStorage.getItem('spline.gridView') || 'tiles'; } catch { return 'tiles'; } })(),
   smartFilter: null, tagFilter: null, tableSort: null,
-  history: new History(),
+  history: new History(() => activeId(app.project || {})),
   selected: new Set(), // glyph names
   anchor: null,
   focusName: null,
@@ -3501,13 +3501,19 @@ function stepGlyph(dir) {
 
 // Ctrl+Z during free transform cancels the transform itself (the glyph
 // returns to how it was before Ctrl+T), like in Photoshop.
+// A step made in another master first switches back to that master.
 function undo() {
   if (app.mode === 'editor' && editor.xform) { editor.cancelTransform(); return; }
+  stepMaster(app.history.undoMaster());
   applyHistory(app.history.undo(app.project));
 }
 function redo() {
   if (app.mode === 'editor' && editor.xform) editor.commitTransform();
+  stepMaster(app.history.redoMaster());
   applyHistory(app.history.redo(app.project));
+}
+function stepMaster(id) {
+  if (id && id !== activeId(app.project)) selectMaster(id);
 }
 
 // Other edits apply an open free transform first, so it cannot undo them.
@@ -3899,8 +3905,6 @@ function selectMaster(id) {
   // master switch moves glyph.contours, which then holds that state.
   if (id !== activeId(app.project)) settleSmart();
   if (!switchMaster(app.project, id)) return;
-  // Undo steps hold outlines of the master they were made in.
-  app.history.clear();
   refreshComponents(app.project);
   recompose(app.project);
   markChanged();
@@ -3937,6 +3941,7 @@ async function mastersDialog() {
       <div class="field-row ms-row${w2 ? ' two' : ''}">
         <input type="text" name="newName" placeholder="Bold" maxlength="40" aria-label="${esc(t('msName'))}">
         <input type="number" name="newLoc" placeholder="700" step="1" aria-label="${esc(t('msLoc'))}">${loc2('newLoc2', '')}${full ? `<input type="number" name="newAng" placeholder="0" step="0.5" min="-45" max="45" aria-label="${esc(t('msAngle'))}" title="${esc(t('msAngleTip'))}">` : ''}<span></span></div>
+      <label class="ms-start">${esc(t('msStart'))}<select name="newStart"><option value="copy">${esc(t('msStartCopy'))}</option><option value="empty">${esc(t('msStartEmpty'))}</option></select></label>
       ${ms.length && full ? `<label class="check"><input type="checkbox" name="axis2" ${w2 ? 'checked' : ''}>${esc(t('msAxis2'))}</label>` : ''}`,
     cls: full ? '' : 'ms-simple',
     okLabel: t('ok'),
@@ -3961,7 +3966,7 @@ async function mastersDialog() {
     const loc = Number(data.get('newLoc'));
     const l2 = Number(data.get('newLoc2'));
     addMaster(p, nn, Number.isFinite(loc) && String(data.get('newLoc')).trim() !== '' ? Math.round(loc) : 700,
-      p.axis2 && String(data.get('newLoc2') || '').trim() !== '' && Number.isFinite(l2) ? Math.round(l2) : undefined);
+      p.axis2 && String(data.get('newLoc2') || '').trim() !== '' && Number.isFinite(l2) ? Math.round(l2) : undefined, data.get('newStart') === 'empty');
     if (full) setSlant(p.masters[p.masters.length - 1], Number(data.get('newAng')));
   }
   if (p.masters) {
@@ -4055,11 +4060,12 @@ function mastersChanged() {
 // outline offset by delta, the sidebearings kept. Glyphs where the offset
 // would change the points stay a plain copy, to be drawn by hand. Returns
 // how many those are.
-function addWeightMaster(name, loc, delta) {
+function addWeightMaster(name, loc, delta, empty = false) {
   const p = app.project;
   settleSmart();
-  const id = addMaster(p, name, loc);
+  const id = addMaster(p, name, loc, undefined, empty);
   let rough = 0;
+  if (empty) delta = 0;
   const shift = (q) => ({ x: Math.round(q.x + delta), y: q.y });
   for (const g of p.glyphs) {
     const l = g.layers[id];
@@ -4073,7 +4079,7 @@ function addWeightMaster(name, loc, delta) {
   }
   // A family with italics gets the italic twin of the new master too.
   const it = p.masters.find((m) => m.italic);
-  if (it) addItalicMasters(p, it.italicAngle, italicName);
+  if (it) addItalicMasters(p, it.italicAngle, italicName, empty);
   fitAxis(p);
   return rough;
 }
@@ -4090,9 +4096,11 @@ async function familyDialog() {
   const preset = (kind) => WEIGHT_PRESETS[kind].find(([, w]) => !p.masters?.some((m) => !m.italic && m.loc === w)) || WEIGHT_PRESETS[kind][0];
   const masterRows = () => (p.masters?.length ? p.masters : [{ name: p.info.styleName || 'Regular', loc: p.info.weight || 400 }])
     .map((m) => `<div class="fam-master"><span>${esc(m.name)}</span><span class="mono">${esc(m.loc)}</span>${m.italic ? `<span class="fam-tag">${esc(t('famItalic'))} ${esc(m.italicAngle)}°</span>` : '<span></span>'}</div>`).join('');
+  const startSel = (copy) => `<label>${esc(t('msStart'))}<select data-q="start"><option value="copy">${esc(t(copy))}</option><option value="empty">${esc(t('msStartEmpty'))}</option></select></label>`;
   const quick = () => {
     if (open === 'italic') {
       return `<div class="fam-quick"><label>${esc(t('famAngle'))}<input type="number" data-q="angle" value="10" min="1" max="30" step="1"><em>°</em></label>
+        ${startSel('msStartSlant')}
         <button type="button" class="btn btn-primary" data-fam="do">${esc(t('famAdd'))}</button></div>`;
     }
     const [name, w, d] = preset(open);
@@ -4100,6 +4108,7 @@ async function familyDialog() {
       <label>${esc(t('famName'))}<input type="text" data-q="name" value="${esc(name)}" maxlength="40"></label>
       <label>${esc(t('famWeight'))}<input type="number" data-q="loc" value="${w}" min="1" max="1000" step="1"></label>
       <label data-tip="${esc(t('famOffsetTip'))}">${esc(t('famOffset'))}<input type="number" data-q="delta" value="${d}" min="-100" max="100" step="1"></label>
+      ${startSel('msStartCopy')}
       <button type="button" class="btn btn-primary" data-fam="do">${esc(t('famAdd'))}</button></div>`;
   };
   // A weight outside the masters is drawn as the nearest master.
@@ -4154,6 +4163,12 @@ async function familyDialog() {
         dlg.querySelector('[data-fam="do"]').click();
       }, true);
       form.addEventListener('input', (e) => {
+        // Blank glyphs have nothing to slant or make bolder.
+        if (e.target.dataset.q === 'start') {
+          const off = dlg.querySelector('[data-q="delta"]');
+          if (off) off.disabled = e.target.value === 'empty';
+          return;
+        }
         const [i, k] = (e.target.dataset.st || '').split(':');
         if (!k) return;
         const s = styles[Number(i)];
@@ -4189,13 +4204,14 @@ async function familyDialog() {
           const q = (k) => dlg.querySelector(`[data-q="${k}"]`)?.value;
           const before = defaultStyles(p);
           const custom = JSON.stringify(styles) !== JSON.stringify(before);
+          const empty = q('start') === 'empty';
           if (open === 'italic') {
-            addItalicMasters(p, Math.max(1, Math.min(30, Number(q('angle')) || 10)), italicName);
+            addItalicMasters(p, Math.max(1, Math.min(30, Number(q('angle')) || 10)), italicName, empty);
             if (custom) for (const s of styles.filter((x) => !x.italic)) styles.push({ ...s, name: italicName(s.name), italic: true });
             toast(t('famItalicDone'));
           } else {
             const name = String(q('name') || '').trim() || preset(open)[0];
-            const rough = addWeightMaster(name, Math.round(Number(q('loc')) || preset(open)[1]), Math.round(Number(q('delta')) || 0));
+            const rough = addWeightMaster(name, Math.round(Number(q('loc')) || preset(open)[1]), Math.round(Number(q('delta')) || 0), empty);
             toast(rough ? t('famRough', { name, n: rough }) : t('famWeightDone', { name }));
           }
           if (!custom) styles = defaultStyles(p);

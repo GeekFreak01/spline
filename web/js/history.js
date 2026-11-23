@@ -17,24 +17,32 @@ export const KERNING = '#kerning';
 export const GROUPS = '#groups';
 
 export class History {
-  constructor() { this.undoStack = []; this.redoStack = []; }
+  // masterOf() names the master being edited: glyph and kerning steps
+  // remember it, as they hold that master's outlines and kerning.
+  constructor(masterOf = () => undefined) { this.undoStack = []; this.redoStack = []; this.masterOf = masterOf; }
+
+  // The master the next undo (or redo) step was made in.
+  undoMaster() { return this.undoStack.at(-1)?.master; }
+  redoMaster() { return this.redoStack.at(-1)?.master; }
 
   clear() { this.undoStack = []; this.redoStack = []; }
 
   // Call right before changing a glyph. A letter built from parts (see
   // compose.js) that is edited by hand stops following its parts.
   push(glyph) {
-    this.#add(snap(glyph));
+    this.#add(this.#mark(snap(glyph)));
     if (glyph.compose) { delete glyph.compose; glyph.composeOff = true; }
   }
 
   // Call right before changing kerning values.
-  pushKerning(project) { this.#add({ kerning: structuredClone(project.kerning || {}) }); }
+  pushKerning(project) { this.#add(this.#mark({ kerning: structuredClone(project.kerning || {}) })); }
 
   // Call right before changing kerning groups or substitution rules
   // (renaming a group also renames its kerning keys, so the kerning is
   // kept too).
   pushGroups(project) { this.#add(groupsSnap(project)); }
+
+  #mark(s) { s.master = this.masterOf(); return s; }
 
   #add(s) {
     s.weight = weigh(s);
@@ -66,13 +74,13 @@ export class History {
       return GROUPS;
     }
     if (s.kerning) {
-      to.push({ kerning: structuredClone(project.kerning || {}) });
+      to.push(this.#mark({ kerning: structuredClone(project.kerning || {}) }));
       project.kerning = structuredClone(s.kerning);
       return KERNING;
     }
     const g = project.glyphs.find((x) => x.name === s.name);
     if (!g) return null;
-    to.push(snap(g));
+    to.push(this.#mark(snap(g)));
     g.contours = structuredClone(s.contours);
     g.advance = s.advance;
     if (s.compose) g.compose = structuredClone(s.compose); else delete g.compose;

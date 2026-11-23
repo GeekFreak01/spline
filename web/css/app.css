@@ -808,6 +808,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .seg.sm-states { grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); }
 .dialog .ms-row.two { grid-template-columns: minmax(0, 1fr) 96px 96px 72px 76px; }
 .dialog.ms-simple .ms-row { grid-template-columns: minmax(0, 1fr) 120px 90px; }
+.dialog .ms-start { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-s); margin-bottom: 6px; }
 .ms-select { min-height: 30px; max-width: 170px; }
 
 .snap-pop { position: relative; }
