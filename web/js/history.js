@@ -6,6 +6,7 @@ const POINT_LIMIT = 1_500_000;
 
 // Points in a snapshot: its outlines, the other masters, the background.
 function weigh(s) {
+  if (s.glyphSet) return (s.glyphSet.add || []).reduce((a, [, g]) => a + weigh(g), 1);
   // Kerning and groups: a copy of every pair, about as heavy as a point.
   if (s.kerning) return Object.values(s.kerning).reduce((a, r) => a + Object.keys(r).length, 1) + (s.groups ? Object.keys(s.groups).length : 0);
   let n = 0;
@@ -18,6 +19,10 @@ function weigh(s) {
 export const KERNING = '#kerning';
 export const GROUPS = '#groups';
 export const MANY = '#many'; // a step over several glyphs
+export const GLYPHS = '#glyphs'; // glyphs deleted or brought back
+
+// The rules that name glyphs, as deleting glyphs trims them.
+const rulesSnap = (p) => structuredClone({ kerning: p.kerning || {}, contextual: p.contextual || [], ligatures: p.ligatures || [] });
 
 export class History {
   // masterOf() names the master being edited: glyph and kerning steps
@@ -81,6 +86,13 @@ export class History {
   // kept too).
   pushGroups(project) { this.#add(groupsSnap(project)); }
 
+  // Call right before deleting the glyphs named in names: undo brings them
+  // back in their places, with the rules that used them.
+  pushRemoval(project, names) {
+    const add = project.glyphs.map((g, i) => [i, g]).filter(([, g]) => names.has(g.name)).map(([i, g]) => [i, structuredClone(g)]);
+    if (add.length) this.#add(this.#mark({ glyphSet: { add }, rules: rulesSnap(project) }));
+  }
+
   #mark(s) { s.master = this.masterOf(); return s; }
 
   #add(s) {
@@ -116,6 +128,20 @@ export class History {
 
   // Puts snapshot s back and pushes the state it replaces onto to.
   #restore(project, s, to) {
+    if (s.glyphSet) {
+      const rules = rulesSnap(project);
+      if (s.glyphSet.add) {
+        for (const [i, g] of s.glyphSet.add) project.glyphs.splice(Math.min(i, project.glyphs.length), 0, structuredClone(g));
+        to.push(this.#mark({ glyphSet: { drop: s.glyphSet.add.map(([, g]) => g.name) }, rules }));
+      } else {
+        const drop = new Set(s.glyphSet.drop);
+        const add = project.glyphs.map((g, i) => [i, g]).filter(([, g]) => drop.has(g.name)).map(([i, g]) => [i, structuredClone(g)]);
+        project.glyphs = project.glyphs.filter((g) => !drop.has(g.name));
+        to.push(this.#mark({ glyphSet: { add }, rules }));
+      }
+      Object.assign(project, structuredClone(s.rules));
+      return GLYPHS;
+    }
     if (s.groups) {
       to.push(groupsSnap(project));
       for (const g of project.glyphs) {

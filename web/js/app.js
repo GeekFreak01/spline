@@ -14,7 +14,7 @@ import { makeZip } from './zip.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
-import { History, KERNING, GROUPS, MANY } from './history.js';
+import { History, KERNING, GROUPS, MANY, GLYPHS } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
 import { Editor } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
@@ -1610,6 +1610,7 @@ async function glyphAction(act) {
 async function deleteSelectedGlyphs() {
   const n = app.selected.size;
   if (!n || !(await confirmDialog(t('confirmDelete', { n }), t('delete')))) return;
+  app.history.pushRemoval(app.project, app.selected);
   app.project.glyphs = app.project.glyphs.filter((g) => !app.selected.has(g.name));
   dropRulesOf(app.selected);
   app.selected.clear();
@@ -3608,6 +3609,13 @@ const endTransform = () => { if (app.mode === 'editor' && editor.xform) editor.c
 function applyHistory(name) {
   if (!name) return;
   markChanged();
+  if (name === GLYPHS) {
+    for (const n of [...app.selected]) if (!findGlyph(n)) app.selected.delete(n);
+    if (app.mode === 'editor' && !findGlyph(app.current?.name)) showGrid();
+    renderAll();
+    if (app.mode === 'kern') { kernView.render(); renderKernPanel(); }
+    return;
+  }
   if (name === MANY) {
     renderAll();
     if (app.mode === 'editor') { editor.sel.clear(); editor.render(); renderGlyphPanel(); syncTransformFields(); }
