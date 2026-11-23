@@ -275,7 +275,16 @@ func buildGPOS(fd *fontData) ([]byte, error) {
 		features = append(features, layoutFeature{tag: tag, lookups: []int{len(lookups)}})
 		lookups = append(lookups, l)
 	}
-	if len(fd.kern) > 0 {
+	if kc := fd.kernClasses; kc != nil {
+		var subs [][]byte
+		if len(kc.exceptions) > 0 {
+			var err error
+			if subs, err = pairSubtables(kc.exceptions); err != nil {
+				return nil, err
+			}
+		}
+		add("kern", pairLookupOf(append(subs, kc.sub)))
+	} else if len(fd.kern) > 0 {
 		l, err := pairLookup(fd.kern)
 		if err != nil {
 			return nil, err
