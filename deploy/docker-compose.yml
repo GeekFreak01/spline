@@ -17,6 +17,9 @@ services:
     volumes:
       - ./site:/site:ro
     read_only: true
+    # A runaway font build stops at this, not at the server's memory.
+    mem_limit: 1g
+    pids_limit: 256
     security_opt:
       - no-new-privileges:true
 
