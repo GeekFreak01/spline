@@ -214,6 +214,10 @@ func (s *server) routes() http.Handler {
 	return s.guard(mux)
 }
 
+const desktopCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob:; font-src 'self' data: blob:; connect-src 'self'; " +
+	"object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
+
 // guard blocks requests from other web sites: only our own host name is
 // accepted, and state-changing calls need a custom header that a foreign
 // page cannot send without a CORS preflight (which we never allow).
@@ -231,6 +235,9 @@ func (s *server) guard(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
+		// Nothing loads from other sites: an imported SVG or a pasted
+		// drawing cannot fetch a tracker or a stylesheet.
+		w.Header().Set("Content-Security-Policy", desktopCSP)
 		next.ServeHTTP(w, r)
 	})
 }
