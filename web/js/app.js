@@ -2506,7 +2506,7 @@ function kernPairHTML(pr) {
       <span class="hint">${esc((n > 1 ? t('kernScopeN', { n }) : t('kernScope1')) + from)}</span>
       ${own ? `<button class="btn btn-icon" type="button" data-kstep="reset" aria-label="${esc(t('kernReset'))}" data-tip="${esc(t('kernReset'))}">${icon('trash', 14)}</button>` : ''}
     </div>
-    ${isOverkern(rule.value, pr.left, pr.right) ? `<p class="hint warn">${esc(t('kernOverTip'))}</p>` : ''}
+    ${isOverkern(rule.value, pr.left, pr.right) ? `<p class="hint warn" tabindex="0" data-tip="${esc(t('kernOverTip'))}">${esc(t('kernOver'))}</p>` : ''}
     <button class="link-btn" type="button" data-kgroups>${icon('grid', 14)}<span>${esc(t('kgOpenAll'))}</span></button>`;
 }
 
@@ -2604,6 +2604,10 @@ function renderKernPanel() { keepFocus(renderKernPanelBody); }
 
 function renderKernPanelBody() {
   const pr = kernView.pair();
+  // The canvas says which pair is picked and its value to a screen reader.
+  $('kernCanvas').setAttribute('aria-label', pr
+    ? `${t('viewKerning')}: ${[pr.left, pr.right].map((g) => charOf(g) || g.name).join(' ')}, ${effectiveKern(app.project, pr.left, pr.right)?.value ?? 0}`
+    : t('viewKerning'));
   const n = kernPairs(app.project).length;
   $('kernPanel').innerHTML = section('kernPair', t('kernPair'), kernPairHTML(pr))
     + (pr ? section('kernSpacing', t('kernSpacing'), kernSpacingHTML(pr), true, t('kernSpacingHint') + (app.extended ? ' ' + t('kernSpacingKeys') : '')) : '')
@@ -2775,8 +2779,7 @@ async function specialFormDialog() {
 async function newLigature() {
   const data = await showDialog({
     title: t('ligNew'),
-    body: `<label class="field">${esc(t('ligLetters'))}<input type="text" name="seq" required spellcheck="false" placeholder="ши, ffi, ТТ"></label>
-      <p class="hint">${esc(t('ligNewHint'))}</p>`,
+    body: `<label class="field" data-tip="${esc(t('ligNewHint'))}">${esc(t('ligLetters'))}<input type="text" name="seq" required spellcheck="false" placeholder="ши, ffi, ТТ"></label>`,
     okLabel: t('create'),
   });
   if (!data) return;
@@ -2850,7 +2853,7 @@ function variantsSection(g) {
     body = `${vars.length ? `<div class="var-list">${vars.map((v) => `<button type="button" class="var-item" data-open-glyph="${esc(v.name)}">
         ${glyphSVG(v, 'var-mini')}<span><b>${esc(variantLabel(v))}</b><small>${esc(summary(v))}</small></span></button>`).join('')}</div>`
       : `<p class="hint">${esc(t('varNone'))}</p>`}
-      <button class="btn btn-block" type="button" data-cmd="newVariant">${icon('plus', 15)}<span>${esc(t('varNew'))}</span></button>
+      <button class="btn btn-block" type="button" data-cmd="newVariant" data-tip="${esc(t('varNewTip'))}">${icon('plus', 15)}<span>${esc(t('varNew'))}</span></button>
       <button class="btn btn-block" type="button" data-cmd="newLigature">${icon('plus', 15)}<span>${esc(t('ligNew'))}</span></button>`;
   }
   return section('variants', t('varTitle'), body, true, t(ligatureOf(g) ? 'ligHint' : 'varHint'));
@@ -2963,8 +2966,8 @@ function shapeGroupsDialog() {
   showDialog({
     title: t('sgTitle'),
     okLabel: t('sgApply'),
+    onOpen: (dlg) => { dlg.querySelector('button[value=ok]').dataset.tip = t('sgHelp'); },
     body: `<div class="kg-dialog">
-      <p class="hint">${esc(t('sgHelp'))}</p>
       <label class="sg-tol"><span>${esc(t('sgStrict'))}</span>
         <input type="range" id="sgTol" min="8" max="${Math.round(app.project.info.unitsPerEm * 0.1)}" value="${sg.tolerance}">
         <span>${esc(t('sgLoose'))}</span><output id="sgTolOut">${sg.tolerance}</output></label>
@@ -3317,10 +3320,10 @@ function groupsBodyHTML() {
         <input type="text" id="kgAddInput" placeholder="${esc(t('kgAddPlaceholder'))}" aria-label="${esc(t('kgAddLetters'))}" spellcheck="false">
         <button type="button" class="btn" data-kg-add>${icon('plus', 14)}<span>${esc(t('kgAdd'))}</span></button>
       </div>`
-    : `<div class="kg-main-head"><b>${esc(t('kgNone'))}</b>
+    : `<div class="kg-main-head"><b tabindex="0" data-tip="${esc(t('kgUngroupedHint'))}">${esc(t('kgNone'))}</b>
         <select id="kgCat" aria-label="${esc(t('categories'))}">${CATEGORIES.filter((c) => c.id !== 'empty' && c.id !== 'done')
           .map((c) => `<option value="${c.id}" ${kg.cat === c.id ? 'selected' : ''}>${esc(t(c.id))}</option>`).join('')}</select></div>
-      ${selBar || `<p class="hint">${esc(t('kgUngroupedHint'))}</p>`}
+      ${selBar}
       <div class="kg-chips">${members.map(chip).join('')}</div>`;
   return `${head}<div class="kg-split">${list}<section class="kg-main">${main}</section></div>`;
 }
