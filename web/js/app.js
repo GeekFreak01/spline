@@ -32,6 +32,34 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } }, // false: full or unavailable
 };
 const AUTOSAVE_KEY = 'spline.autosave';
+// The autosave of a project too big for localStorage (about 5 MB) goes to
+// IndexedDB, which holds far more. Small projects stay in localStorage.
+const bigStore = {
+  db: null,
+  open() {
+    return (this.db ??= new Promise((ok, no) => {
+      const r = indexedDB.open('spline', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => no(r.error);
+    }));
+  },
+  async run(mode, fn) {
+    const db = await this.open();
+    return new Promise((ok, no) => {
+      const tx = db.transaction('kv', mode);
+      const req = fn(tx.objectStore('kv'));
+      tx.oncomplete = () => ok(req.result);
+      tx.onerror = tx.onabort = () => no(tx.error);
+    });
+  },
+  get(k) { return this.run('readonly', (st) => st.get(k)).catch(() => null); },
+  set(k, v) { return this.run('readwrite', (st) => st.put(v, k)).then(() => true, () => false); },
+  del(k) { return this.run('readwrite', (st) => st.delete(k)).catch(() => {}); },
+};
+async function readAutosave() {
+  try { return JSON.parse(store.get(AUTOSAVE_KEY) || (await bigStore.get(AUTOSAVE_KEY)) || 'null'); } catch { return null; }
+}
 const isMac = /Mac/.test(navigator.platform);
 const MOD = isMac ? '⌘' : 'Ctrl+';
 
@@ -277,14 +305,24 @@ function markChanged({ outlines = true } = {}) {
 // or a window closed without saving. dirty tells whether it holds edits
 // that never reached the file.
 let autosaveFullShown = false;
+let bigCopy = true; // IndexedDB may still hold an old big copy
+let autosaveSeq = 0;
 function autosave() {
   clearTimeout(autosaveTimer);
-  const ok = store.set(AUTOSAVE_KEY, JSON.stringify({ fileName: app.fileName, serverFile: app.serverFile, dirty: !!app.dirty, project: projectJSON() }));
-  if (ok) return;
-  // Too big for the browser's storage: an old copy must not come back later
-  // as if it were the latest.
+  const data = JSON.stringify({ fileName: app.fileName, serverFile: app.serverFile, dirty: !!app.dirty, project: projectJSON() });
+  const seq = ++autosaveSeq;
+  if (store.set(AUTOSAVE_KEY, data)) {
+    // An old big copy must not come back later as if it were the latest.
+    if (bigCopy) { bigCopy = false; bigStore.del(AUTOSAVE_KEY); }
+    return;
+  }
   try { localStorage.removeItem(AUTOSAVE_KEY); } catch { /* storage unavailable */ }
-  if (!autosaveFullShown) { autosaveFullShown = true; toast(t('autosaveFull'), 'error'); }
+  bigCopy = true;
+  bigStore.set(AUTOSAVE_KEY, data).then((ok) => {
+    if (ok || seq !== autosaveSeq || autosaveFullShown) return;
+    autosaveFullShown = true;
+    toast(t('autosaveFull'), 'error');
+  });
 }
 
 // Editor callbacks.
@@ -5902,7 +5940,7 @@ async function start() {
   }
   if (!loaded) {
     try {
-      const saved = JSON.parse(store.get(AUTOSAVE_KEY) || 'null');
+      const saved = await readAutosave();
       if (saved?.project) {
         setProject(validateProject(JSON.parse(saved.project)), { fileName: saved.fileName });
         loaded = true;
@@ -6070,8 +6108,7 @@ async function confirmClose() {
 // A file opened from disk whose last autosave still had unsaved edits (the
 // window was closed or the program crashed before saving): offer them back.
 async function offerUnsaved(filePath, fileName) {
-  let saved = null;
-  try { saved = JSON.parse(store.get(AUTOSAVE_KEY) || 'null'); } catch { /* broken autosave */ }
+  const saved = await readAutosave();
   if (!saved?.dirty || saved.serverFile !== filePath || !saved.project) return;
   const answer = await showDialog({
     title: t('restoreTitle'),
