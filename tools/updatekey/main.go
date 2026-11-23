@@ -92,6 +92,20 @@ func sign(tag, sumsFile string) {
 		fail(err.Error())
 	}
 	sig := ed25519.Sign(ed25519.PrivateKey(raw), updatesig.Message(tag, sums))
+	// The secret must match the public key the program ships with, or no
+	// copy could install this release: stop here instead.
+	src, err := os.ReadFile("updatekey.go")
+	if err != nil {
+		fail("run it from the repository root: " + err.Error())
+	}
+	m := regexp.MustCompile(`updatePublicKey = "([^"]*)"`).FindSubmatch(src)
+	if m == nil {
+		fail("updatekey.go has no updatePublicKey line")
+	}
+	pub, err := base64.StdEncoding.DecodeString(string(m[1]))
+	if err != nil || len(pub) != ed25519.PublicKeySize || !ed25519.Verify(ed25519.PublicKey(pub), updatesig.Message(tag, sums), sig) {
+		fail("SPLINE_SIGNING_KEY does not match the public key in updatekey.go")
+	}
 	if err := os.WriteFile(sumsFile+".sig", []byte(base64.StdEncoding.EncodeToString(sig)+"\n"), 0o644); err != nil {
 		fail(err.Error())
 	}
