@@ -542,6 +542,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   position: relative; display: flex; flex-direction: column; aspect-ratio: 0.86; padding: 4px;
   border: 1px solid transparent; border-radius: 3px; background: var(--tile-bg); color: var(--tile-glyph);
   transition: border-color var(--t-fast);
+  /* Tiles off screen are not laid out or painted: big fonts scroll and redraw fast. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--tile, 96px) auto calc(var(--tile, 96px) / 0.86);
 }
 .tile:hover { border-color: var(--line-soft); }
 .tile[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
