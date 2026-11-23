@@ -14,7 +14,7 @@ import { makeZip } from './zip.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
-import { History, KERNING, GROUPS, MANY } from './history.js';
+import { History, KERNING, GROUPS, MANY, GLYPHS } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
 import { Editor } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
@@ -32,6 +32,34 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } }, // false: full or unavailable
 };
 const AUTOSAVE_KEY = 'spline.autosave';
+// The autosave of a project too big for localStorage (about 5 MB) goes to
+// IndexedDB, which holds far more. Small projects stay in localStorage.
+const bigStore = {
+  db: null,
+  open() {
+    return (this.db ??= new Promise((ok, no) => {
+      const r = indexedDB.open('spline', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => no(r.error);
+    }));
+  },
+  async run(mode, fn) {
+    const db = await this.open();
+    return new Promise((ok, no) => {
+      const tx = db.transaction('kv', mode);
+      const req = fn(tx.objectStore('kv'));
+      tx.oncomplete = () => ok(req.result);
+      tx.onerror = tx.onabort = () => no(tx.error);
+    });
+  },
+  get(k) { return this.run('readonly', (st) => st.get(k)).catch(() => null); },
+  set(k, v) { return this.run('readwrite', (st) => st.put(v, k)).then(() => true, () => false); },
+  del(k) { return this.run('readwrite', (st) => st.delete(k)).catch(() => {}); },
+};
+async function readAutosave() {
+  try { return JSON.parse(store.get(AUTOSAVE_KEY) || (await bigStore.get(AUTOSAVE_KEY)) || 'null'); } catch { return null; }
+}
 const isMac = /Mac/.test(navigator.platform);
 const MOD = isMac ? '⌘' : 'Ctrl+';
 
@@ -277,14 +305,24 @@ function markChanged({ outlines = true } = {}) {
 // or a window closed without saving. dirty tells whether it holds edits
 // that never reached the file.
 let autosaveFullShown = false;
+let bigCopy = true; // IndexedDB may still hold an old big copy
+let autosaveSeq = 0;
 function autosave() {
   clearTimeout(autosaveTimer);
-  const ok = store.set(AUTOSAVE_KEY, JSON.stringify({ fileName: app.fileName, serverFile: app.serverFile, dirty: !!app.dirty, project: projectJSON() }));
-  if (ok) return;
-  // Too big for the browser's storage: an old copy must not come back later
-  // as if it were the latest.
+  const data = JSON.stringify({ fileName: app.fileName, serverFile: app.serverFile, dirty: !!app.dirty, project: projectJSON() });
+  const seq = ++autosaveSeq;
+  if (store.set(AUTOSAVE_KEY, data)) {
+    // An old big copy must not come back later as if it were the latest.
+    if (bigCopy) { bigCopy = false; bigStore.del(AUTOSAVE_KEY); }
+    return;
+  }
   try { localStorage.removeItem(AUTOSAVE_KEY); } catch { /* storage unavailable */ }
-  if (!autosaveFullShown) { autosaveFullShown = true; toast(t('autosaveFull'), 'error'); }
+  bigCopy = true;
+  bigStore.set(AUTOSAVE_KEY, data).then((ok) => {
+    if (ok || seq !== autosaveSeq || autosaveFullShown) return;
+    autosaveFullShown = true;
+    toast(t('autosaveFull'), 'error');
+  });
 }
 
 // Editor callbacks.
@@ -524,7 +562,13 @@ $('menus').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
   if (e.key === 'ArrowRight') { e.preventDefault(); setMenu(((openMenu ?? 0) + 1) % count, true); }
   if (e.key === 'ArrowLeft') { e.preventDefault(); setMenu(((openMenu ?? 0) - 1 + count) % count, true); }
-  if (e.key === 'Escape') { e.preventDefault(); const k = openMenu; setMenu(null); if (k !== null) $('menus').querySelector(`[data-menu="${k}"]`)?.focus(); }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    const k = openMenu;
+    setMenu(null);
+    // Closing the menu is all this Esc does: the editor must not see it.
+    if (k !== null) { e.stopPropagation(); $('menus').querySelector(`[data-menu="${k}"]`)?.focus(); }
+  }
 });
 document.addEventListener('pointerdown', (e) => { if (openMenu !== null && !e.target.closest('#menus')) setMenu(null); });
 
@@ -1566,6 +1610,7 @@ async function glyphAction(act) {
 async function deleteSelectedGlyphs() {
   const n = app.selected.size;
   if (!n || !(await confirmDialog(t('confirmDelete', { n }), t('delete')))) return;
+  app.history.pushRemoval(app.project, app.selected);
   app.project.glyphs = app.project.glyphs.filter((g) => !app.selected.has(g.name));
   dropRulesOf(app.selected);
   app.selected.clear();
@@ -2468,7 +2513,7 @@ function kernPairHTML(pr) {
       <span class="hint">${esc((n > 1 ? t('kernScopeN', { n }) : t('kernScope1')) + from)}</span>
       ${own ? `<button class="btn btn-icon" type="button" data-kstep="reset" aria-label="${esc(t('kernReset'))}" data-tip="${esc(t('kernReset'))}">${icon('trash', 14)}</button>` : ''}
     </div>
-    ${isOverkern(rule.value, pr.left, pr.right) ? `<p class="hint warn">${esc(t('kernOverTip'))}</p>` : ''}
+    ${isOverkern(rule.value, pr.left, pr.right) ? `<p class="hint warn" tabindex="0" data-tip="${esc(t('kernOverTip'))}">${esc(t('kernOver'))}</p>` : ''}
     <button class="link-btn" type="button" data-kgroups>${icon('grid', 14)}<span>${esc(t('kgOpenAll'))}</span></button>`;
 }
 
@@ -2566,6 +2611,10 @@ function renderKernPanel() { keepFocus(renderKernPanelBody); }
 
 function renderKernPanelBody() {
   const pr = kernView.pair();
+  // The canvas says which pair is picked and its value to a screen reader.
+  $('kernCanvas').setAttribute('aria-label', pr
+    ? `${t('viewKerning')}: ${[pr.left, pr.right].map((g) => charOf(g) || g.name).join(' ')}, ${effectiveKern(app.project, pr.left, pr.right)?.value ?? 0}`
+    : t('viewKerning'));
   const n = kernPairs(app.project).length;
   $('kernPanel').innerHTML = section('kernPair', t('kernPair'), kernPairHTML(pr))
     + (pr ? section('kernSpacing', t('kernSpacing'), kernSpacingHTML(pr), true, t('kernSpacingHint') + (app.extended ? ' ' + t('kernSpacingKeys') : '')) : '')
@@ -2737,8 +2786,7 @@ async function specialFormDialog() {
 async function newLigature() {
   const data = await showDialog({
     title: t('ligNew'),
-    body: `<label class="field">${esc(t('ligLetters'))}<input type="text" name="seq" required spellcheck="false" placeholder="ши, ffi, ТТ"></label>
-      <p class="hint">${esc(t('ligNewHint'))}</p>`,
+    body: `<label class="field" data-tip="${esc(t('ligNewHint'))}">${esc(t('ligLetters'))}<input type="text" name="seq" required spellcheck="false" placeholder="ши, ffi, ТТ"></label>`,
     okLabel: t('create'),
   });
   if (!data) return;
@@ -2812,7 +2860,7 @@ function variantsSection(g) {
     body = `${vars.length ? `<div class="var-list">${vars.map((v) => `<button type="button" class="var-item" data-open-glyph="${esc(v.name)}">
         ${glyphSVG(v, 'var-mini')}<span><b>${esc(variantLabel(v))}</b><small>${esc(summary(v))}</small></span></button>`).join('')}</div>`
       : `<p class="hint">${esc(t('varNone'))}</p>`}
-      <button class="btn btn-block" type="button" data-cmd="newVariant">${icon('plus', 15)}<span>${esc(t('varNew'))}</span></button>
+      <button class="btn btn-block" type="button" data-cmd="newVariant" data-tip="${esc(t('varNewTip'))}">${icon('plus', 15)}<span>${esc(t('varNew'))}</span></button>
       <button class="btn btn-block" type="button" data-cmd="newLigature">${icon('plus', 15)}<span>${esc(t('ligNew'))}</span></button>`;
   }
   return section('variants', t('varTitle'), body, true, t(ligatureOf(g) ? 'ligHint' : 'varHint'));
@@ -2925,8 +2973,8 @@ function shapeGroupsDialog() {
   showDialog({
     title: t('sgTitle'),
     okLabel: t('sgApply'),
+    onOpen: (dlg) => { dlg.querySelector('button[value=ok]').dataset.tip = t('sgHelp'); },
     body: `<div class="kg-dialog">
-      <p class="hint">${esc(t('sgHelp'))}</p>
       <label class="sg-tol"><span>${esc(t('sgStrict'))}</span>
         <input type="range" id="sgTol" min="8" max="${Math.round(app.project.info.unitsPerEm * 0.1)}" value="${sg.tolerance}">
         <span>${esc(t('sgLoose'))}</span><output id="sgTolOut">${sg.tolerance}</output></label>
@@ -3279,10 +3327,10 @@ function groupsBodyHTML() {
         <input type="text" id="kgAddInput" placeholder="${esc(t('kgAddPlaceholder'))}" aria-label="${esc(t('kgAddLetters'))}" spellcheck="false">
         <button type="button" class="btn" data-kg-add>${icon('plus', 14)}<span>${esc(t('kgAdd'))}</span></button>
       </div>`
-    : `<div class="kg-main-head"><b>${esc(t('kgNone'))}</b>
+    : `<div class="kg-main-head"><b tabindex="0" data-tip="${esc(t('kgUngroupedHint'))}">${esc(t('kgNone'))}</b>
         <select id="kgCat" aria-label="${esc(t('categories'))}">${CATEGORIES.filter((c) => c.id !== 'empty' && c.id !== 'done')
           .map((c) => `<option value="${c.id}" ${kg.cat === c.id ? 'selected' : ''}>${esc(t(c.id))}</option>`).join('')}</select></div>
-      ${selBar || `<p class="hint">${esc(t('kgUngroupedHint'))}</p>`}
+      ${selBar}
       <div class="kg-chips">${members.map(chip).join('')}</div>`;
   return `${head}<div class="kg-split">${list}<section class="kg-main">${main}</section></div>`;
 }
@@ -3561,6 +3609,13 @@ const endTransform = () => { if (app.mode === 'editor' && editor.xform) editor.c
 function applyHistory(name) {
   if (!name) return;
   markChanged();
+  if (name === GLYPHS) {
+    for (const n of [...app.selected]) if (!findGlyph(n)) app.selected.delete(n);
+    if (app.mode === 'editor' && !findGlyph(app.current?.name)) showGrid();
+    renderAll();
+    if (app.mode === 'kern') { kernView.render(); renderKernPanel(); }
+    return;
+  }
   if (name === MANY) {
     renderAll();
     if (app.mode === 'editor') { editor.sel.clear(); editor.render(); renderGlyphPanel(); syncTransformFields(); }
@@ -4324,11 +4379,11 @@ async function exportFamily(format = 'ttf') {
 async function installFamily() {
   if (!hasMasters(app.project)) return;
   let n = 0;
+  const ask = { force: false };
   for (const f of familyFonts()) {
     try {
-      const r = await fetch('/api/install-font', { method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: serialize(f.q) });
-      if (!r.ok) throw new Error(await r.text());
-      n++;
+      if (await postInstall(serialize(f.q), ask)) n++;
+      else break;
     } catch (err) { toast(`${f.name}: ${err.message}`, 'error'); }
   }
   if (n) toast(t('famInstalled', { n }));
@@ -5134,15 +5189,29 @@ async function openFontFile(file, ask = false) {
 // Word, Photoshop and other programs.
 async function installFont() {
   try {
-    const r = await fetch('/api/install-font', {
-      method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body: projectJSON(),
-    });
-    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
-    const { name } = await r.json();
-    toast(t('installed', { name }));
+    const name = await postInstall(projectJSON(), { force: false });
+    if (name) toast(t('installed', { name }));
   } catch (err) {
     toast(t('installError', { err: err.message }), 'error');
   }
+}
+
+// Installs one font and returns its name. A font of that name that Spline
+// did not install is not replaced without asking; the answer holds for the
+// rest of a family (ask.force). null: the person said no.
+async function postInstall(body, ask) {
+  const send = () => fetch(`/api/install-font${ask.force ? '?force=1' : ''}`, {
+    method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body,
+  });
+  let r = await send();
+  if (r.status === 409) {
+    const { taken } = await r.json();
+    if (!(await confirmDialog(t('installTaken', { name: taken }), t('installAnyway')))) return null;
+    ask.force = true;
+    r = await send();
+  }
+  if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  return (await r.json()).name;
 }
 
 // ================================================================ files
@@ -5892,7 +5961,7 @@ async function start() {
   }
   if (!loaded) {
     try {
-      const saved = JSON.parse(store.get(AUTOSAVE_KEY) || 'null');
+      const saved = await readAutosave();
       if (saved?.project) {
         setProject(validateProject(JSON.parse(saved.project)), { fileName: saved.fileName });
         loaded = true;
@@ -5951,7 +6020,7 @@ function newerVersion(a, b) {
 async function checkUpdates(manual = false, atStart = false) {
   try {
     // The Go side keeps GitHub's answer for an hour, so asking often is cheap.
-    const r = await fetch(`/api/update${manual ? '?force=1' : ''}`);
+    const r = await fetch(`/api/update${manual ? '?force=1' : ''}`, { headers: { 'X-Spline': '1' } });
     if (!r.ok) throw new Error(await r.text());
     updateInfo = await r.json();
     if (updateInfo.error) throw new Error(updateInfo.error);
@@ -6060,8 +6129,7 @@ async function confirmClose() {
 // A file opened from disk whose last autosave still had unsaved edits (the
 // window was closed or the program crashed before saving): offer them back.
 async function offerUnsaved(filePath, fileName) {
-  let saved = null;
-  try { saved = JSON.parse(store.get(AUTOSAVE_KEY) || 'null'); } catch { /* broken autosave */ }
+  const saved = await readAutosave();
   if (!saved?.dirty || saved.serverFile !== filePath || !saved.project) return;
   const answer = await showDialog({
     title: t('restoreTitle'),

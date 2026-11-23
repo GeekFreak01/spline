@@ -94,6 +94,15 @@ const maxPairSubtable = 0xF000
 // subtable that covers a glyph is the only one applied to it). They sit
 // behind Extension records, whose offsets are 32-bit.
 func pairLookup(pairs []kernPair) ([]byte, error) {
+	subs, err := pairSubtables(pairs)
+	if err != nil {
+		return nil, err
+	}
+	return pairLookupOf(subs), nil
+}
+
+// pairSubtables splits the pairs into PairPos format 1 subtables.
+func pairSubtables(pairs []kernPair) ([][]byte, error) {
 	vary := false
 	for _, p := range pairs {
 		vary = vary || p.row > 0
@@ -125,8 +134,13 @@ func pairLookup(pairs []kernPair) ([]byte, error) {
 		}
 		subs[i] = sub
 	}
+	return subs, nil
+}
+
+// pairLookupOf puts PairPos subtables into one lookup, tried in order.
+func pairLookupOf(subs [][]byte) []byte {
 	if len(subs) == 1 {
-		return lookupTable(2, subs[0]), nil
+		return lookupTable(2, subs[0])
 	}
 	w := &writer{}
 	w.u16(9) // Extension
@@ -146,7 +160,7 @@ func pairLookup(pairs []kernPair) ([]byte, error) {
 	for _, sub := range subs {
 		w.bytes(sub)
 	}
-	return w.buf, nil
+	return w.buf
 }
 
 // remaining: the size of the left glyph's pairs at the start of pairs.

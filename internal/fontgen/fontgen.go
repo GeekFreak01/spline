@@ -61,6 +61,9 @@ type fontData struct {
 	glyphs []glyphData    // glyph 0 is .notdef
 	gid    map[string]int // project glyph name -> glyph id
 	kern   []kernPair
+	// kernClasses: the same kerning with group+group pairs as classes, for
+	// GPOS of a static font; nil writes fd.kern as plain pairs.
+	kernClasses *kernClasses
 	// kernRows: deltas of the varying kerning pairs (variable fonts).
 	kernRows [][]int16
 	calt     []caltRule
@@ -122,6 +125,7 @@ func Build(p *project.Project, f Format) ([]byte, error) {
 			return nil, err
 		}
 		varyKerning(p, fd)
+		fd.kernClasses = nil // varying values stay plain pairs
 		fd.names = makeNames(p.Info)
 	}
 
@@ -258,6 +262,7 @@ func prepare(p *project.Project, f Format) *fontData {
 		fd.bbox.maxY = math.Max(fd.bbox.maxY, g.bbox.maxY)
 	}
 	fd.kern = collectKerning(p, fd.gid)
+	fd.kernClasses = classKerning(p, fd.gid, fd.kern)
 	fd.calt, fd.ligs = collectSubst(p, fd.gid)
 	fd.anchors = collectAnchors(p, fd.gid)
 	fd.forms = collectForms(p, fd.gid)
