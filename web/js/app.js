@@ -210,7 +210,16 @@ function glyphSVG(g, cls = 'glyph') {
       : `<path transform="scale(1 -1)" d="${svgPath(g)}" fill="currentColor"/>`}</svg>`;
 }
 
-const findGlyph = (name) => app.project.glyphs.find((g) => g.name === name);
+// Glyphs by name, built again after each change (markChanged) or when the
+// list is replaced. A stale entry or a miss falls back to a plain search.
+let glyphIndex = { glyphs: null, gen: -1, map: new Map() };
+app.gen = 0;
+function findGlyph(name) {
+  const list = app.project.glyphs;
+  if (glyphIndex.glyphs !== list || glyphIndex.gen !== app.gen) glyphIndex = { glyphs: list, gen: app.gen, map: new Map(list.map((g) => [g.name, g])) };
+  const g = glyphIndex.map.get(name);
+  return g && g.name === name ? g : list.find((x) => x.name === name);
+}
 const hex = (g) => (g.unicode ? g.unicode.toString(16).toUpperCase().padStart(4, '0') : '');
 const selectedGlyphs = () => [...app.selected].map(findGlyph).filter(Boolean);
 
@@ -251,9 +260,13 @@ function updateTitle() {
 }
 
 let autosaveTimer;
-function markChanged() {
-  const touched = new Set([...refreshComponents(app.project), ...recompose(app.project)]);
-  if (app.mode === 'grid') touched.forEach(updateTile);
+// outlines: false for changes that leave every outline as it is (kerning).
+function markChanged({ outlines = true } = {}) {
+  app.gen++;
+  if (outlines) {
+    const touched = new Set([...refreshComponents(app.project), ...recompose(app.project)]);
+    if (app.mode === 'grid') touched.forEach(updateTile);
+  }
   setDirty(true);
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(autosave, 700);
@@ -2387,11 +2400,13 @@ function membersText(glyphs, max = 12) {
 
 const isException = (k) => !(isGroup(k.left) && isGroup(k.right));
 
-function pairIsOverkern(k) {
-  const L = keyGlyphs(k.left, 'right'), R = keyGlyphs(k.right, 'left');
-  if (!L.length || !R.length) return false;
-  const minAdv = (gs) => gs.reduce((m, g) => Math.min(m, g.advance), Infinity);
-  return isOverkern(k.value, { advance: minAdv(L) }, { advance: minAdv(R) });
+// minAdv(key, side): the narrowest width behind a key; a list passes a
+// cached one, as a group is looked up for each of its pairs.
+const narrowest = (key, side) => keyGlyphs(key, side).reduce((m, g) => Math.min(m, g.advance), Infinity);
+function pairIsOverkern(k, minAdv = narrowest) {
+  const l = minAdv(k.left, 'right'), r = minAdv(k.right, 'left');
+  if (l === Infinity || r === Infinity) return false;
+  return isOverkern(k.value, { advance: l }, { advance: r });
 }
 
 function kernPairHTML(pr) {
@@ -2482,9 +2497,15 @@ function kernListHTML(pr) {
     L: [pr.left.name, groupKey(pr.left.kernRight)].filter(Boolean),
     R: [pr.right.name, groupKey(pr.right.kernLeft)].filter(Boolean),
   };
+  const widths = new Map();
+  const cachedNarrowest = (key, side) => {
+    const id = `${side}:${key}`;
+    if (!widths.has(id)) widths.set(id, narrowest(key, side));
+    return widths.get(id);
+  };
   const list = all.filter((k) => (!q || `${kernKeyLabel(k.left)}${kernKeyLabel(k.right)} ${k.left} ${k.right}`.toLowerCase().includes(q))
     && (show !== 'exc' || isException(k))
-    && (show !== 'over' || pairIsOverkern(k))
+    && (show !== 'over' || pairIsOverkern(k, cachedNarrowest))
     && (show !== 'pair' || (near && (near.L.includes(k.left) || near.R.includes(k.right)))));
   // A font can hold hundreds of thousands of pairs: the list shows the first
   // ones in order, the search reaches the rest.
@@ -3326,7 +3347,7 @@ function groupDatalists() {
 function cleanGroupName(v) { return String(v).trim().replace(/^@+/, ''); }
 
 app.onKernChanged = () => {
-  markChanged();
+  markChanged({ outlines: false });
   kernView.render();
   const input = $('kernValue');
   const pr = kernView.pair();
@@ -3420,11 +3441,15 @@ onKernPanels('keydown', (e) => {
 onKernPanels('input', (e) => {
   if (e.target.id === 'kernFilter') {
     store.set('spline.kernFilter', e.target.value);
-    const pos = e.target.selectionStart;
-    renderKernPanel();
-    const f = $('kernFilter');
-    f.focus();
-    f.setSelectionRange(pos, pos);
+    // A big list is filtered once the typing pauses.
+    clearTimeout(app.kernFilterTimer);
+    app.kernFilterTimer = setTimeout(() => {
+      const pos = $('kernFilter')?.selectionStart;
+      renderKernPanel();
+      const f = $('kernFilter');
+      f?.focus();
+      f?.setSelectionRange(pos, pos);
+    }, 150);
   }
 });
 onKernPanels('click', (e) => {
@@ -5643,13 +5668,28 @@ document.addEventListener('keyup', (e) => {
 // ================================================================ preview
 
 let previewTimer, previewFace, previewSeq = 0;
+let previewStale = false;
 function schedulePreview(delay = 500) {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(updatePreview, delay);
 }
 
+// The font for the preview: only the glyphs its text uses (and those
+// without a code, which ligatures and alternates may need), without
+// pictures, snapshots and other masters. A big font builds in a fraction
+// of the time, and the site's limits are not reached.
+function previewBody(q) {
+  const cps = new Set([...previewText()].map((c) => c.codePointAt(0)));
+  const glyphs = q.glyphs.filter((g) => !g.unicode || cps.has(g.unicode))
+    .map(({ image, snapshots, background, note, layers, ...g }) => g);
+  const { masters, axis, axis2, styles, activeMaster, ...rest } = q;
+  return serialize({ ...rest, glyphs });
+}
+
 async function updatePreview() {
   const msg = $('previewMsg');
+  if ($('previewBody').hidden) { previewStale = true; return; } // built when opened
+  previewStale = false;
   if (!app.project.glyphs.some(hasOutline)) {
     msg.textContent = t('previewEmpty');
     $('previewOut').hidden = true;
@@ -5657,18 +5697,21 @@ async function updatePreview() {
   }
   const seq = ++previewSeq;
   try {
-    let body = projectJSON();
+    let q = null;
     // Until the sliders are moved, the preview shows the master being drawn.
     const am = app.project.masters?.find((m) => m.id === activeId(app.project));
     const italic = app.previewItalic ?? !!am?.italic;
     if (hasMasters(app.project) && (app.previewLoc !== undefined || italic || activeId(app.project) !== defaultId(app.project))) {
       const at = app.previewLoc ?? am.loc;
       const loc2 = app.previewLoc2 ?? am.loc2;
-      const q = instanceAt(app.project, at, undefined, loc2, italic && hasItalic(app.project)) || instanceAt(app.project, at, undefined, loc2);
+      q = instanceAt(app.project, at, undefined, loc2, italic && hasItalic(app.project)) || instanceAt(app.project, at, undefined, loc2);
       refreshComponents(q); recompose(q);
-      body = serialize(q);
+    } else {
+      q = saveForm(saveSmart(app.project));
+      if (q !== app.project) { refreshComponents(q); recompose(q); }
     }
-    const r = await fetch('/api/export?format=ttf', {
+    const body = previewBody(q);
+    const r = await fetch('/api/export?format=ttf&preview=1', {
       method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/json' }, body,
     });
     if (!r.ok) throw new Error(await r.text());
@@ -5765,6 +5808,7 @@ function initPreview() {
   $('previewInput').addEventListener('input', (e) => {
     renderPreviewText();
     store.set('spline.previewText', e.target.value);
+    schedulePreview(); // new letters need a new font
   });
   const size = $('previewSize');
   const apply = () => { $('previewOut').style.fontSize = `${size.value}px`; $('previewSizeOut').textContent = size.value; };
@@ -5776,6 +5820,7 @@ function initPreview() {
     $('previewBody').hidden = !open;
     store.set('spline.previewOpen', open ? '1' : '0');
     if (app.mode === 'editor') editor.resize();
+    if (open && previewStale) schedulePreview(0);
   };
   toggle.addEventListener('click', () => setOpen(toggle.getAttribute('aria-expanded') !== 'true'));
   setOpen(store.get('spline.previewOpen', '1') === '1');

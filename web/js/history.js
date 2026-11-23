@@ -6,6 +6,8 @@ const POINT_LIMIT = 1_500_000;
 
 // Points in a snapshot: its outlines, the other masters, the background.
 function weigh(s) {
+  // Kerning and groups: a copy of every pair, about as heavy as a point.
+  if (s.kerning) return Object.values(s.kerning).reduce((a, r) => a + Object.keys(r).length, 1) + (s.groups ? Object.keys(s.groups).length : 0);
   let n = 0;
   const add = (cs) => { for (const c of cs || []) n += c.nodes?.length || 0; };
   add(s.contours);
@@ -60,7 +62,19 @@ export class History {
   #batch = null;
 
   // Call right before changing kerning values.
-  pushKerning(project) { this.#add(this.#mark({ kerning: structuredClone(project.kerning || {}) })); }
+  // Presses that follow each other quickly (arrow keys, ±10) make one step.
+  pushKerning(project) {
+    const last = this.undoStack.at(-1);
+    const now = Date.now();
+    if (!this.#batch && last?.kerning && !last.groups && !this.redoStack.length && last.master === this.masterOf() && now - this.#kernAt < 700) {
+      this.#kernAt = now;
+      return;
+    }
+    this.#kernAt = now;
+    this.#add(this.#mark({ kerning: structuredClone(project.kerning || {}) }));
+  }
+
+  #kernAt = 0;
 
   // Call right before changing kerning groups or substitution rules
   // (renaming a group also renames its kerning keys, so the kerning is

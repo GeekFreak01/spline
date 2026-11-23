@@ -37,10 +37,11 @@ import (
 //	privacy.html, robots.txt, ...  served as plain files
 
 const (
-	webMaxBody      = 8 << 20 // a big font project is well below this
-	webExportsPerIP = 30      // exports per minute per visitor
-	headMarker      = "<!--site:head-->"
-	sidebarMarker   = "<!--site:sidebar-->"
+	webMaxBody       = 8 << 20 // a big font project is well below this
+	webExportsPerIP  = 30      // exports per minute per visitor
+	webPreviewsPerIP = 120     // live preview builds (small: the preview text only)
+	headMarker       = "<!--site:head-->"
+	sidebarMarker    = "<!--site:sidebar-->"
 )
 
 type webServer struct {
@@ -50,6 +51,7 @@ type webServer struct {
 	static     fs.FS
 	builds     chan struct{} // limits concurrent font builds and imports
 	limiter    *rateLimiter
+	previews   *rateLimiter
 	assets     sync.Map // path -> *asset, the embedded files ready to send
 }
 
@@ -72,6 +74,7 @@ func runWeb(addr, hosts, siteDir string, trustProxy, dev bool) {
 		static:     static,
 		builds:     make(chan struct{}, max(2, runtime.NumCPU())),
 		limiter:    newRateLimiter(webExportsPerIP, time.Minute),
+		previews:   newRateLimiter(webPreviewsPerIP, time.Minute),
 	}
 	for _, h := range strings.Split(hosts, ",") {
 		if h = strings.TrimSpace(strings.ToLower(h)); h != "" {
@@ -229,7 +232,13 @@ func (ws *webServer) handleExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	if !ws.limiter.allow(ws.clientIP(r)) {
+	// The live preview has its own, larger allowance: it builds on every
+	// pause in editing, and an export must still work after it.
+	lim := ws.limiter
+	if r.URL.Query().Get("preview") == "1" {
+		lim = ws.previews
+	}
+	if !lim.allow(ws.clientIP(r)) {
 		w.Header().Set("Retry-After", "60")
 		http.Error(w, "too many requests, try again in a minute", http.StatusTooManyRequests)
 		return
