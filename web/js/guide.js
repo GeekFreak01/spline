@@ -32,6 +32,20 @@ const S = [
     ],
   },
   {
+    id: 'first', icon: 'pen', title: { ru: 'Первый шрифт', en: 'Your first font' },
+    lead: { ru: 'От пустого проекта до шрифта в Word за восемь шагов.', en: 'From an empty project to a font in Word in eight steps.' },
+    items: [
+      ['type', { ru: '1. Название', en: '1. Name' }, '', { ru: '«Файл → Параметры шрифта…»: название и начертание. Под этим именем шрифт появится в других программах.', en: 'File → Font Info…: the name and the style. Other programs list the font under this name.' }],
+      ['pen', { ru: '2. Опорные буквы', en: '2. Key letters' }, '', { ru: 'Начните с H, O, n и o: по ним видны высота, толщина штриха и круглые формы. Двойной щелчок по плитке открывает редактор, рисуйте пером или кистью.', en: 'Start with H, O, n and o: they set the height, the stroke weight and the round shapes. Double-click a tile to open the editor and draw with the pen or the brush.' }],
+      ['image', { ru: '3. Эскиз', en: '3. Sketch' }, '', { ru: 'Если буквы нарисованы на бумаге, перетащите фото на холст и обведите его.', en: 'If the letters are drawn on paper, drop a photo on the canvas and trace it.' }],
+      ['spacing', { ru: '4. Отступы', en: '4. Sidebearings' }, '', { ru: 'Поля «Слева» и «Справа» в панели буквы задают воздух вокруг неё. Подберите их так, чтобы «HOHnono» читалось ровно, остальные буквы равняйте на эти.', en: 'The Left and Right fields in the glyph panel set the space around it. Tune them until “HOHnono” reads evenly, then match the other letters to these.' }],
+      ['grid', { ru: '5. Остальные буквы', en: '5. The rest' }, '', { ru: 'Категория «Не нарисованы» показывает, что осталось, счётчик под категориями — сколько готово.', en: 'The Not drawn category shows what is left; the counter under the categories shows how much is done.' }],
+      ['check', { ru: '6. Проверка в тексте', en: '6. Check in text' }, '', { ru: 'Наберите в строке просмотра настоящие слова. Ошибки в пропорциях и отступах видны в тексте сразу, по одной букве их не заметить.', en: 'Type real words in the preview line. Mistakes in proportions and spacing show at once in text and hide in a single glyph.' }],
+      ['kerning', { ru: '7. Кернинг', en: '7. Kerning' }, 'Ctrl+K', { ru: 'Поправьте пары, которые выбиваются: AV, To, LT, Г., «ТО». Начинайте с самых заметных.', en: 'Fix the pairs that stand out: AV, To, LT, “F.”. Start with the most visible ones.' }],
+      ['download', { ru: '8. Сохранение и экспорт', en: '8. Save and export' }, 'Ctrl+S', { ru: 'Ctrl+S сохраняет проект .sp, его можно править дальше. «Экспорт» вверху даёт TTF, «Файл → Установить шрифт в систему» — шрифт в Word и Photoshop.', en: 'Ctrl+S saves the .sp project you keep editing. Export at the top gives a TTF; File → Install Font in System puts the font into Word and Photoshop.' }],
+    ],
+  },
+  {
     id: 'glyphs', icon: 'grid', title: { ru: 'Буквы', en: 'Glyphs' },
     lead: { ru: 'Список букв и всё, что делается сразу с несколькими.', en: 'The glyph list and everything done to several glyphs at once.' },
     items: [
