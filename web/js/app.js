@@ -592,8 +592,8 @@ function visibleGlyphs() {
   const q = app.search.trim().toLowerCase();
   const list = app.project.glyphs.filter((g) => {
     const ch = charOf(g);
-    if (app.category === 'empty') { if (isDrawn(g)) return false; } else if (app.category === 'done') {
-      if (!isDrawn(g)) return false;
+    if (app.category === 'empty') { if (isDrawn(g) || blankByDesign(g)) return false; } else if (app.category === 'done') {
+      if (!isDrawn(g) || blankByDesign(g)) return false;
     } else if (cat && !cat.test(ch)) return false;
     if (app.colorFilter && g.color !== app.colorFilter) return false;
     if (app.extended && app.smartFilter && !SMART_FILTERS[app.smartFilter]?.(g)) return false;
@@ -613,15 +613,19 @@ function visibleGlyphs() {
     .map((x) => x.g);
 }
 
+// Spaces have nothing to draw: they count neither as drawn nor as waiting.
+const blankByDesign = (g) => { const ch = charOf(g); return !!ch && !ch.trim(); };
+
 function renderSidebar() {
   const glyphs = app.project.glyphs;
-  const drawn = glyphs.filter(isDrawn).length;
-  $('progressLabel').textContent = t('progress', { n: drawn, total: glyphs.length });
-  $('progressFill').style.width = `${glyphs.length ? (drawn / glyphs.length) * 100 : 0}%`;
+  const todo = glyphs.filter((g) => !blankByDesign(g));
+  const drawn = todo.filter(isDrawn).length;
+  $('progressLabel').textContent = t('progress', { n: drawn, total: todo.length });
+  $('progressFill').style.width = `${todo.length ? (drawn / todo.length) * 100 : 0}%`;
 
   const items = [
     ...CATEGORIES.map((c) => ({ id: c.id, n: glyphs.filter((g) => c.test(charOf(g))).length })),
-    { id: 'empty', n: glyphs.length - drawn },
+    { id: 'empty', n: todo.length - drawn },
     { id: 'done', n: drawn },
   ].filter((c) => c.n > 0 || c.id === 'all' || c.id === app.category);
   $('catList').innerHTML = items.map((c) => `<button type="button" data-cat="${c.id}" aria-current="${c.id === app.category}">
@@ -761,7 +765,7 @@ function tileHTML(g) {
   return `<button type="button" class="tile${drawn ? ' drawn' : ''}" role="option" data-name="${esc(g.name)}"
       ${g.color ? `data-color="${esc(g.color)}"` : ''} aria-selected="${app.selected.has(g.name)}"
       tabindex="${g.name === app.focusName ? 0 : -1}" aria-label="${esc(label)}">
-      ${body}<span class="label"><span>${esc(g.name)}</span><span class="code">${hex(g)}</span></span></button>`;
+      ${body}<span class="label"><span>${esc(tileName(g))}</span><span class="code">${hex(g)}</span></span></button>`;
 }
 
 function setGridView(v) {
@@ -933,7 +937,12 @@ function renderGridOptions() {
 
 $('optionsBar').addEventListener('input', (e) => {
   if (e.target.id === 'lineText') { onLineInput(e.target.value); return; }
-  if (e.target.id === 'searchInput') { app.search = e.target.value; renderGrid(); updateStatus(); }
+  if (e.target.id === 'searchInput') {
+    app.search = e.target.value;
+    // Thousands of tiles are drawn again once the typing pauses.
+    clearTimeout(app.searchTimer);
+    app.searchTimer = setTimeout(() => { renderGrid(); updateStatus(); }, app.project.glyphs.length > 500 ? 150 : 0);
+  }
   if (e.target.id === 'tileSize') {
     $('glyphGrid').style.setProperty('--tile', `${e.target.value}px`);
     store.set('spline.tile', e.target.value);
@@ -2372,6 +2381,12 @@ function kernKeyLabel(key) {
 
 // What shows for a glyph: its character; ␣ for a space or another
 // invisible character; the name for a glyph without a code.
+// A made-up name (uni041F, u1F600) says less than the letter itself.
+function tileName(g) {
+  const mark = glyphMark(g);
+  return /^(uni[0-9A-F]{4}|u[0-9A-F]{4,6})$/.test(g.name) && mark !== g.name ? mark : g.name;
+}
+
 function glyphMark(g) {
   const ch = charOf(g);
   if (ch && ch.trim() && !/^[\p{Cf}\p{Cc}]$/u.test(ch)) return ch;
