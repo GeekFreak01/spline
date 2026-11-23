@@ -140,6 +140,30 @@ export function incompatibility(a, b) {
 }
 
 // Masters in which glyph g does not match the default: [{ id, why }].
+// Masters where g has no outline while another master has one: a glyph
+// drawn after the master was added. Letters built from parts are skipped.
+export function emptyIn(p, g) {
+  if (!hasMasters(p) || g.compose || g.components?.length) return [];
+  const drawn = p.masters.filter((m) => layerOf(p, g, m.id).contours.length);
+  if (!drawn.length || drawn.length === p.masters.length) return [];
+  return p.masters.filter((m) => !drawn.includes(m)).map((m) => m.id);
+}
+
+// Fills those masters with a copy of master from (slanted for italics).
+export function fillEmpty(p, g, from = activeId(p)) {
+  const src = layerOf(p, g, from);
+  const fromIt = p.masters.find((m) => m.id === from);
+  const cy = (p.info.xHeight || 500) / 2;
+  for (const id of emptyIn(p, g)) {
+    const m = p.masters.find((x) => x.id === id);
+    let cs = clone(src.contours);
+    const angle = (m.italic ? m.italicAngle || 0 : 0) - (fromIt?.italic ? fromIt.italicAngle || 0 : 0);
+    if (angle) cs = slantContours(cs, angle, cy);
+    if (id === activeId(p)) g.contours = cs;
+    else (g.layers ||= {})[id] = { contours: cs, advance: layerOf(p, g, id).advance };
+  }
+}
+
 export function problems(p, g) {
   if (!hasMasters(p)) return [];
   const def = layerOf(p, g, defaultId(p));

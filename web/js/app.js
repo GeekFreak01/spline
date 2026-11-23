@@ -9,12 +9,12 @@ import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { isSmart, editingState, editState, saveSmart, addProp, removeProp, smartProblems } from './smart.js';
 import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis, layerOf,
-  incompatibility, hasItalic, familyGroup, familyStyles, uniqueStyles, nextStyle, defaultStyles, addItalicMasters, fitAxis } from './masters.js';
+  incompatibility, hasItalic, emptyIn, fillEmpty, familyGroup, familyStyles, uniqueStyles, nextStyle, defaultStyles, addItalicMasters, fitAxis } from './masters.js';
 import { makeZip } from './zip.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
-import { History, KERNING, GROUPS } from './history.js';
+import { History, KERNING, GROUPS, MANY } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
 import { Editor } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
@@ -708,7 +708,7 @@ function onMetricKeyChange(e) {
 }
 
 function updateAllMetrics() {
-  const changed = updateMetrics(app.project, app.project.glyphs, (g) => app.history.push(g));
+  const changed = app.history.group(() => updateMetrics(app.project, app.project.glyphs, (g) => app.history.push(g)));
   if (changed.length) {
     markChanged();
     if (app.mode === 'editor') { editor.render(); renderGlyphPanel(); } else { changed.forEach(updateTile); renderSideMetrics(); renderInspector(); }
@@ -1467,7 +1467,7 @@ function liveTransform(final) {
 }
 
 function xfApply(v) {
-  if (!xf.pushed) { for (const it of xf.items) app.history.push(it.g); xf.pushed = true; }
+  if (!xf.pushed) { app.history.group(() => { for (const it of xf.items) app.history.push(it.g); }); xf.pushed = true; }
   xf.v = v;
   const s = v.scale / 100, k = Math.tan((v.slant * Math.PI) / 180);
   const a = (v.rotate * Math.PI) / 180, cos = Math.cos(a), sin = Math.sin(a);
@@ -1528,7 +1528,7 @@ async function glyphAction(act) {
     return;
   }
   if (act === 'spacing') {
-    for (const g of targets) {
+    app.history.group(() => { for (const g of targets) {
       const box = glyphBox(g);
       if (!box) continue;
       app.history.push(g);
@@ -1536,7 +1536,7 @@ async function glyphAction(act) {
       translateGlyph(g, side - box.minX, 0);
       g.advance = Math.round(box.maxX - box.minX + side * 2);
       if (app.mode === 'grid') updateTile(g);
-    }
+    } });
     if (app.mode === 'editor') editor.afterEdit(false); else { markChanged(); renderInspector(); renderSideMetrics(); }
   }
 }
@@ -3521,6 +3521,11 @@ const endTransform = () => { if (app.mode === 'editor' && editor.xform) editor.c
 function applyHistory(name) {
   if (!name) return;
   markChanged();
+  if (name === MANY) {
+    renderAll();
+    if (app.mode === 'editor') { editor.sel.clear(); editor.render(); renderGlyphPanel(); syncTransformFields(); }
+    return;
+  }
   if (name === KERNING || name === GROUPS) {
     kernView.render();
     if (app.mode === 'kern') renderKernPanel();
@@ -3662,6 +3667,12 @@ function batchSection(sel) {
 
 function batch(op) {
   const sel = selectedGlyphs();
+  const n = app.history.group(() => batchRun(op, sel));
+  if (n) { markChanged(); renderGrid(); renderSidebar(); renderInspector(); }
+  toast(t('btDone', { n }));
+}
+
+function batchRun(op, sel) {
   let n = 0;
   for (const g of sel) {
     if (op === 'extremes') {
@@ -3685,8 +3696,7 @@ function batch(op) {
     updateTile(g);
   }
   if (op === 'metrics') n = updateMetrics(app.project, sel, (g) => app.history.push(g)).length;
-  if (n) { markChanged(); renderGrid(); renderSidebar(); renderInspector(); }
-  toast(t('btDone', { n }));
+  return n;
 }
 
 function setExtended(on) {
@@ -3913,6 +3923,7 @@ function selectMaster(id) {
   if (app.mode === 'grid') renderGridOptions();
   // Kerning belongs to the master too.
   if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
+  renderPreviewText(); // the preview follows the master being drawn
 }
 
 // A master's slant from the dialog: 0 is upright, anything else italic.
@@ -4238,6 +4249,9 @@ function familyFonts() {
   settleSmart();
   const p = app.project;
   const fam = (p.info.familyName || '').replace(/[\s\\/:*?"<>|]+/g, '') || 'Font';
+  // Glyphs left blank in a master come out blended from the others.
+  const blank = p.glyphs.filter((g) => emptyIn(p, g).length).map((g) => charOf(g) || g.name);
+  if (blank.length) toast(t('famBlank', { list: blank.slice(0, 12).join(' ') + (blank.length > 12 ? ' …' : ''), n: blank.length }), 'error');
   const out = [];
   for (const s of familyStyles(p).filter((x) => x.export)) {
     const q = instanceAt(p, s.weight, s.name, s.width, s.italic);
@@ -4461,9 +4475,9 @@ async function transformMetricsDialog() {
   });
   if (!data) return;
   let n = 0;
-  for (const g of sel) {
+  app.history.group(() => { for (const g of sel) {
     const before = JSON.stringify([g.contours, g.advance]);
-    app.history.push(g);
+    const keep = app.history.before(g); // a glyph left as it was stays composed
     for (const k of ['lsb', 'rsb', 'advance']) {
       const mode = data.get(k + 'Mode'), v = Number(data.get(k)) || 0;
       if (mode === 'keep') continue;
@@ -4475,8 +4489,8 @@ async function transformMetricsDialog() {
       const sd = sides(g);
       if (sd.lsb !== null) setMetric(g, 'lsb', (sd.lsb + sd.rsb) / 2);
     }
-    if (JSON.stringify([g.contours, g.advance]) !== before) { n++; updateTile(g); }
-  }
+    if (JSON.stringify([g.contours, g.advance]) !== before) { keep(); n++; updateTile(g); }
+  } });
   markChanged();
   if (app.mode === 'editor') { editor.render(); updateMetricInputs(); } else { renderInspector(); renderSideMetrics(); }
   toast(t('btDone', { n }));
@@ -4838,9 +4852,15 @@ const composeState = (g) => (g.compose ? 'auto' : g.composeOff ? 'manual' : 'non
 
 // Й = И + ˘: tells how the letter is made and offers the other way.
 function mastersNoteHTML(g) {
+  const name = (id) => app.project.masters.find((m) => m.id === id)?.name || id;
+  // Drawn here, blank in another master: shown in the simple mode too.
+  const empty = emptyIn(app.project, g);
+  if (empty.length) {
+    const from = layerOf(app.project, g, activeId(app.project)).contours.length ? name(activeId(app.project)) : '';
+    return `<div class="compose-note warn"><p>${esc(t('msEmptyIn', { list: empty.map(name).join(', ') }))}</p>${from ? `<button class="btn btn-block" type="button" data-cmd="fillMasters" data-tip="${esc(t('msFillTip'))}">${icon('layers', 15)}<span>${esc(t('msFill', { name: from }))}</span></button>` : ''}</div>`;
+  }
   const bad = app.extended ? problems(app.project, g) : [];
   if (!bad.length) return '';
-  const name = (id) => app.project.masters.find((m) => m.id === id)?.name || id;
   return `<div class="compose-note warn" data-tip="${esc(t('msIncompatTip'))}"><p>${esc(t('msIncompat', { list: bad.map((b) => `${name(b.id)} (${t('msWhy_' + b.why)})`).join(', ') }))}</p></div>`;
 }
 
@@ -4867,6 +4887,15 @@ function composeNoteHTML(g) {
   }
   return note(t('cmpWait', { parts }), info.missing.map((ch) => `<button class="btn btn-block" type="button" data-make-glyph="${esc(ch)}">
     ${icon(glyphByChar(ch) ? 'pen' : 'plus', 15)}<span>${esc(t(glyphByChar(ch) ? 'cmpDraw' : 'cmpCreate', { ch }))}</span></button>`).join(''));
+}
+
+function fillMasters() {
+  const g = app.mode === 'editor' ? app.current : selectedGlyphs()[0];
+  if (!g || !layerOf(app.project, g, activeId(app.project)).contours.length) return;
+  app.history.push(g);
+  fillEmpty(app.project, g);
+  markChanged();
+  afterGlyphChange(g);
 }
 
 function setComposed(on) {
@@ -5445,7 +5474,7 @@ const COMMANDS = {
   prev: () => stepGlyph(-1), next: () => stepGlyph(1),
   autoGroups, groups: () => groupsDialog(), newVariant, newLigature,
   xfReset, xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
-  simplify: simplifyGlyphs, composeOff: () => setComposed(false), composeOn: () => setComposed(true),
+  simplify: simplifyGlyphs, composeOff: () => setComposed(false), composeOn: () => setComposed(true), fillMasters,
   ulLoad: () => pickFiles('image'), ulRemove: removeUnderlay,
   ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
   ptBreak: breakContour, ptJoin: joinContours,
@@ -5521,6 +5550,9 @@ let keyCapture = null; // the shortcut being reassigned in the shortcuts dialog
 
 document.addEventListener('keydown', (e) => {
   if (keyCapture) return;
+  // Esc with a menu open (opened by mouse, the focus elsewhere) closes only
+  // the menu, not the editor behind it.
+  if (e.key === 'Escape' && openMenu !== null && !e.target.closest?.('#menus')) { e.preventDefault(); setMenu(null); return; }
   const mod = e.ctrlKey || e.metaKey;
   const key = keyOf(e);
   const combo = comboOf(e);
@@ -5626,9 +5658,13 @@ async function updatePreview() {
   const seq = ++previewSeq;
   try {
     let body = projectJSON();
-    if (hasMasters(app.project) && (app.previewLoc !== undefined || app.previewItalic)) {
-      const at = app.previewLoc ?? app.project.masters[0].loc;
-      const q = instanceAt(app.project, at, undefined, app.previewLoc2, !!app.previewItalic && hasItalic(app.project)) || instanceAt(app.project, at, undefined, app.previewLoc2);
+    // Until the sliders are moved, the preview shows the master being drawn.
+    const am = app.project.masters?.find((m) => m.id === activeId(app.project));
+    const italic = app.previewItalic ?? !!am?.italic;
+    if (hasMasters(app.project) && (app.previewLoc !== undefined || italic || activeId(app.project) !== defaultId(app.project))) {
+      const at = app.previewLoc ?? am.loc;
+      const loc2 = app.previewLoc2 ?? am.loc2;
+      const q = instanceAt(app.project, at, undefined, loc2, italic && hasItalic(app.project)) || instanceAt(app.project, at, undefined, loc2);
       refreshComponents(q); recompose(q);
       body = serialize(q);
     }
@@ -5687,7 +5723,8 @@ function renderPreviewFeatures() {
     + (axis2 && axis2.min < axis2.max ? `<label data-tip="${esc(t('msPreviewTip'))} (${esc(axis2.tag)})">${esc(axisName(axis2))}<input type="range" data-pf-axis="2" min="${esc(axis2.min)}" max="${esc(axis2.max)}" step="1" value="${esc(loc2)}"><output class="mono">${esc(loc2)}</output></label>` : '');
   const tags = [...found.values()].filter((f) => f.tag !== 'locl');
   const langs = [...found.values()].filter((f) => f.tag === 'locl');
-  const italicHTML = hasItalic(app.project) ? `<label class="check"><input type="checkbox" data-pf-italic ${app.previewItalic ? 'checked' : ''}>${esc(t('famItalic'))}</label>` : '';
+  const italicNow = app.previewItalic ?? !!app.project.masters?.find((m) => m.id === activeId(app.project))?.italic;
+  const italicHTML = hasItalic(app.project) ? `<label class="check"><input type="checkbox" data-pf-italic ${italicNow ? 'checked' : ''}>${esc(t('famItalic'))}</label>` : '';
   bar.innerHTML = axisHTML + italicHTML + (tags.length || langs.length ? `<span class="opt-label">${esc(t('pfTitle'))}</span>` : '')
     + tags.map((f) => `<label class="check" data-tip="${esc(f.tag)}"><input type="checkbox" data-pf="${f.tag}" ${previewFeats.has(f.tag) ? 'checked' : ''}>${esc(f.label)}</label>`).join('')
     + (langs.length ? `<label>${esc(t('pfLang'))}<select data-pf-lang><option value="">—</option>${langs.map((f) => `<option value="${f.lang}" ${previewLang === f.lang ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}</select></label>` : '');
