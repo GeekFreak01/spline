@@ -85,18 +85,26 @@ jobs:
     needs: [build, installer]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+      # The checksums are signed with the Spline key: a copy of Spline
+      # installs an update only when the signature matches.
       - name: Create the draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          SPLINE_SIGNING_KEY: ${{ secrets.SPLINE_SIGNING_KEY }}
         run: |
           mkdir release
           find artifacts -type f -not -name notes.md -exec mv {} release/ \;
           find artifacts -type f -name notes.md -exec mv {} notes.md \;
           (cd release && sha256sum * > SHA256SUMS.txt)
+          go run ./tools/updatekey sign "${GITHUB_REF_NAME}" release/SHA256SUMS.txt
           gh release create "${GITHUB_REF_NAME}" release/* --draft --verify-tag \
             --title "${GITHUB_REF_NAME}" --notes-file notes.md --generate-notes
