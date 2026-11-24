@@ -6084,6 +6084,9 @@ document.addEventListener('keyup', (e) => {
 
 let previewTimer, previewFace, previewSeq = 0;
 let previewStale = false;
+// The characters the loaded preview font was built with (it holds only the
+// glyphs of its text); a drawn letter outside them needs a new build.
+let previewBuilt = new Set();
 function schedulePreview(delay = 500) {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(updatePreview, delay);
@@ -6111,6 +6114,7 @@ async function updatePreview() {
     return;
   }
   const seq = ++previewSeq;
+  const built = new Set([...previewText()].map((c) => c.codePointAt(0)));
   try {
     let q = null;
     // Until the sliders are moved, the preview shows the master being drawn.
@@ -6138,12 +6142,14 @@ async function updatePreview() {
     document.fonts.add(face);
     if (previewFace) document.fonts.delete(previewFace);
     previewFace = face;
+    previewBuilt = built;
     $('previewOut').style.setProperty('--preview-font', `"${family}"`);
     renderPreviewText();
     $('previewOut').hidden = false;
     msg.textContent = '';
   } catch (err) {
     if (seq !== previewSeq) return;
+    previewBuilt = built; // no new attempt until the text or the font changes
     msg.textContent = `${t('previewError')}: ${err.message}`;
     $('previewOut').hidden = true; // not the previous font under the new name
   }
@@ -6210,12 +6216,17 @@ function renderPreviewText() {
     out.append(span);
     run = '';
   };
+  let stale = false;
   for (const ch of previewText()) {
     const mine = drawn.has(ch.codePointAt(0)) || ch === '\n';
+    if (mine && ch !== '\n' && !previewBuilt.has(ch.codePointAt(0))) stale = true;
     if (mine !== runMine) { flush(); runMine = mine; }
     run += ch;
   }
   flush();
+  // New letters in the text ("Letter in line", "*" following another glyph,
+  // typing): build a font that has them, or they show in a system font.
+  if (stale) schedulePreview(150);
 }
 
 function initPreview() {
