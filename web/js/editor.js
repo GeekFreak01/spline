@@ -377,6 +377,21 @@ export class Editor {
       if (gy !== null) { y = gy; hy = true; }
       if (gx !== null) { x = gx; hx = true; }
     }
+    // Extended mode: magnetic lines. The point lines up with the other
+    // points and handles of the glyph; a thin line shows which one.
+    this.smartLines = [];
+    if (this.extended && this.snapGuides && guides && this.glyph && (!hx || !hy)) {
+      const tol = 6 / this.view.scale;
+      let bx = null, by = null;
+      for (const q of this.smartPoints()) {
+        if (!hx && Math.abs(q.x - x) <= tol && (!bx || Math.abs(q.x - x) < Math.abs(bx.x - x))) bx = q;
+        if (!hy && Math.abs(q.y - y) <= tol && (!by || Math.abs(q.y - y) < Math.abs(by.y - y))) by = q;
+      }
+      if (bx) { x = bx.x; hx = true; }
+      if (by) { y = by.y; hy = true; }
+      if (bx) this.smartLines.push({ axis: 'x', from: bx });
+      if (by) this.smartLines.push({ axis: 'y', from: by });
+    }
     if (this.snapGrid) {
       const st = this.gridStep;
       if (!hx) { x = Math.round(x / st) * st; hx = true; }
@@ -384,6 +399,25 @@ export class Editor {
     }
     this.snapMark = hx || hy ? { x, y } : null;
     return { x, y };
+  }
+
+  // What a dragged point can line up with: the points and handles of the
+  // glyph and its components, minus what is being moved. Kept for the drag.
+  smartPoints() {
+    const d = this.drag;
+    if (d?.smart) return d.smart;
+    const moving = new Set();
+    if (d?.kind === 'move') for (const n of this.selectedNodes()) { moving.add(n); if (n.in) moving.add(n.in); if (n.out) moving.add(n.out); }
+    if (d?.kind === 'handle') { const n = this.glyph.contours[d.ci]?.nodes[d.ni]; if (n?.[d.which]) moving.add(n[d.which]); }
+    if (d?.kind === 'penHandle') { moving.add(d.node.in); moving.add(d.node.out); }
+    const out = [];
+    for (const c of [...this.glyph.contours, ...(this.glyph.refContours || [])]) {
+      for (const n of c.nodes) {
+        for (const q of [n, n.in, n.out]) if (q && !moving.has(q)) out.push(q);
+      }
+    }
+    if (d && ['move', 'handle', 'penHandle'].includes(d.kind)) d.smart = out;
+    return out;
   }
 
   onDown(e) {
@@ -2175,6 +2209,24 @@ export class Editor {
       ctx.moveTo(m.x - 7, m.y); ctx.lineTo(m.x + 7, m.y);
       ctx.moveTo(m.x, m.y - 7); ctx.lineTo(m.x, m.y + 7);
       ctx.stroke();
+    }
+    if (showMark && this.smartLines?.length) {
+      const m = S(this.snapMark);
+      ctx.save();
+      ctx.strokeStyle = colors.userGuide;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      for (const l of this.smartLines) {
+        const f = S(l.from);
+        ctx.beginPath();
+        ctx.moveTo(f.x, f.y);
+        ctx.lineTo(l.axis === 'x' ? f.x : m.x, l.axis === 'x' ? m.y : f.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(f.x, f.y, 3, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([4, 3]);
+      }
+      ctx.restore();
     }
     if (this.drag?.kind === 'move' && this.drag.moved && this.snapMark) {
       const m = S(this.snapMark);
