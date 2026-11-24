@@ -71,7 +71,7 @@ setDefaults({
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
   snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
-  'tool.measure': ['M'], selShapeCycle: ['Shift+V'], 'tool.pixel': ['G'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
+  'tool.measure': ['M'], selShapeCycle: ['Shift+V'], 'tool.pixel': ['G'], 'tool.note': ['N'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
   'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'], 'tool.text': ['T'],
   'op.unite': ['Ctrl+Alt+U'], 'op.subtract': ['Ctrl+Alt+M'], 'op.intersect': ['Ctrl+Alt+I'],
   'op.exclude': ['Ctrl+Alt+E'], 'op.divide': ['Ctrl+Alt+D'], 'op.removeOverlap': ['Ctrl+Alt+O'],
@@ -91,6 +91,7 @@ const TOOLS = [
   { id: 'text', icon: 'type', key: 'T' },
   { id: 'measure', icon: 'ruler', key: 'M', ext: true },
   { id: 'pixel', icon: 'pixel', key: 'G', ext: true },
+  { id: 'note', icon: 'note', key: 'N', ext: true },
 ];
 const visibleTools = () => TOOLS.filter((tl) => !tl.ext || app.extended);
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
@@ -434,6 +435,7 @@ function menuDefs() {
       { label: 'userGuides', key: keyLabel('userGuides'), check: editor.showUserGuides, run: () => toggleView('showUserGuides') },
       { label: 'clearGuides', run: clearGuides, enabled: (app.project?.guides?.length || 0) > 0 },
       { label: 'guideThrough', run: guideThroughPoints, enabled: inEditor && editor.sel.size === 2, ext: true },
+      { label: 'showNotes', check: editor.showNotes, run: () => { editor.showNotes = !editor.showNotes; store.set('spline.showNotes', editor.showNotes ? '1' : '0'); editor.render(); renderMenus(); }, ext: true },
       '-',
       { label: 'showGuide', key: keyLabel('showGuide'), check: editor.showGuide, run: () => toggleView('showGuide') },
       { label: 'showGrid', key: keyLabel('showGrid'), check: editor.showGrid, run: () => toggleView('showGrid') },
@@ -1829,7 +1831,7 @@ const KEY_GROUPS = [
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
   ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'simplify', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups']],
-  ['extTools', ['tool.measure', 'tool.pixel', 'selShapeCycle', 'invertSelection', 'addExtremes', 'tidyUp', 'lockContours', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'openCorner', 'reconnect', 'bgCopy', 'updateMetrics']],
+  ['extTools', ['tool.measure', 'tool.pixel', 'tool.note', 'selShapeCycle', 'invertSelection', 'addExtremes', 'tidyUp', 'lockContours', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'openCorner', 'reconnect', 'bgCopy', 'updateMetrics']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -2075,6 +2077,35 @@ function renderEditorOptions() {
   }
 }
 
+// Extended mode: the kinds of notes the Notes tool puts on the canvas.
+const NOTE_KINDS = ['text', 'arrow', 'circle', 'plus', 'minus'];
+editor.noteKind = NOTE_KINDS.includes(store.get('spline.noteKind')) ? store.get('spline.noteKind') : 'text';
+editor.showNotes = store.get('spline.showNotes') !== '0';
+$('optionsBar').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-note-kind]');
+  if (!b) return;
+  editor.noteKind = b.dataset.noteKind;
+  store.set('spline.noteKind', editor.noteKind);
+  renderEditorOptions();
+});
+
+// Text of a note: a new one at `at`, or the note to change.
+app.onNoteText = async (note, at) => {
+  const g = app.current;
+  if (!g) return;
+  const data = await showDialog({
+    title: t(note ? 'noteEdit' : 'noteNew'),
+    body: `<label class="field">${esc(t('noteText'))}<textarea name="text" rows="3" maxlength="500" spellcheck="true">${esc(note?.text || '')}</textarea></label>
+      ${note ? `<label class="check"><input type="checkbox" name="remove">${esc(t('noteRemove'))}</label>` : ''}`,
+  });
+  if (!data) return;
+  const text = String(data.get('text') || '').trim().slice(0, 500);
+  if (!note) { if (text) editor.addNote({ type: 'text', x: at.x, y: at.y, text }); return; }
+  app.history.push(g);
+  if (data.get('remove') || !text) { g.annotations.splice(g.annotations.indexOf(note), 1); if (!g.annotations.length) delete g.annotations; } else note.text = text;
+  editor.afterEdit(false);
+};
+
 function drawEditorOptions() {
   const g = app.current;
   if (!g) return;
@@ -2096,6 +2127,9 @@ function drawEditorOptions() {
       <div class="seg" role="radiogroup">
         <button type="button" role="radio" data-cmd="pxDraw" aria-checked="${!editor.pixelErase}">${esc(t('pxDraw'))}</button>
         <button type="button" role="radio" data-cmd="pxErase" aria-checked="${editor.pixelErase}" data-tip="${esc(t('pxEraseTip'))}">${esc(t('pxErase'))}</button>
+      </div></div><div class="sep"></div>` : ''}
+    ${editor.tool === 'note' ? `<div class="group"><div class="seg" role="radiogroup" aria-label="${esc(t('toolNote'))}">
+      ${NOTE_KINDS.map((k) => `<button type="button" role="radio" data-note-kind="${k}" aria-checked="${editor.noteKind === k}">${esc(t('note_' + k))}</button>`).join('')}
       </div></div><div class="sep"></div>` : ''}
     ${masterBarHTML()}
     <div class="group">

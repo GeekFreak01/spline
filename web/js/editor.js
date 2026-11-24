@@ -80,6 +80,9 @@ export class Editor {
     this.alignTo = 'selection'; // 'selection' (or key object) | 'frame'
     this.showRulers = false; // Ctrl+R
     this.showUserGuides = true;
+    this.showNotes = true;   // extended mode: annotations on the canvas
+    this.noteKind = 'text';  // what the Notes tool puts down
+    this.selNote = -1;
     this.view = { scale: 0.5, ox: 0, oy: 0 };
     this.sel = new Set(); // "contourIndex:nodeIndex"
     this.drag = null;
@@ -465,6 +468,8 @@ export class Editor {
       this.drag = { kind: 'measure' };
     } else if (tool === 'text') {
       this.downText(p);
+    } else if (tool === 'note') {
+      this.downNote(sx, sy, p);
     } else if (tool === 'select') {
       this.downSelect(e, sx, sy, p);
     } else if (tool === 'pen') {
@@ -681,6 +686,20 @@ export class Editor {
         this.app.onAnchorsChanged?.();
         break;
       }
+      case 'noteMove': {
+        const a = this.glyph.annotations[d.i];
+        if (!a) break;
+        const dx = Math.round(p.x - d.start.x) - d.applied.x, dy = Math.round(p.y - d.start.y) - d.applied.y;
+        if (!d.moved && Math.hypot(p.x - d.start.x, p.y - d.start.y) * this.view.scale < 2) break;
+        if (!d.moved) { this.app.history.push(this.glyph); d.moved = true; }
+        a.x += dx; a.y += dy;
+        if (a.type === 'arrow') { a.x2 += dx; a.y2 += dy; }
+        d.applied = { x: d.applied.x + dx, y: d.applied.y + dy };
+        break;
+      }
+      case 'noteNew':
+        if (d.note.type === 'arrow') { d.note.x2 = Math.round(p.x); d.note.y2 = Math.round(p.y); } else d.note.r = Math.round(Math.hypot(p.x - d.note.x, p.y - d.note.y));
+        break;
       case 'marquee':
         d.end = { sx, sy };
         d.lasso?.push({ sx, sy });
@@ -781,6 +800,15 @@ export class Editor {
       case 'anchor':
         if (d.moved) this.afterEdit(false);
         break;
+      case 'noteMove':
+        if (d.moved) this.afterEdit(false);
+        break;
+      case 'noteNew': {
+        const n = d.note;
+        const size = n.type === 'arrow' ? Math.hypot(n.x2 - n.x, n.y2 - n.y) : n.r;
+        if (size * this.view.scale >= 6) this.addNote(n);
+        break;
+      }
       case 'marquee': {
         const x0 = Math.min(d.start.sx, d.end.sx), x1 = Math.max(d.start.sx, d.end.sx);
         const y0 = Math.min(d.start.sy, d.end.sy), y1 = Math.max(d.start.sy, d.end.sy);
@@ -1460,6 +1488,12 @@ export class Editor {
       if (g) { this.app.onGuideEdit?.(g); return; }
     }
     if (!this.glyph) return;
+    if (this.tool === 'note') {
+      const { sx, sy } = this.eventPos(e);
+      const i = this.noteAt(sx, sy);
+      if (i >= 0 && this.glyph.annotations[i].type === 'text') this.app.onNoteText?.(this.glyph.annotations[i]);
+      return;
+    }
     if (this.tool === 'text' || this.tool === 'select') {
       const { sx, sy } = this.eventPos(e);
       const hit = !this.nodeAt(sx, sy) && !this.segmentAt(sx, sy) && this.contourAt(sx, sy) < 0 ? this.lineItemAt(sx, sy) : null;
@@ -1523,7 +1557,7 @@ export class Editor {
     if (zone) { this.canvas.style.cursor = zone === 'top' ? 'row-resize' : 'col-resize'; return; }
     if (this.activeTool() === 'select' && !this.xform) {
       const g = this.guideAt(sx, sy);
-      if (g && !this.nodeAt(sx, sy) && !this.handleAt(sx, sy)) { this.canvas.style.cursor = g.axis === 'y' ? 'row-resize' : 'col-resize'; return; }
+      if (g && !this.nodeAt(sx, sy) && !this.handleAt(sx, sy)) { this.canvas.style.cursor = g.locked ? 'not-allowed' : g.axis === 'y' ? 'row-resize' : g.axis === 'x' ? 'col-resize' : 'move'; return; }
     }
     const tool = this.activeTool();
     let cur = 'crosshair';
@@ -1535,6 +1569,7 @@ export class Editor {
     }
     if (tool === 'hand') cur = this.drag ? 'grabbing' : 'grab';
     else if (tool === 'text') cur = 'text';
+    else if (tool === 'note') cur = this.noteAt(sx, sy) >= 0 ? 'move' : this.noteKind === 'text' ? 'text' : 'crosshair';
     else if (tool === 'brush' || tool === 'eraser') cur = 'none';
     else if (tool === 'select') {
       if (this.handleAt(sx, sy) || this.nodeAt(sx, sy)) cur = 'pointer';
@@ -1600,6 +1635,14 @@ export class Editor {
   }
 
   deleteSelection() {
+    if (this.tool === 'note' && this.selNote >= 0 && this.glyph.annotations?.[this.selNote]) {
+      this.app.history.push(this.glyph);
+      this.glyph.annotations.splice(this.selNote, 1);
+      if (!this.glyph.annotations.length) delete this.glyph.annotations;
+      this.selNote = -1;
+      this.afterEdit(false);
+      return true;
+    }
     if (!this.sel.size) return false;
     if (this.glyph.locked) { this.app.onLocked?.(); return true; }
     this.app.history.push(this.glyph);
@@ -1677,6 +1720,87 @@ export class Editor {
     this.sel.clear();
     this.afterEdit(false);
     return added;
+  }
+
+  // ---------------------------------------------------------------- annotations
+
+  // Notes on the canvas (extended mode): text, an arrow, a circle, a plus or
+  // a minus. They are for the designer only and never go into the font.
+  noteAt(sx, sy) {
+    const list = this.showNotes ? this.glyph?.annotations || [] : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const a = list[i], s = this.toScreen(a);
+      if (a.type === 'text') {
+        const w = this.noteWidth(a);
+        if (sx >= s.x - 4 && sx <= s.x + w + 4 && sy >= s.y - 18 && sy <= s.y + 4) return i;
+      } else if (a.type === 'arrow') {
+        const b = this.toScreen({ x: a.x2, y: a.y2 }), vx = b.x - s.x, vy = b.y - s.y, l2 = vx * vx + vy * vy || 1;
+        const k = Math.max(0, Math.min(1, ((sx - s.x) * vx + (sy - s.y) * vy) / l2));
+        if (Math.hypot(s.x + vx * k - sx, s.y + vy * k - sy) <= 6) return i;
+      } else if (a.type === 'circle') {
+        if (Math.abs(Math.hypot(sx - s.x, sy - s.y) - a.r * this.view.scale) <= 6) return i;
+      } else if (Math.hypot(sx - s.x, sy - s.y) <= 11) return i;
+    }
+    return -1;
+  }
+
+  noteWidth(a) {
+    this.ctx.font = `12px ${css('--font-ui')}`;
+    return Math.max(...String(a.text || '').split('\n').map((l) => this.ctx.measureText(l).width), 8);
+  }
+
+  downNote(sx, sy, p) {
+    const i = this.noteAt(sx, sy);
+    if (i >= 0) {
+      this.selNote = i;
+      this.drag = { kind: 'noteMove', i, start: p, applied: { x: 0, y: 0 } };
+      return;
+    }
+    this.selNote = -1;
+    const at = { x: Math.round(p.x), y: Math.round(p.y) };
+    const kind = this.noteKind || 'text';
+    if (kind === 'text') { this.app.onNoteText?.(null, at); return; }
+    if (kind === 'plus' || kind === 'minus') { this.addNote({ type: kind, ...at }); return; }
+    this.drag = { kind: 'noteNew', note: kind === 'arrow' ? { type: 'arrow', ...at, x2: at.x, y2: at.y } : { type: 'circle', ...at, r: 0 } };
+  }
+
+  addNote(n) {
+    this.app.history.push(this.glyph);
+    (this.glyph.annotations ||= []).push(n);
+    this.selNote = this.glyph.annotations.length - 1;
+    this.afterEdit(false);
+  }
+
+  drawNotes(colors) {
+    const list = [...(this.showNotes ? this.glyph.annotations || [] : []), ...(this.drag?.kind === 'noteNew' ? [this.drag.note] : [])];
+    if (!list.length) return;
+    const ctx = this.ctx;
+    ctx.save();
+    list.forEach((a, i) => {
+      const s = this.toScreen(a), on = this.tool === 'note' && i === this.selNote;
+      ctx.strokeStyle = ctx.fillStyle = colors.note;
+      ctx.lineWidth = on ? 2.5 : 1.5;
+      if (a.type === 'text') {
+        ctx.font = `12px ${css('--font-ui')}`;
+        String(a.text || '').split('\n').forEach((l, k) => ctx.fillText(l, s.x, s.y + k * 15));
+        if (on) { ctx.setLineDash([3, 2]); ctx.strokeRect(s.x - 3, s.y - 15, this.noteWidth(a) + 6, 19 + 15 * (String(a.text || '').split('\n').length - 1)); ctx.setLineDash([]); }
+      } else if (a.type === 'arrow') {
+        const b = this.toScreen({ x: a.x2, y: a.y2 }), ang = Math.atan2(b.y - s.y, b.x - s.x);
+        ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(b.x, b.y);
+        ctx.lineTo(b.x - 11 * Math.cos(ang - 0.4), b.y - 11 * Math.sin(ang - 0.4));
+        ctx.lineTo(b.x - 11 * Math.cos(ang + 0.4), b.y - 11 * Math.sin(ang + 0.4));
+        ctx.closePath(); ctx.fill();
+      } else if (a.type === 'circle') {
+        ctx.beginPath(); ctx.arc(s.x, s.y, Math.max(1, a.r * this.view.scale), 0, Math.PI * 2); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(s.x, s.y, 9, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(s.x - 5, s.y); ctx.lineTo(s.x + 5, s.y);
+        if (a.type === 'plus') { ctx.moveTo(s.x, s.y - 5); ctx.lineTo(s.x, s.y + 5); }
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
   }
 
   // A guide of this glyph through the two selected points.
@@ -2084,7 +2208,7 @@ export class Editor {
       guide: css('--canvas-guide'), handle: css('--canvas-handle'), bg: css('--canvas-bg'),
       grid: css('--canvas-grid'), gridMajor: css('--canvas-grid-major'), nodeFill: css('--canvas-node-fill'),
       userGuide: css('--canvas-user-guide'), rulerBg: css('--ruler-bg'), rulerLine: css('--ruler-line'), rulerText: css('--ruler-text'),
-      zone: css('--canvas-zone'), ok: css('--ok'), danger: css('--danger'),
+      zone: css('--canvas-zone'), ok: css('--ok'), danger: css('--danger'), note: css('--warn'),
     };
     const info = this.app.project.info;
     const S = (p) => this.toScreen(p);
@@ -2273,6 +2397,7 @@ export class Editor {
     }
 
     this.drawAnchors(colors);
+    if (this.extended) this.drawNotes(colors);
     this.drawUserGuides(colors);
     this.drawOverlay(colors);
 

@@ -174,6 +174,13 @@ export function validateProject(p) {
     if (g.noExport !== true) delete g.noExport;
     if (g.locked !== true) delete g.locked;
     g.guides = cleanGuides(g.guides);
+    // Notes on the canvas (extended mode): never part of the font.
+    const NOTE = { text: ['x', 'y'], plus: ['x', 'y'], minus: ['x', 'y'], arrow: ['x', 'y', 'x2', 'y2'], circle: ['x', 'y', 'r'] };
+    g.annotations = (Array.isArray(g.annotations) ? g.annotations : [])
+      .filter((a) => a && NOTE[a.type] && NOTE[a.type].every((k) => Number.isFinite(a[k])) && (a.type !== 'text' || (typeof a.text === 'string' && a.text)))
+      .slice(0, 100)
+      .map((a) => ({ type: a.type, ...Object.fromEntries(NOTE[a.type].map((k) => [k, a[k]])), ...(a.type === 'text' ? { text: a.text.slice(0, 500) } : {}) }));
+    if (!g.annotations.length) delete g.annotations;
     if (!g.guides.length) delete g.guides;
     if (Array.isArray(g.snapshots)) g.snapshots = g.snapshots.filter((x) => x && Array.isArray(x.contours) && Number.isFinite(x.advance)).slice(-20);
     if (!g.snapshots?.length) delete g.snapshots;
