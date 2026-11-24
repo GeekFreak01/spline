@@ -371,11 +371,20 @@ export class Editor {
         for (const c of list) if (Math.abs(v - c) <= tol && (best === null || Math.abs(v - c) < Math.abs(v - best))) best = c;
         return best;
       };
-      const ug = this.showUserGuides ? this.guides() : [];
+      const ug = this.showUserGuides ? this.allGuides() : [];
       const gy = near(y, [info.ascender, info.capHeight, info.xHeight, 0, info.descender, ...ug.filter((g) => g.axis === 'y').map((g) => g.pos)]);
       const gx = near(x, [0, this.glyph.advance, ...ug.filter((g) => g.axis === 'x').map((g) => g.pos)]);
       if (gy !== null) { y = gy; hy = true; }
       if (gx !== null) { x = gx; hx = true; }
+      // A guide at an angle: the point slides onto it.
+      if (!hx && !hy) {
+        for (const g of ug) {
+          if (g.axis !== 'a') continue;
+          const l = Editor.guideLine(g), k = (x - l.x) * l.dx + (y - l.y) * l.dy;
+          const qx = l.x + l.dx * k, qy = l.y + l.dy * k;
+          if (Math.hypot(qx - x, qy - y) <= tol) { x = qx; y = qy; hx = hy = true; break; }
+        }
+      }
     }
     // Extended mode: magnetic lines. The point lines up with the other
     // points and handles of the glyph; a thin line shows which one.
@@ -435,8 +444,8 @@ export class Editor {
       // guide, the left one a vertical guide.
       const g = { axis: zone === 'top' ? 'y' : 'x', pos: zone === 'top' ? p.y : p.x };
       this.drag = { kind: 'guide', guide: g, isNew: true };
-    } else if (guide && e.button === 0) {
-      this.drag = { kind: 'guide', guide };
+    } else if (guide && e.button === 0 && !guide.locked) {
+      this.drag = { kind: 'guide', guide, start: p, from: { x: guide.x, y: guide.y } };
     } else if (this.glyph.locked && !['hand', 'measure', 'text'].includes(tool)) {
       this.app.onLocked?.();
     } else if (this.xform && tool !== 'hand') {
@@ -597,6 +606,12 @@ export class Editor {
         this.measure.end = e.shiftKey ? snap45(this.measure.start, p) : this.snap(p);
         break;
       case 'guide': {
+        if (d.guide.axis === 'a') { // a guide at an angle moves by its point
+          d.guide.x = Math.round(d.from.x + p.x - d.start.x);
+          d.guide.y = Math.round(d.from.y + p.y - d.start.y);
+          d.overRuler = !!this.rulerZone(sx, sy) || sx < 0 || sy < 0;
+          break;
+        }
         let v = d.guide.axis === 'y' ? p.y : p.x;
         if (this.snapGrid) v = Math.round(v / this.gridStep) * this.gridStep;
         d.guide.pos = Math.round(v);
@@ -727,9 +742,8 @@ export class Editor {
         this.commitPixels(d);
         break;
       case 'guide': {
-        const list = this.guides();
         // Dropping a guide back on a ruler removes it.
-        if (d.overRuler) { const i = list.indexOf(d.guide); if (i >= 0) list.splice(i, 1); }
+        if (d.overRuler) this.removeGuide(d.guide);
         if (d.added || !d.isNew) this.app.onGuidesChanged?.();
         break;
       }
@@ -856,6 +870,37 @@ export class Editor {
     return p.guides;
   }
 
+  // The font's guides and, in the extended mode, the open glyph's own ones
+  // (local guides, also lines at an angle).
+  allGuides() {
+    const own = this.extended && this.glyph?.guides?.length ? this.glyph.guides : [];
+    return own.length ? [...this.guides(), ...own] : this.guides();
+  }
+
+  // A point on the guide and its direction in font units.
+  static guideLine(g) {
+    if (g.axis === 'y') return { x: 0, y: g.pos, dx: 1, dy: 0 };
+    if (g.axis === 'x') return { x: g.pos, y: 0, dx: 0, dy: 1 };
+    const a = ((g.angle || 0) * Math.PI) / 180;
+    return { x: g.x, y: g.y, dx: Math.cos(a), dy: Math.sin(a) };
+  }
+
+  // Screen distance from (sx, sy) to the guide.
+  guideDistance(g, sx, sy) {
+    const l = Editor.guideLine(g), a = this.toScreen(l), b = this.toScreen({ x: l.x + l.dx * 1000, y: l.y + l.dy * 1000 });
+    const vx = b.x - a.x, vy = b.y - a.y, len = Math.hypot(vx, vy) || 1;
+    return Math.abs((sx - a.x) * vy - (sy - a.y) * vx) / len;
+  }
+
+  // Removes a guide from the font or from the glyph.
+  removeGuide(g) {
+    for (const list of [this.guides(), this.glyph?.guides || []]) {
+      const i = list.indexOf(g);
+      if (i >= 0) list.splice(i, 1);
+    }
+    if (this.glyph?.guides && !this.glyph.guides.length) delete this.glyph.guides;
+  }
+
   rulerZone(sx, sy) {
     if (!this.showRulers) return null;
     if (sx < RULER && sy < RULER) return 'corner';
@@ -867,8 +912,8 @@ export class Editor {
   guideAt(sx, sy) {
     if (!this.showUserGuides) return null;
     let best = null, bestD = 5;
-    for (const g of this.guides()) {
-      const d = g.axis === 'y' ? Math.abs(this.toScreen({ x: 0, y: g.pos }).y - sy) : Math.abs(this.toScreen({ x: g.pos, y: 0 }).x - sx);
+    for (const g of this.allGuides()) {
+      const d = this.guideDistance(g, sx, sy);
       if (d <= bestD) { best = g; bestD = d; }
     }
     return best;
@@ -876,25 +921,42 @@ export class Editor {
 
   drawUserGuides(colors) {
     const ctx = this.ctx;
-    const list = this.showUserGuides ? this.guides() : [];
+    const list = this.showUserGuides ? this.allGuides() : [];
     const dragging = this.drag?.kind === 'guide' ? this.drag.guide : null;
+    const own = new Set(this.glyph?.guides || []);
     ctx.lineWidth = 1;
     for (const g of [...list, ...(dragging && !list.includes(dragging) ? [dragging] : [])]) {
-      ctx.strokeStyle = g === dragging && this.drag.overRuler ? colors.text : colors.userGuide;
+      // The glyph's own guides in the accent colour; locked ones dashed.
+      ctx.strokeStyle = g === dragging && this.drag.overRuler ? colors.text : own.has(g) ? colors.accent : colors.userGuide;
+      ctx.setLineDash(g.locked ? [6, 4] : []);
       ctx.beginPath();
       if (g.axis === 'y') {
         const y = Math.round(this.toScreen({ x: 0, y: g.pos }).y) + 0.5;
         ctx.moveTo(0, y); ctx.lineTo(this.w, y);
-      } else {
+      } else if (g.axis === 'x') {
         const x = Math.round(this.toScreen({ x: g.pos, y: 0 }).x) + 0.5;
         ctx.moveTo(x, 0); ctx.lineTo(x, this.h);
+      } else {
+        const l = Editor.guideLine(g), a = this.toScreen(l), b = this.toScreen({ x: l.x + l.dx * 1000, y: l.y + l.dy * 1000 });
+        const vx = b.x - a.x, vy = b.y - a.y, len = Math.hypot(vx, vy) || 1, far = (this.w + this.h) * 2;
+        ctx.moveTo(a.x - (vx / len) * far, a.y - (vy / len) * far);
+        ctx.lineTo(a.x + (vx / len) * far, a.y + (vy / len) * far);
       }
       ctx.stroke();
+      ctx.setLineDash([]);
+      if (g.name) {
+        let at;
+        if (g.axis === 'y') at = { x: RULER + 8, y: this.toScreen({ x: 0, y: g.pos }).y - 14 };
+        else if (g.axis === 'x') at = { x: this.toScreen({ x: g.pos, y: 0 }).x + 6, y: RULER + 24 };
+        else { const q = this.toScreen({ x: g.x, y: g.y }); at = { x: q.x + 8, y: q.y - 14 }; }
+        this.label(g.name, at.x, at.y, colors);
+      }
     }
     if (dragging && !this.drag.overRuler) {
-      const s = this.toScreen({ x: dragging.pos, y: dragging.pos });
-      const at = dragging.axis === 'y' ? { x: RULER + 8, y: s.y + 6 } : { x: s.x + 6, y: RULER + 8 };
-      this.label(`${dragging.axis === 'y' ? 'Y' : 'X'} ${dragging.pos}`, at.x, at.y, colors);
+      const angled = dragging.axis === 'a';
+      const s = angled ? this.toScreen(dragging) : this.toScreen({ x: dragging.pos, y: dragging.pos });
+      const at = dragging.axis === 'y' ? { x: RULER + 8, y: s.y + 6 } : dragging.axis === 'x' ? { x: s.x + 6, y: RULER + 8 } : { x: s.x + 8, y: s.y + 8 };
+      this.label(angled ? `${dragging.x}, ${dragging.y}` : `${dragging.axis === 'y' ? 'Y' : 'X'} ${dragging.pos}`, at.x, at.y, colors);
     }
   }
 
@@ -1615,6 +1677,22 @@ export class Editor {
     this.sel.clear();
     this.afterEdit(false);
     return added;
+  }
+
+  // A guide of this glyph through the two selected points.
+  guideThroughPoints() {
+    const nodes = this.selectedNodes();
+    if (nodes.length !== 2) return null;
+    const [a, b] = nodes;
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 1) return null;
+    const angle = Math.round(((Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI) * 100) / 100;
+    let g;
+    if (Math.abs(a.y - b.y) < 0.5) g = { axis: 'y', pos: Math.round(a.y) };
+    else if (Math.abs(a.x - b.x) < 0.5) g = { axis: 'x', pos: Math.round(a.x) };
+    else g = { axis: 'a', x: Math.round(a.x), y: Math.round(a.y), angle };
+    (this.glyph.guides ||= []).push(g);
+    this.render();
+    return g;
   }
 
   // Locks the contours with a selected point: they can't be selected or

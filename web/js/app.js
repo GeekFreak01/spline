@@ -433,6 +433,7 @@ function menuDefs() {
       { label: 'rulers', key: keyLabel('rulers'), check: editor.showRulers, run: () => toggleView('showRulers') },
       { label: 'userGuides', key: keyLabel('userGuides'), check: editor.showUserGuides, run: () => toggleView('showUserGuides') },
       { label: 'clearGuides', run: clearGuides, enabled: (app.project?.guides?.length || 0) > 0 },
+      { label: 'guideThrough', run: guideThroughPoints, enabled: inEditor && editor.sel.size === 2, ext: true },
       '-',
       { label: 'showGuide', key: keyLabel('showGuide'), check: editor.showGuide, run: () => toggleView('showGuide') },
       { label: 'showGrid', key: keyLabel('showGrid'), check: editor.showGrid, run: () => toggleView('showGrid') },
@@ -1985,19 +1986,61 @@ app.onKnifeMiss = () => toast(t('knifeMiss'), 'error');
 // Ruler guides belong to the whole font and are saved in the .sp file.
 app.onGuidesChanged = () => { markChanged(); renderMenus(); };
 app.onGuideEdit = async (g) => {
+  if (!app.extended) {
+    const data = await showDialog({
+      title: t('guidePosition'),
+      body: `<label class="field">${esc(g.axis === 'y' ? t('guideHorizontal') : t('guideVertical'))}
+        <input type="number" name="pos" value="${g.pos}" step="1" required></label>
+        <label class="check"><input type="checkbox" name="remove">${esc(t('removeGuide'))}</label>`,
+    });
+    if (!data) return;
+    if (data.get('remove')) editor.removeGuide(g);
+    else g.pos = Math.round(Number(data.get('pos')));
+    app.onGuidesChanged();
+    editor.render();
+    return;
+  }
+  // Extended mode: name, a point and an angle, the glyph's own or the
+  // font's, locked or not.
+  const local = !!app.current?.guides?.includes(g);
+  const x = g.axis === 'a' ? g.x : g.axis === 'x' ? g.pos : 0;
+  const y = g.axis === 'a' ? g.y : g.axis === 'y' ? g.pos : 0;
+  const angle = g.axis === 'a' ? g.angle : g.axis === 'x' ? 90 : 0;
   const data = await showDialog({
-    title: t('guidePosition'),
-    body: `<label class="field">${esc(g.axis === 'y' ? t('guideHorizontal') : t('guideVertical'))}
-      <input type="number" name="pos" value="${g.pos}" step="1" required></label>
+    title: t('guideTitle'),
+    body: `<label class="field">${esc(t('guideName'))}<input type="text" name="name" value="${esc(g.name || '')}" maxlength="40" spellcheck="false"></label>
+      <div class="field-row three">
+        <label class="field">X<input type="number" name="x" value="${Math.round(x)}" step="1" required></label>
+        <label class="field">Y<input type="number" name="y" value="${Math.round(y)}" step="1" required></label>
+        <label class="field">${esc(t('guideAngle'))}<input type="number" name="angle" value="${angle}" step="1" min="-180" max="180" required></label>
+      </div>
+      <label class="check"${app.current ? '' : ' hidden'}><input type="checkbox" name="local" ${local ? 'checked' : ''}>${esc(t('guideLocal'))}</label>
+      <label class="check"><input type="checkbox" name="locked" ${g.locked ? 'checked' : ''}>${esc(t('guideLocked'))}</label>
       <label class="check"><input type="checkbox" name="remove">${esc(t('removeGuide'))}</label>`,
   });
   if (!data) return;
-  const list = app.project.guides;
-  if (data.get('remove')) list.splice(list.indexOf(g), 1);
-  else g.pos = Math.round(Number(data.get('pos')));
+  editor.removeGuide(g);
+  if (!data.get('remove')) {
+    const nx = Math.round(Number(data.get('x')) || 0), ny = Math.round(Number(data.get('y')) || 0);
+    let a = ((Number(data.get('angle')) || 0) % 180 + 180) % 180;
+    a = Math.round(a * 100) / 100;
+    const out = a === 0 ? { axis: 'y', pos: ny } : a === 90 ? { axis: 'x', pos: nx } : { axis: 'a', x: nx, y: ny, angle: a };
+    const name = String(data.get('name') || '').trim().slice(0, 40);
+    if (name) out.name = name;
+    if (data.get('locked')) out.locked = true;
+    if (data.get('local') && app.current) (app.current.guides ||= []).push(out);
+    else app.project.guides.push(out);
+  }
   app.onGuidesChanged();
   editor.render();
 };
+
+// Extended mode: a guide of the open glyph through the two selected points.
+function guideThroughPoints() {
+  endTransform();
+  if (app.mode !== 'editor') return;
+  if (editor.guideThroughPoints()) { app.onGuidesChanged(); toast(t('guideAdded')); } else toast(t('guideTwoPoints'), 'error');
+}
 
 async function clearGuides() {
   if (!app.project.guides?.length || !(await confirmDialog(t('confirmClearGuides'), t('clearGuides')))) return;

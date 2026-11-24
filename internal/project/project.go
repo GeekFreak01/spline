@@ -226,10 +226,16 @@ type Info struct {
 }
 
 // Guide is a ruler guide shared by all glyphs: a horizontal line at
-// y = Pos (Axis "y") or a vertical line at x = Pos (Axis "x").
+// y = Pos (Axis "y"), a vertical line at x = Pos (Axis "x") or, in the
+// extended mode, a line through (X, Y) at Angle degrees (Axis "a").
 type Guide struct {
-	Axis string  `json:"axis"`
-	Pos  float64 `json:"pos"`
+	Axis   string  `json:"axis"`
+	Pos    float64 `json:"pos,omitempty"`
+	X      float64 `json:"x,omitempty"`
+	Y      float64 `json:"y,omitempty"`
+	Angle  float64 `json:"angle,omitempty"`
+	Name   string  `json:"name,omitempty"`
+	Locked bool    `json:"locked,omitempty"`
 }
 
 // Project is the root object of a .sp file.
@@ -372,7 +378,9 @@ func (p *Project) Validate() error {
 		}
 	}
 	for _, g := range p.Guides {
-		if (g.Axis != "x" && g.Axis != "y") || !okCoord(g.Pos) {
+		ok := (g.Axis == "x" || g.Axis == "y") && okCoord(g.Pos) ||
+			g.Axis == "a" && okCoord(g.X) && okCoord(g.Y) && g.Angle >= -360 && g.Angle <= 360
+		if !ok || len(g.Name) > 200 {
 			return errors.New("invalid guide")
 		}
 	}

@@ -680,6 +680,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .dialog .body:empty { display: none; }
 .dialog .field { display: flex; flex-direction: column; gap: 4px; color: var(--text-2); }
 .dialog .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.dialog .field-row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .dialog h3 { margin: 6px 0 0; font-size: var(--fs-s); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); }
 .dialog .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
 .dialog .actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line-soft); }

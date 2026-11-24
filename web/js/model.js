@@ -52,6 +52,20 @@ const badPoint = (q) => !q || !Number.isFinite(q.x) || !Number.isFinite(q.y);
 const badContours = (cs) => !Array.isArray(cs) || cs.some((c) => !c || typeof c !== 'object' || (c.nodes !== undefined && !Array.isArray(c.nodes))
   || (c.nodes || []).some((n) => badPoint(n) || (n.in && badPoint(n.in)) || (n.out && badPoint(n.out))));
 
+// Ruler guides: horizontal (axis y at pos), vertical (axis x at pos) or, in
+// the extended mode, at an angle through a point (axis a); a name and a
+// lock are optional.
+function cleanGuides(list) {
+  return (Array.isArray(list) ? list : []).filter((g) => g && (((g.axis === 'x' || g.axis === 'y') && Number.isFinite(g.pos))
+    || (g.axis === 'a' && Number.isFinite(g.x) && Number.isFinite(g.y) && Number.isFinite(g.angle))))
+    .slice(0, 200)
+    .map((g) => ({
+      ...(g.axis === 'a' ? { axis: 'a', x: g.x, y: g.y, angle: g.angle } : { axis: g.axis, pos: g.pos }),
+      ...(typeof g.name === 'string' && g.name.trim() ? { name: g.name.trim().slice(0, 40) } : {}),
+      ...(g.locked === true ? { locked: true } : {}),
+    }));
+}
+
 // Accepts any parsed JSON and returns a clean project or throws.
 export function validateProject(p) {
   if (!p || p.format !== FORMAT) throw new Error('not a Spline (.sp) file');
@@ -86,8 +100,7 @@ export function validateProject(p) {
   p.ligatures = (Array.isArray(p.ligatures) ? p.ligatures : [])
     .filter((l) => l && typeof l.use === 'string' && l.use && names(l.glyphs).length >= 2)
     .map((l) => ({ glyphs: names(l.glyphs), use: l.use }));
-  p.guides = (Array.isArray(p.guides) ? p.guides : [])
-    .filter((g) => g && (g.axis === 'x' || g.axis === 'y') && Number.isFinite(g.pos));
+  p.guides = cleanGuides(p.guides);
   // Masters (extended mode): at least two, each with an id, a name and a
   // place on the axis; the file always holds the default one in contours.
   if (!(Array.isArray(p.masters) && p.masters.length > 1 && p.masters.every((m) => m && typeof m.id === 'string' && Number.isFinite(m.loc)))) {
@@ -160,6 +173,8 @@ export function validateProject(p) {
     if (typeof g.note !== 'string' || !g.note) delete g.note;
     if (g.noExport !== true) delete g.noExport;
     if (g.locked !== true) delete g.locked;
+    g.guides = cleanGuides(g.guides);
+    if (!g.guides.length) delete g.guides;
     if (Array.isArray(g.snapshots)) g.snapshots = g.snapshots.filter((x) => x && Array.isArray(x.contours) && Number.isFinite(x.advance)).slice(-20);
     if (!g.snapshots?.length) delete g.snapshots;
     for (const k of ['lsbKey', 'rsbKey', 'widthKey']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];
