@@ -571,6 +571,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .tile[data-color] .label, .tile[data-color] .label .code { color: var(--text); opacity: 0.85; }
 .grid-section { grid-column: 1 / -1; margin: 10px 0 4px; font-size: var(--fs-xl); font-weight: 400; color: var(--text); }
 .grid-section:first-child { margin-top: 0; }
+.tile .lock-badge { position: absolute; top: 4px; left: 4px; color: var(--warn); line-height: 0; }
 .tile .mark { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
 .grid-empty { padding: 40px; text-align: center; color: var(--text-3); }
 
@@ -585,6 +586,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .title-row { display: flex; align-items: baseline; gap: 8px; }
 .title-row b { font-size: var(--fs-xl); }
 .title-row small { color: var(--text-3); }
+.title-row .lock-btn { margin-left: auto; align-self: center; }
+.title-row .lock-btn[aria-pressed="true"] { color: var(--warn); }
 .hint { color: var(--text-3); margin: 0; }
 .btn-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
 .compose-note { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--bg-input); }

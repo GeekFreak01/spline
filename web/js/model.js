@@ -159,6 +159,7 @@ export function validateProject(p) {
     if (!g.tags?.length) delete g.tags;
     if (typeof g.note !== 'string' || !g.note) delete g.note;
     if (g.noExport !== true) delete g.noExport;
+    if (g.locked !== true) delete g.locked;
     if (Array.isArray(g.snapshots)) g.snapshots = g.snapshots.filter((x) => x && Array.isArray(x.contours) && Number.isFinite(x.advance)).slice(-20);
     if (!g.snapshots?.length) delete g.snapshots;
     for (const k of ['lsbKey', 'rsbKey', 'widthKey']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];
@@ -168,6 +169,7 @@ export function validateProject(p) {
     for (const c of g.contours) {
       c.nodes = Array.isArray(c.nodes) ? c.nodes : [];
       if (c.closed === undefined) c.closed = true;
+      if (c.locked !== true) delete c.locked;
     }
   }
   return p;

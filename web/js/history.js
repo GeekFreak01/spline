@@ -24,6 +24,13 @@ export const GLYPHS = '#glyphs'; // glyphs deleted or brought back
 // The rules that name glyphs, as deleting glyphs trims them.
 const rulesSnap = (p) => structuredClone({ kerning: p.kerning || {}, contextual: p.contextual || [], ligatures: p.ligatures || [] });
 
+// A locked glyph (extended mode) refuses every edit: each edit starts by
+// recording the glyph here, so this one check covers them all. The app
+// catches the error and says why nothing happened.
+export class LockedError extends Error {
+  constructor(name) { super(`glyph ${name} is locked`); this.glyph = name; }
+}
+
 export class History {
   // masterOf() names the master being edited: glyph and kerning steps
   // remember it, as they hold that master's outlines and kerning.
@@ -38,6 +45,7 @@ export class History {
   // Call right before changing a glyph. A letter built from parts (see
   // compose.js) that is edited by hand stops following its parts.
   push(glyph) {
+    if (glyph.locked) throw new LockedError(glyph.name);
     this.#add(this.#mark(snap(glyph)));
     if (glyph.compose) { delete glyph.compose; glyph.composeOff = true; }
   }
@@ -45,6 +53,7 @@ export class History {
   // Takes the glyph as it is now; the returned function makes that a step,
   // for an edit that may turn out to change nothing.
   before(glyph) {
+    if (glyph.locked) throw new LockedError(glyph.name);
     const s = this.#mark(snap(glyph));
     return () => {
       this.#add(s);

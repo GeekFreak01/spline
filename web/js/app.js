@@ -14,7 +14,7 @@ import { makeZip } from './zip.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
-import { History, KERNING, GROUPS, MANY, GLYPHS } from './history.js';
+import { History, KERNING, GROUPS, MANY, GLYPHS, LockedError } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
 import { Editor } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
@@ -67,7 +67,7 @@ const MOD = isMac ? '⌘' : 'Ctrl+';
 setDefaults({
   simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [], exportWOFF: [], exportWOFF2: [], specialForm: [],
   undo: ['Ctrl+Z'], redo: ['Ctrl+Shift+Z', 'Ctrl+Y'], selectAll: ['Ctrl+A'], freeTransform: ['Ctrl+T'],
-  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], openCorner: [], reconnect: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
+  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], tidyUp: [], lockContours: ['Ctrl+L'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], openCorner: [], reconnect: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
   snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
@@ -336,6 +336,13 @@ app.commitGlyph = (g) => {
   else if (app.extended && g?.anchors?.length) renderGlyphPanel();
 };
 app.onGlyphMetricsChanged = () => updateMetricInputs();
+app.onLocked = () => toast(t('lockedGlyph'), 'error');
+// An edit of a locked glyph stops at its first history step (see history.js).
+for (const ev of ['error', 'unhandledrejection']) {
+  window.addEventListener(ev, (e) => {
+    if ((e.error || e.reason) instanceof LockedError) { e.preventDefault(); app.onLocked(); }
+  });
+}
 app.onCursor = (p) => { $('statusPos').textContent = p ? `X ${Math.round(p.x)}   Y ${Math.round(p.y)}` : ''; };
 app.onZoom = (s) => { $('statusZoom').textContent = `${Math.round(s * 100)}%`; };
 
@@ -453,6 +460,10 @@ function menuDefs() {
       { label: 'ulMenu', run: () => pickFiles('image'), enabled: inEditor || app.selected.size === 1 },
       '-',
       { label: 'addExtremes', key: keyLabel('addExtremes'), run: addExtremes, enabled: inEditor, ext: true },
+      { label: 'tidyUp', key: keyLabel('tidyUp'), run: tidyUp, enabled: inEditor, ext: true },
+      { label: 'lockContours', key: keyLabel('lockContours'), run: lockContours, enabled: inEditor && editor.sel.size > 0, ext: true },
+      { label: 'unlockContours', run: unlockContours, enabled: inEditor && !!app.current?.contours.some((c) => c.locked), ext: true },
+      { label: 'lockGlyph', check: !!app.current?.locked, run: toggleGlyphLock, enabled: inEditor || app.selected.size > 0, ext: true },
       { label: 'makeFirst', key: keyLabel('makeFirst'), run: makeFirst, enabled: inEditor && editor.sel.size === 1, ext: true },
       { label: 'alignPoints', key: keyLabel('alignPoints'), run: alignPoints, enabled: inEditor && editor.sel.size > 1, ext: true },
       { label: 'breakContour', key: keyLabel('breakContour'), run: breakContour, enabled: inEditor && editor.sel.size === 1, ext: true },
@@ -809,7 +820,7 @@ function tileHTML(g) {
   return `<button type="button" class="tile${drawn ? ' drawn' : ''}" role="option" data-name="${esc(g.name)}"
       ${g.color ? `data-color="${esc(g.color)}"` : ''} aria-selected="${app.selected.has(g.name)}"
       tabindex="${g.name === app.focusName ? 0 : -1}" aria-label="${esc(label)}">
-      ${body}<span class="label"><span>${esc(tileName(g))}</span><span class="code">${hex(g)}</span></span></button>`;
+      ${body}${g.locked ? `<span class="lock-badge" aria-hidden="true">${icon('lock', 11)}</span>` : ''}<span class="label"><span>${esc(tileName(g))}</span><span class="code">${hex(g)}</span></span></button>`;
 }
 
 function setGridView(v) {
@@ -1090,7 +1101,7 @@ function renderInspectorBody() {
   const g = sel[0];
   const head = sel.length === 1
     ? `<div class="big-glyph">${hasOutline(g) ? glyphSVG(g) : `<span class="ghost">${esc(charOf(g))}</span>`}</div>
-       <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>`
+       <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small>${lockButton(g)}</div>`
     : `<div class="title-row"><b>${sel.length}</b><small>${esc(t('glyphs'))}: ${esc(sel.slice(0, 24).map((x) => charOf(x) || x.name).join(' '))}</small></div>`;
   // One section for everything about the glyph (in the extended mode also
   // its name, code, tags, note and export).
@@ -1117,11 +1128,17 @@ function renderGlyphPanel() {
   if (app.mode === 'editor') layoutPanels();
 }
 
+function lockButton(g) {
+  if (!app.extended && !g.locked) return '';
+  const label = esc(t(g.locked ? 'unlockGlyph' : 'lockGlyph'));
+  return `<button class="btn btn-icon lock-btn" type="button" data-cmd="lockGlyph" aria-pressed="${!!g.locked}" data-tip="${label}" aria-label="${label}">${icon(g.locked ? 'lock' : 'lockOpen', 15)}</button>`;
+}
+
 function renderGlyphPanelBody() {
   const g = app.current;
   if (!g) return;
   $('glyphPanel').innerHTML = section('glyph', t('glyph'), `
-      <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>
+      <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small>${lockButton(g)}</div>
       ${composeNoteHTML(g)}
       ${metricInputs(g)}
       <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(g.color)}</div>
@@ -1789,7 +1806,7 @@ const KEY_GROUPS = [
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
   ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'simplify', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups']],
-  ['extTools', ['tool.measure', 'tool.pixel', 'selShapeCycle', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'openCorner', 'reconnect', 'bgCopy', 'updateMetrics']],
+  ['extTools', ['tool.measure', 'tool.pixel', 'selShapeCycle', 'invertSelection', 'addExtremes', 'tidyUp', 'lockContours', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'openCorner', 'reconnect', 'bgCopy', 'updateMetrics']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -3843,7 +3860,8 @@ function pointsSection() {
     <div class="btn-row">${b('ptBreak', 'breakContour', 'breakContour')}${b('ptJoin', 'joinContours', 'joinContours')}</div>
     <div class="btn-row">${b('ptOpenCorner', 'openCorner', 'openCorner')}${b('ptReconnect', 'reconnect', 'reconnect')}</div>
     <div class="btn-row">${b('ptEven', 'evenHandles', 'evenHandles')}${b('ptFirst', 'makeFirst', 'makeFirst')}</div>
-    <div class="btn-row">${b('ptInvert', 'invertSelection', 'invertSelection')}</div>
+    <div class="btn-row">${b('ptInvert', 'invertSelection', 'invertSelection')}${b('ptTidy', 'tidyUp', 'tidyUp')}</div>
+    <div class="btn-row">${b('ptLock', 'lockContours', 'lockContours')}${b('ptUnlock', 'unlockContours')}</div>
     <div class="parts">${partsHTML()}</div>`, true, t('ptHint'));
 }
 
@@ -4930,6 +4948,41 @@ function addExtremes() {
   toast(n ? t('extremesAdded', { n }) : t('extremesNone'));
 }
 
+function tidyUp() {
+  endTransform();
+  if (app.mode !== 'editor') return;
+  const n = editor.tidyUp();
+  toast(n ? t('tidyDone', { n }) : t('tidyNone'));
+  renderGlyphPanel();
+}
+
+function lockContours() {
+  endTransform();
+  if (app.mode !== 'editor') return;
+  const n = editor.lockContours();
+  if (n) toast(t('contoursLocked', { n })); else toast(t('lockContoursHint'), 'error');
+  renderGlyphPanel();
+}
+
+function unlockContours() {
+  if (app.mode !== 'editor') return;
+  const n = editor.unlockContours();
+  if (n) toast(t('contoursUnlocked', { n }));
+}
+
+// Locks or unlocks the open glyph, or the selected ones in the list. Not an
+// undo step: the lock itself is not an edit of the glyph.
+function toggleGlyphLock() {
+  const list = app.mode === 'editor' ? [app.current].filter(Boolean) : selectedGlyphs();
+  if (!list.length) return;
+  const on = !list.every((g) => g.locked);
+  for (const g of list) { if (on) g.locked = true; else delete g.locked; updateTile(g); }
+  if (on && app.mode === 'editor') { endTransform(); editor.sel.clear(); editor.render(); }
+  markChanged();
+  if (app.mode === 'editor') renderGlyphPanel(); else renderInspector();
+  toast(t(on ? 'glyphLocked' : 'glyphUnlocked'));
+}
+
 function makeFirst() {
   endTransform();
   if (app.mode === 'editor' && !editor.makeFirst()) toast(t('makeFirstHint'), 'error');
@@ -5585,7 +5638,7 @@ const COMMANDS = {
   xfReset, xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
   simplify: simplifyGlyphs, composeOff: () => setComposed(false), composeOn: () => setComposed(true), fillMasters,
   ulLoad: () => pickFiles('image'), ulRemove: removeUnderlay,
-  ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
+  ptExtremes: addExtremes, ptTidy: tidyUp, lockGlyph: toggleGlyphLock, ptLock: lockContours, ptUnlock: unlockContours, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
   ptBreak: breakContour, ptJoin: joinContours,
   msShowAll: () => toggleMastersView('spline.showAllMasters', 'showAllMasters'),
   msEditAll: () => toggleMastersView('spline.editAllMasters', 'editAllMasters'),
@@ -5644,6 +5697,8 @@ const ACTIONS = {
   invertSelection: { run: () => editor.invertSelection(), when: () => app.extended && inEditorMode() },
   selShapeCycle: { run: () => { setSelectShape(editor.selectShape === 'lasso' ? 'rect' : 'lasso'); setTool('select'); }, when: () => app.extended && inEditorMode() },
   addExtremes: { run: addExtremes, when: () => app.extended && inEditorMode() },
+  tidyUp: { run: tidyUp, when: () => app.extended && inEditorMode() },
+  lockContours: { run: lockContours, when: () => app.extended && inEditorMode() },
   makeFirst: { run: makeFirst, when: () => app.extended && inEditorMode() },
   alignPoints: { run: alignPoints, when: () => app.extended && inEditorMode() },
   updateMetrics: { run: updateAllMetrics, when: () => app.extended },

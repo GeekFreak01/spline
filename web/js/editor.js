@@ -8,6 +8,7 @@ import { openCorner, reconnect, deleteSegment } from './corners.js';
 import { matchContour } from './masters.js';
 import { effectiveKern } from './kerning.js';
 import { addExtremesTo } from './simplify.js';
+import { tidyPlan, applyTidy, coincident } from './tidy.js';
 import { unite, subtract, removeOverlap, shapesOf, pathOperation, knifeCut } from './boolean.js';
 import { t } from './i18n.js';
 
@@ -276,6 +277,7 @@ export class Editor {
   nodeAt(sx, sy) {
     const cs = this.glyph.contours;
     for (let ci = cs.length - 1; ci >= 0; ci--) {
+      if (cs[ci].locked) continue;
       for (let ni = 0; ni < cs[ci].nodes.length; ni++) {
         const s = this.toScreen(cs[ci].nodes[ni]);
         if (Math.hypot(s.x - sx, s.y - sy) <= HIT) return { ci, ni };
@@ -288,6 +290,7 @@ export class Editor {
     if (!this.showsPoints()) return null;
     const cs = this.glyph.contours;
     for (let ci = cs.length - 1; ci >= 0; ci--) {
+      if (cs[ci].locked) continue;
       for (let ni = 0; ni < cs[ci].nodes.length; ni++) {
         const n = cs[ci].nodes[ni];
         for (const which of ['in', 'out']) {
@@ -304,6 +307,7 @@ export class Editor {
     const p = this.toFont(sx, sy);
     const cs = this.glyph.contours;
     for (let ci = cs.length - 1; ci >= 0; ci--) {
+      if (cs[ci].locked) continue;
       const ctx = this.hitCtx;
       ctx.beginPath();
       tracePath(ctx, { contours: [{ ...cs[ci], closed: true }] });
@@ -315,6 +319,7 @@ export class Editor {
   segmentAt(sx, sy) {
     let best = null;
     this.glyph.contours.forEach((c, ci) => {
+      if (c.locked) return;
       for (const s of segments(c)) {
         for (let k = 1; k < 40; k++) {
           const tt = k / 40;
@@ -390,6 +395,8 @@ export class Editor {
       this.drag = { kind: 'guide', guide: g, isNew: true };
     } else if (guide && e.button === 0) {
       this.drag = { kind: 'guide', guide };
+    } else if (this.glyph.locked && !['hand', 'measure', 'text'].includes(tool)) {
+      this.app.onLocked?.();
     } else if (this.xform && tool !== 'hand') {
       this.downTransform(e, sx, sy, p);
     } else if (tool === 'hand') {
@@ -723,7 +730,7 @@ export class Editor {
         const y0 = Math.min(d.start.sy, d.end.sy), y1 = Math.max(d.start.sy, d.end.sy);
         this.sel = new Set(d.base);
         const poly = d.lasso?.map((q) => ({ x: q.sx, y: q.sy }));
-        this.glyph.contours.forEach((c, ci) => c.nodes.forEach((n, ni) => {
+        this.glyph.contours.forEach((c, ci) => !c.locked && c.nodes.forEach((n, ni) => {
           const s = this.toScreen(n);
           const inside = poly ? poly.length > 2 && pointInPolygon(s, poly) : s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1;
           if (inside) this.sel.add(`${ci}:${ni}`);
@@ -1473,13 +1480,14 @@ export class Editor {
 
   selectAll() {
     this.sel = new Set();
-    this.glyph.contours.forEach((c, ci) => c.nodes.forEach((_, ni) => this.sel.add(`${ci}:${ni}`)));
+    this.glyph.contours.forEach((c, ci) => !c.locked && c.nodes.forEach((_, ni) => this.sel.add(`${ci}:${ni}`)));
     if (this.tool !== 'select') (this.app.selectTool || ((id) => this.setTool(id)))('select');
     this.render();
   }
 
   deleteSelection() {
     if (!this.sel.size) return false;
+    if (this.glyph.locked) { this.app.onLocked?.(); return true; }
     this.app.history.push(this.glyph);
     const byContour = new Map();
     for (const key of this.sel) {
@@ -1505,6 +1513,7 @@ export class Editor {
   nudge(dx, dy) {
     const nodes = this.selectedNodes();
     if (!nodes.length) return false;
+    if (this.glyph.locked) { this.app.onLocked?.(); return true; }
     this.app.history.push(this.glyph);
     for (const n of nodes) movePoint(n, dx, dy, true);
     this.afterEdit();
@@ -1530,7 +1539,7 @@ export class Editor {
 
   invertSelection() {
     const all = new Set();
-    this.glyph.contours.forEach((c, ci) => c.nodes.forEach((_, ni) => all.add(`${ci}:${ni}`)));
+    this.glyph.contours.forEach((c, ci) => !c.locked && c.nodes.forEach((_, ni) => all.add(`${ci}:${ni}`)));
     this.sel = new Set([...all].filter((k) => !this.sel.has(k)));
     if (this.tool !== 'select') (this.app.selectTool || ((id) => this.setTool(id)))('select');
     this.render();
@@ -1539,7 +1548,7 @@ export class Editor {
   // Contours with a selected point, or every contour.
   pickedContours() {
     const set = new Set([...this.sel].map((k) => Number(k.split(':')[0])));
-    return this.glyph.contours.filter((_, i) => !set.size || set.has(i));
+    return this.glyph.contours.filter((c, i) => !c.locked && (!set.size || set.has(i)));
   }
 
   // Adds points where a curve is horizontal or vertical (its extremes):
@@ -1554,6 +1563,49 @@ export class Editor {
     this.sel.clear();
     this.afterEdit(false);
     return added;
+  }
+
+  // Locks the contours with a selected point: they can't be selected or
+  // moved until unlocked. Returns how many.
+  lockContours() {
+    const cis = [...new Set([...this.sel].map((k) => Number(k.split(':')[0])))];
+    if (!cis.length) return 0;
+    this.app.history.push(this.glyph);
+    for (const ci of cis) if (this.glyph.contours[ci]) this.glyph.contours[ci].locked = true;
+    this.sel.clear();
+    this.afterEdit(false);
+    return cis.length;
+  }
+
+  unlockContours() {
+    const locked = this.glyph.contours.filter((c) => c.locked);
+    if (!locked.length) return 0;
+    this.app.history.push(this.glyph);
+    for (const c of locked) delete c.locked;
+    this.afterEdit(false);
+    return locked.length;
+  }
+
+  // Tidy up the contours with a selected point, or all: see tidy.js. When
+  // all masters are edited together, only what every master can lose goes,
+  // so they stay compatible. Returns the number of steps.
+  tidyUp() {
+    const targets = new Set(this.pickedContours().map((c) => this.glyph.contours.indexOf(c)));
+    let total = 0;
+    for (let pass = 0; pass < 3; pass++) {
+      let plan = tidyPlan(this.glyph.contours, targets);
+      this.sync((cs) => { const there = new Set(tidyPlan(cs, targets)); plan = plan.filter((x) => x.startsWith('smooth') || there.has(x)); });
+      if (!plan.length) break;
+      if (!total) this.app.history.push(this.glyph);
+      const removing = plan.filter((x) => !x.startsWith('smooth'));
+      this.sync((cs) => applyTidy(cs, removing));
+      applyTidy(this.glyph.contours, plan);
+      total += plan.length;
+    }
+    if (!total) return 0;
+    this.sel.clear();
+    this.afterEdit(false);
+    return total;
   }
 
   // Makes the selected point the start of its contour.
@@ -2213,7 +2265,10 @@ export class Editor {
 
   drawPoints(colors) {
     const ctx = this.ctx;
+    // Extended mode: a point on top of another gets a red ring.
+    const stacked = this.app.extended ? coincident(this.glyph.contours) : () => false;
     this.glyph.contours.forEach((c, ci) => {
+      if (c.locked) return;
       c.nodes.forEach((n, ni) => {
         const s = this.toScreen(n);
         ctx.strokeStyle = colors.handle;
@@ -2241,6 +2296,13 @@ export class Editor {
           ctx.moveTo(s.x + r + 3, s.y - r - 3); ctx.lineTo(s.x + r + 9, s.y - r - 3); ctx.lineTo(s.x + r + 3, s.y - r - 9); ctx.closePath();
           ctx.fillStyle = colors.accent;
           ctx.fill();
+        }
+        if (stacked(n)) {
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, r + 7, 0, Math.PI * 2);
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = colors.danger;
+          ctx.stroke();
         }
         // On a font line or in its zone: a green ring; a few units off: an
         // orange dashed one (most likely a miss).
