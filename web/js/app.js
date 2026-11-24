@@ -1960,7 +1960,9 @@ document.documentElement.dataset.mode = app.extended ? 'extended' : 'simple';
 editor.showGuide = store.get('spline.showGuide', '1') === '1';
 editor.showGrid = store.get('spline.showGrid', '1') === '1';
 editor.brushRadius = Number(store.get('spline.brush', '40')) || 40;
-editor.tool = store.get('spline.tool', 'brush');
+// A tool of the extended mode does not stay active in the simple one.
+const usableTool = (id) => { const tl = TOOLS.find((x) => x.id === id); return tl && (!tl.ext || app.extended) ? id : 'brush'; };
+editor.tool = usableTool(store.get('spline.tool', 'brush'));
 editor.showRulers = store.get('spline.showRulers', '0') === '1';
 editor.showUserGuides = store.get('spline.showUserGuides', '1') === '1';
 editor.gridStep = Math.max(1, Number(store.get('spline.gridStep', '50')) || 50);
@@ -4025,6 +4027,7 @@ function setExtended(on) {
   document.documentElement.dataset.mode = on ? 'extended' : 'simple';
   renderAll();
   if (app.mode === 'grid') renderGridOptions();
+  if (usableTool(editor.tool) !== editor.tool) { editor.setTool('select'); store.set('spline.tool', 'select'); }
   if (app.mode === 'editor') { renderToolbar(); renderEditorOptions(); renderGlyphPanel(); editor.render(); }
   if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
   renderPreviewText();
