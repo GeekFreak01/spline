@@ -1,6 +1,7 @@
 package fontgen
 
 import (
+	"encoding/binary"
 	"math"
 	"sort"
 	"strings"
@@ -18,18 +19,39 @@ type kernClasses struct {
 	sub        []byte
 }
 
+// kernCell is the value of a class pair: the default's value and, in a
+// variable font, the row of its deltas (0 when it does not vary).
+type kernCell struct {
+	value int16
+	row   int
+}
+
+// noClassKerning: tests build the plain-pair font to compare with.
+var noClassKerning bool
+
+// fixedCell: a static font has one master and nothing varies.
+func fixedCell(vals []float64) (int16, int) { return int16(math.Round(vals[0])), 0 }
+
 // classKerning returns nil when there is no group+group kerning, or when
-// the class table would not make the font smaller.
-func classKerning(p *project.Project, gid map[string]int, pairs []kernPair) *kernClasses {
+// the class table would not make the font smaller. kernings holds the
+// kerning of each master (one for a static font); cell turns the values of
+// a pair in every master into a value and a row, as for the glyph pairs.
+func classKerning(p *project.Project, gid map[string]int, pairs []kernPair,
+	kernings []map[string]map[string]float64, cell func([]float64) (int16, int)) *kernClasses {
+	if noClassKerning {
+		return nil
+	}
 	used1, used2 := map[string]bool{}, map[string]bool{}
-	for first, seconds := range p.Kerning {
-		if !strings.HasPrefix(first, "@") || len(first) < 2 {
-			continue
-		}
-		for second := range seconds {
-			if strings.HasPrefix(second, "@") && len(second) > 1 {
-				used1[first[1:]] = true
-				used2[second[1:]] = true
+	for _, kern := range kernings {
+		for first, seconds := range kern {
+			if !strings.HasPrefix(first, "@") || len(first) < 2 {
+				continue
+			}
+			for second := range seconds {
+				if strings.HasPrefix(second, "@") && len(second) > 1 {
+					used1[first[1:]] = true
+					used2[second[1:]] = true
+				}
 			}
 		}
 	}
@@ -61,14 +83,24 @@ func classKerning(p *project.Project, gid map[string]int, pairs []kernPair) *ker
 		return nil
 	}
 	n1, n2 := len(names1)+1, len(names2)+1
-	if 16+2*n1*n2 > maxPairSubtable {
+	if 16+4*n1*n2 > maxPairSubtable {
 		return nil
 	}
-	matrix := make([]int16, n1*n2)
+	matrix := make([]kernCell, n1*n2)
+	vals := make([]float64, len(kernings))
+	vary := false
 	for i, a := range names1 {
 		for j, b := range names2 {
-			if v, ok := p.Kerning["@"+a]["@"+b]; ok {
-				matrix[(i+1)*n2+j+1] = int16(math.Round(v))
+			set := false
+			for mi, kern := range kernings {
+				v, ok := kern["@"+a]["@"+b]
+				vals[mi] = math.Round(v)
+				set = set || ok
+			}
+			if set {
+				v, row := cell(vals)
+				matrix[(i+1)*n2+j+1] = kernCell{v, row}
+				vary = vary || row > 0
 			}
 		}
 	}
@@ -76,7 +108,7 @@ func classKerning(p *project.Project, gid map[string]int, pairs []kernPair) *ker
 	var ex []kernPair
 	for _, kp := range pairs {
 		resolved[[2]int{kp.left, kp.right}] = true
-		if a, ok := c1[kp.left]; ok && matrix[a*n2+c2[kp.right]] == kp.value {
+		if a, ok := c1[kp.left]; ok && matrix[a*n2+c2[kp.right]] == (kernCell{kp.value, kp.row}) {
 			continue
 		}
 		ex = append(ex, kp)
@@ -89,7 +121,7 @@ func classKerning(p *project.Project, gid map[string]int, pairs []kernPair) *ker
 	}
 	for l, a := range c1 {
 		for b := 1; b < n2; b++ {
-			if matrix[a*n2+b] == 0 {
+			if matrix[a*n2+b] == (kernCell{}) {
 				continue
 			}
 			for _, r := range members2[b] {
@@ -105,12 +137,28 @@ func classKerning(p *project.Project, gid map[string]int, pairs []kernPair) *ker
 		}
 		return ex[i].right < ex[j].right
 	})
-	sub := classSubtable(c1, c2, n1, n2, matrix)
-	// Pairs cost about 4 bytes each; the class table must save something.
-	if len(sub) > maxPairSubtable || len(sub)+4*len(ex) >= 4*len(pairs) {
+	sub := classSubtable(c1, c2, n1, n2, matrix, vary)
+	if sub == nil {
+		return nil
+	}
+	// The class table must make the kerning smaller than plain pairs.
+	plain, err := pairSubtables(pairs)
+	if err != nil {
+		return nil
+	}
+	subs, err := pairSubtables(ex)
+	if err != nil || size(subs)+len(sub) >= size(plain) {
 		return nil
 	}
 	return &kernClasses{exceptions: ex, sub: sub}
+}
+
+func size(subs [][]byte) int {
+	n := 0
+	for _, s := range subs {
+		n += len(s)
+	}
+	return n
 }
 
 func sortedNames(m map[string]bool) []string {
@@ -124,8 +172,10 @@ func sortedNames(m map[string]bool) []string {
 
 // classSubtable writes PairPos format 2 with the XAdvance of the first
 // glyph: coverage (the first glyphs), the two class definitions and the
-// class1 x class2 values.
-func classSubtable(c1, c2 map[int]int, n1, n2 int, matrix []int16) []byte {
+// class1 x class2 values. When some cells vary, every value also gets a
+// device offset (from the start of the subtable) to a VariationIndex table
+// for its row. Returns nil when it does not fit in 64 KB.
+func classSubtable(c1, c2 map[int]int, n1, n2 int, matrix []kernCell, vary bool) []byte {
 	var firsts []int
 	for id := range c1 {
 		firsts = append(firsts, id)
@@ -138,25 +188,62 @@ func classSubtable(c1, c2 map[int]int, n1, n2 int, matrix []int16) []byte {
 		coverage.u16(uint16(id))
 	}
 	cd1, cd2 := classDef(c1), classDef(c2)
-	records := 2 * n1 * n2
-	covAt := 16 + records
+	record := 2
+	if vary {
+		record = 4
+	}
+	covAt := 16 + record*n1*n2
 	cd1At := covAt + len(coverage.buf)
 	cd2At := cd1At + len(cd1)
+	devStart := cd2At + len(cd2)
+	if devStart > 0xFFFF {
+		return nil
+	}
+	format := uint16(0x0004) // XAdvance
+	if vary {
+		format |= 0x0040 // XAdvDevice
+	}
 	w := &writer{}
 	w.u16(2) // posFormat
 	w.u16(uint16(covAt))
-	w.u16(0x0004) // valueFormat1: XAdvance
+	w.u16(format) // valueFormat1
 	w.u16(0)      // valueFormat2: none
 	w.u16(uint16(cd1At))
 	w.u16(uint16(cd2At))
 	w.u16(uint16(n1))
 	w.u16(uint16(n2))
-	for _, v := range matrix {
-		w.i16(v)
+	devices := &writer{}
+	devAt := map[int]int{}
+	for _, c := range matrix {
+		w.i16(c.value)
+		if !vary {
+			continue
+		}
+		if c.row == 0 {
+			w.u16(0)
+			continue
+		}
+		at, ok := devAt[c.row]
+		if !ok {
+			at = devStart + len(devices.buf)
+			devAt[c.row] = at
+			devices.u16(0)                 // deltaSetOuterIndex: the one ItemVariationData
+			devices.u16(uint16(c.row - 1)) // deltaSetInnerIndex
+			devices.u16(0x8000)            // VariationIndex
+		}
+		w.u16(0) // patched below, once the offset is known to fit
+		if at > 0xFFFF {
+			return nil
+		}
+		binary.BigEndian.PutUint16(w.buf[len(w.buf)-2:], uint16(at))
 	}
 	w.bytes(coverage.buf)
 	w.bytes(cd1)
 	w.bytes(cd2)
+	w.bytes(devices.buf)
+	if len(w.buf) > maxPairSubtable {
+		return nil
+	}
 	return w.buf
 }
 

@@ -2,6 +2,7 @@ package fontgen
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"golang.org/x/image/font"
@@ -77,5 +78,62 @@ func TestClassKerning(t *testing.T) {
 	}
 	if classes := pairLookupOf(append(subs, fd.kernClasses.sub)); len(classes) >= len(plain) {
 		t.Errorf("classes take %d bytes, plain pairs %d", len(classes), len(plain))
+	}
+}
+
+// A variable font writes group kerning as classes too, with deltas per
+// cell, and every glyph keeps its kerning at every weight (checked against
+// the plain-pair font in HarfBuzz by SPLINE_FONT_OUT, see the commit).
+func TestVariableClassKerning(t *testing.T) {
+	p := varProject(t)
+	for i := range p.Glyphs {
+		g := &p.Glyphs[i]
+		switch {
+		case g.Unicode >= 'A' && g.Unicode <= 'M':
+			g.KernRight, g.KernLeft = "R1", "L1"
+		case g.Unicode >= 'N' && g.Unicode <= 'Z':
+			g.KernRight, g.KernLeft = "R2", "L2"
+		case g.Unicode >= 'a' && g.Unicode <= 'z':
+			g.KernRight, g.KernLeft = "R3", "L3"
+		}
+	}
+	p.Kerning = map[string]map[string]float64{
+		"@R1": {"@L1": -40, "@L2": -20, "@L3": -10},
+		"@R2": {"@L1": 30, "@L3": -25, "o": -5},
+		"@R3": {"@L3": -8},
+		"A":   {"V": -80, "B": 0},
+	}
+	p.Masters[1].Kerning = map[string]map[string]float64{ // Bold
+		"@R1": {"@L1": -60, "@L2": -20, "@L3": -30},
+		"@R2": {"@L1": 30, "@L3": -45, "o": -5},
+		"@R3": {"@L3": -8},
+		"A":   {"V": -120, "B": 0},
+	}
+	// Light keeps the Regular kerning.
+	fd := prepare(p, VarTTF)
+	if err := prepareVar(p, fd, fd.src); err != nil {
+		t.Fatal(err)
+	}
+	varyKerning(p, fd)
+	kc := classKerning(p, fd.gid, fd.kern, masterKernings(p, fd), fd.varRow)
+	if kc == nil {
+		t.Fatal("varying group kerning was not written as classes")
+	}
+	withClasses, err := Build(p, VarTTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noClassKerning = true
+	plain, err := Build(p, VarTTF)
+	noClassKerning = false
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withClasses) >= len(plain) {
+		t.Errorf("with classes %d bytes, plain pairs %d", len(withClasses), len(plain))
+	}
+	if out := os.Getenv("SPLINE_FONT_OUT"); out != "" {
+		os.WriteFile(out+".classes.ttf", withClasses, 0o644)
+		os.WriteFile(out+".plain.ttf", plain, 0o644)
 	}
 }

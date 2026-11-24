@@ -1,0 +1,8 @@
+# The actions are pinned to exact commits; this offers a PR when a new
+# version comes out, so the pins don't go stale.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

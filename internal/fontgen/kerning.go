@@ -291,11 +291,9 @@ func varyKerning(p *project.Project, fd *fontData) {
 	vf := fd.vf
 	values := make([]map[[2]int]float64, len(vf.masters))
 	keys := map[[2]int]bool{}
-	for mi, m := range vf.masters {
+	for mi, kern := range masterKernings(p, fd) {
 		q := *p
-		if mi > 0 && m.Kerning != nil {
-			q.Kerning = m.Kerning
-		}
+		q.Kerning = kern
 		values[mi] = map[[2]int]float64{}
 		for _, kp := range collectKerning(&q, fd.gid) {
 			k := [2]int{kp.left, kp.right}
@@ -303,37 +301,17 @@ func varyKerning(p *project.Project, fd *fontData) {
 			keys[k] = true
 		}
 	}
-	rowOf := map[string]int{}
 	var pairs []kernPair
+	vals := make([]float64, len(vf.masters))
 	for k := range keys {
-		base := values[0][k]
-		deltas := map[int]float64{}
-		row := make([]int16, len(vf.order))
-		moves := false
-		for oi, mi := range vf.order {
-			d := values[mi][k] - base
-			// Minus what the masters before it already give at its place.
-			for _, mj := range vf.order[:oi] {
-				d -= scalar(vf.regions[mj], vf.norm[mi]) * deltas[mj]
-			}
-			deltas[mi] = d
-			row[oi] = int16(math.Round(d))
-			moves = moves || row[oi] != 0
+		for mi := range vf.masters {
+			vals[mi] = values[mi][k]
 		}
-		kp := kernPair{left: k[0], right: k[1], value: int16(base)}
-		if moves {
-			key := fmt.Sprint(row)
-			r, ok := rowOf[key]
-			if !ok {
-				fd.kernRows = append(fd.kernRows, row)
-				r = len(fd.kernRows)
-				rowOf[key] = r
-			}
-			kp.row = r
-		} else if kp.value == 0 {
+		v, row := fd.varRow(vals)
+		if v == 0 && row == 0 {
 			continue
 		}
-		pairs = append(pairs, kp)
+		pairs = append(pairs, kernPair{left: k[0], right: k[1], value: v, row: row})
 	}
 	sort.Slice(pairs, func(i, j int) bool {
 		if pairs[i].left != pairs[j].left {
@@ -342,6 +320,64 @@ func varyKerning(p *project.Project, fd *fontData) {
 		return pairs[i].right < pairs[j].right
 	})
 	fd.kern = pairs
+}
+
+// masterKernings: the kerning of each master, the default's where a master
+// has none of its own.
+func masterKernings(p *project.Project, fd *fontData) []map[string]map[string]float64 {
+	out := make([]map[string]map[string]float64, len(fd.vf.masters))
+	for mi, m := range fd.vf.masters {
+		out[mi] = p.Kerning
+		if mi > 0 && m.Kerning != nil {
+			out[mi] = m.Kerning
+		}
+	}
+	return out
+}
+
+// varRow turns the values of a kerning pair in every master into the value
+// of the default and the number of its row of deltas (1-based, 0 when the
+// value is the same everywhere). Equal rows are stored once.
+func (fd *fontData) varRow(vals []float64) (int16, int) {
+	vf := fd.vf
+	base := vals[0]
+	deltas := map[int]float64{}
+	row := make([]int16, len(vf.order))
+	moves := false
+	for oi, mi := range vf.order {
+		d := vals[mi] - base
+		// Minus what the masters before it already give at its place.
+		for _, mj := range vf.order[:oi] {
+			d -= scalar(vf.regions[mj], vf.norm[mi]) * deltas[mj]
+		}
+		deltas[mi] = d
+		row[oi] = int16(math.Round(d))
+		moves = moves || row[oi] != 0
+	}
+	if !moves {
+		return int16(math.Round(base)), 0
+	}
+	if fd.kernRowOf == nil {
+		fd.kernRowOf = map[string]int{}
+	}
+	key := fmt.Sprint(row)
+	r, ok := fd.kernRowOf[key]
+	if !ok {
+		fd.kernRows = append(fd.kernRows, row)
+		r = len(fd.kernRows)
+		fd.kernRowOf[key] = r
+	}
+	return int16(math.Round(base)), r
+}
+
+// dropRowsAfter forgets the rows added after the first n.
+func (fd *fontData) dropRowsAfter(n int) {
+	fd.kernRows = fd.kernRows[:n]
+	for key, r := range fd.kernRowOf {
+		if r > n {
+			delete(fd.kernRowOf, key)
+		}
+	}
 }
 
 // buildVarStore writes the ItemVariationStore of the varying kerning: the

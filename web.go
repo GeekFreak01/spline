@@ -131,8 +131,7 @@ func (ws *webServer) routes() http.Handler {
 		if !ok {
 			return
 		}
-		defer release()
-		importFont(w, data)
+		ws.finish(w, release, func(w http.ResponseWriter) { importFont(w, data) })
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	return ws.guard(mux)
@@ -270,17 +269,74 @@ func (ws *webServer) handleExport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer release()
-	if isUFO {
-		writeUFO(w, body)
-		return
+	ws.finish(w, release, func(w http.ResponseWriter) {
+		if isUFO {
+			writeUFO(w, body)
+			return
+		}
+		data, status, err := buildFont(body, format)
+		if err != nil {
+			http.Error(w, err.Error(), status)
+			return
+		}
+		writeFont(w, format, data)
+	})
+}
+
+// buildTimeout: how long a visitor waits for a font build or import before
+// the server gives up answering (well inside the 60 s write timeout).
+var buildTimeout = 40 * time.Second
+
+// finish runs a build or import, holding the build slot, and sends its
+// result, or 503 when it takes longer than buildTimeout. The slot stays
+// taken until the work really ends, so slow builds can't pile up beyond
+// the number of cores.
+func (ws *webServer) finish(w http.ResponseWriter, release func(), work func(http.ResponseWriter)) {
+	res := &bufferedResponse{header: http.Header{}, code: http.StatusOK}
+	done := make(chan struct{})
+	go func() {
+		defer release()
+		defer close(done)
+		defer func() {
+			if v := recover(); v != nil { // net/http no longer catches it here
+				log.Printf("build: %v", v)
+				*res = bufferedResponse{header: http.Header{}, code: http.StatusInternalServerError}
+				res.body.WriteString("the font could not be built\n")
+			}
+		}()
+		work(res)
+	}()
+	select {
+	case <-done:
+		for k, v := range res.header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(res.code)
+		w.Write(res.body.Bytes())
+	case <-time.After(buildTimeout):
+		http.Error(w, "the font took too long to build, try a smaller one", http.StatusServiceUnavailable)
 	}
-	data, status, err := buildFont(body, format)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
+}
+
+// bufferedResponse holds a reply until it is known to be in time.
+type bufferedResponse struct {
+	header http.Header
+	code   int
+	body   bytes.Buffer
+	wrote  bool
+}
+
+func (b *bufferedResponse) Header() http.Header { return b.header }
+
+func (b *bufferedResponse) WriteHeader(code int) {
+	if !b.wrote {
+		b.code, b.wrote = code, true
 	}
-	writeFont(w, format, data)
+}
+
+func (b *bufferedResponse) Write(p []byte) (int, error) {
+	b.wrote = true
+	return b.body.Write(p)
 }
 
 // rateLimiter allows n events per window for each key (fixed window).
