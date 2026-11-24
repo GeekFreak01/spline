@@ -2411,6 +2411,7 @@ window.addEventListener('popstate', (e) => {
 const kernView = new KernView(app, $('kernCanvas'));
 kernView.showGroupMembers = store.get('spline.kernShowGroups') === '1';
 kernView.showMetrics = store.get('spline.kernShowMetrics') === '1';
+kernView.showMeasure = store.get('spline.kernMeasure') === '1';
 
 function toggleKernGroups(on = !kernView.showGroupMembers) {
   kernView.showGroupMembers = on;
@@ -2530,7 +2531,8 @@ function renderKernOptions() {
       ${[...Object.keys(KERN_SAMPLES), 'letter'].map((k) => `<option value="${k}" ${kernView.sample === k ? 'selected' : ''}>${esc(t('sample_' + k))}</option>`).join('')}
     </select></label></div>
     <label class="check" data-tip="${esc(t('kernShowGroupsTip'))}" data-key="${esc(keyLabel('kernShowGroups'))}"><input type="checkbox" id="kernShowGroups" ${kernView.showGroupMembers ? 'checked' : ''}>${esc(t('kernShowGroups'))}</label>
-    ${app.extended ? `<label class="check" data-tip="${esc(t('kernShowMetricsTip'))}"><input type="checkbox" id="kernShowMetrics" ${kernView.showMetrics ? 'checked' : ''}>${esc(t('kernShowMetrics'))}</label>` : ''}
+    ${app.extended ? `<label class="check" data-tip="${esc(t('kernShowMetricsTip'))}"><input type="checkbox" id="kernShowMetrics" ${kernView.showMetrics ? 'checked' : ''}>${esc(t('kernShowMetrics'))}</label>
+      <label class="check" data-tip="${esc(t('kernMeasureTip'))}"><input type="checkbox" id="kernMeasure" ${kernView.showMeasure ? 'checked' : ''}>${esc(t('kernMeasure'))}</label>` : ''}
     <div class="glyph-nav"><label>${esc(t('previewSize'))}<input type="range" id="kernSize" min="40" max="400" value="${kernView.size}"></label></div>`;
 }
 
@@ -3563,6 +3565,11 @@ $('optionsBar').addEventListener('input', (e) => {
 $('optionsBar').addEventListener('change', (e) => {
   if (e.target.id === 'kernSample' && e.target.value) setKernSample(e.target.value);
   if (e.target.id === 'kernShowGroups') toggleKernGroups(e.target.checked);
+  if (e.target.id === 'kernMeasure') {
+    kernView.showMeasure = e.target.checked;
+    store.set('spline.kernMeasure', e.target.checked ? '1' : '0');
+    kernView.render();
+  }
   if (e.target.id === 'kernShowMetrics') {
     kernView.showMetrics = e.target.checked;
     store.set('spline.kernShowMetrics', e.target.checked ? '1' : '0');
