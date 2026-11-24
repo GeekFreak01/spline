@@ -2461,6 +2461,23 @@ function previewAroundCurrent() {
   renderPreviewText();
 }
 $('previewCurrent').addEventListener('click', previewAroundCurrent);
+
+// Extended mode: looking at the preview "blind" (blurred, inverted, upside
+// down) shows the rhythm and colour of the text rather than the shapes.
+const BLIND = ['blur', 'invert', 'flip'];
+function applyBlind() {
+  for (const k of BLIND) {
+    const on = app.extended && store.get('spline.pv.' + k) === '1';
+    $('previewBody').classList.toggle('pv-' + k, on);
+    document.querySelector(`[data-blind="${k}"]`)?.setAttribute('aria-pressed', String(on));
+  }
+}
+document.querySelectorAll('[data-blind]').forEach((b) => b.addEventListener('click', () => {
+  const k = b.dataset.blind;
+  store.set('spline.pv.' + k, store.get('spline.pv.' + k) === '1' ? '0' : '1');
+  applyBlind();
+}));
+applyBlind();
 $('previewFeats').addEventListener('input', (e) => {
   if (e.target.dataset.pfAxis === undefined) return;
   if (e.target.dataset.pfAxis === '2') app.previewLoc2 = Number(e.target.value);
@@ -3928,6 +3945,7 @@ function setExtended(on) {
   if (app.mode === 'editor') { renderToolbar(); renderEditorOptions(); renderGlyphPanel(); editor.render(); }
   if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
   renderPreviewText();
+  applyBlind();
   toast(t(on ? 'extOn' : 'extOff'));
 }
 

@@ -650,6 +650,12 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .preview-out .mine { font-family: var(--preview-font), var(--font-guide); }
 .preview-out .missing { font-family: var(--font-guide); color: var(--text-3); }
 .preview-msg { margin: 0; color: var(--text-3); }
+.preview-blind { display: flex; gap: 2px; flex: none; }
+.preview-blind .btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); }
+.preview-body.pv-blur .preview-out { filter: blur(3px); }
+.preview-body.pv-invert { background: var(--text); }
+.preview-body.pv-invert .preview-out { color: var(--bg-app); }
+.preview-body.pv-flip .preview-out { transform: rotate(180deg); }
 .preview-msg:empty { display: none; }
 
 /* ------------------------------------------------------------- status bar */
