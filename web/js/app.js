@@ -3,9 +3,10 @@ import { icon, fillIcons } from './icons.js';
 import { CATEGORIES, COLORS } from './glyphsets.js';
 import {
   newProject, validateProject, serialize, addGlyphForChar, charOf, isDrawn, svgPath, glyphBox,
-  translateGlyph, normalizeDirections, hasOutline, rectContour, ellipseContour, polyBox,
+  translateGlyph, normalizeDirections, hasOutline, rectContour, ellipseContour, polyBox, glyphForCode, hasCode,
 } from './model.js';
 import { refreshComponents, usedBy, decompose } from './components.js';
+import { scaleProject } from './upm.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { isSmart, editingState, editState, saveSmart, addProp, removeProp, smartProblems } from './smart.js';
 import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis, layerOf,
@@ -394,6 +395,8 @@ function menuDefs() {
       { label: 'saveAs', key: keyLabel('saveAs'), run: () => save(true) },
       '-',
       { label: 'fontInfo', key: keyLabel('fontInfo'), run: editFontInfo },
+      { label: 'upmMenu', run: upmDialog, ext: true },
+      { label: 'imMenu', run: () => pickFiles('metrics'), ext: true },
       { label: 'famMenu', run: familyDialog },
       '-',
       { label: 'exportTTF', key: keyLabel('exportTTF'), run: () => exportFont('ttf') },
@@ -454,6 +457,7 @@ function menuDefs() {
       { label: 'addGlyph', run: addGlyphs },
       { label: 'drawGlyph', key: 'Enter', run: () => openEditor([...app.selected][0]), enabled: !inEditor && app.selected.size === 1 },
       { label: 'deleteGlyph', run: deleteSelectedGlyphs, enabled: !inEditor && app.selected.size > 0 },
+      { label: 'rnManyMenu', run: renameManyDialog, enabled: !inEditor, ext: true },
       '-',
       { label: 'autoSpacing', key: keyLabel('autoSpacing'), run: () => glyphAction('spacing'), enabled: inEditor || app.selected.size > 0 },
       { label: 'simplify', key: keyLabel('simplify'), run: simplifyGlyphs, enabled: inEditor || app.selected.size > 0 },
@@ -853,7 +857,7 @@ function tableHTML(list) {
     return `<tr class="trow" data-name="${esc(g.name)}" aria-selected="${app.selected.has(g.name)}">
       <td class="tg">${hasOutline(g) ? glyphSVG(g, 'tglyph') : `<span class="ghost">${esc(charOf(g))}</span>`}</td>
       <td><input type="text" data-cell="name" aria-label="${esc(t('tc_name'))} ${esc(g.name)}" value="${esc(g.name)}" spellcheck="false"></td>
-      <td><input type="text" data-cell="unicode" aria-label="Unicode ${esc(g.name)}" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></td>
+      <td><input type="text" data-cell="unicode" aria-label="Unicode ${esc(g.name)}" value="${codesText(g)}" placeholder="—" spellcheck="false"></td>
       <td>${num(g, 'advance', g.advance)}</td><td>${num(g, 'lsb', sd.lsb)}</td><td>${num(g, 'rsb', sd.rsb)}</td>
       <td><input type="text" data-cell="tags" aria-label="${esc(t('tc_tags'))} ${esc(g.name)}" value="${esc((g.tags || []).join(', '))}" spellcheck="false"></td>
       <td><input type="text" data-cell="note" aria-label="${esc(t('tc_note'))} ${esc(g.name)}" value="${esc(g.note || '')}"></td>
@@ -870,7 +874,7 @@ function onTableChange(e) {
   if (!cell || !g) return;
   const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value.trim();
   if (cell === 'name') { if (!renameGlyph(g, v)) e.target.value = g.name; return; }
-  if (cell === 'unicode') { if (!setUnicode(g, v)) e.target.value = g.unicode ? 'U+' + hex(g) : ''; return; }
+  if (cell === 'unicode') { if (!setUnicode(g, v)) e.target.value = codesText(g); return; }
   app.history.push(g);
   if (cell === 'tags') setTags(g, v);
   if (cell === 'note') { if (v) g.note = v; else delete g.note; }
@@ -1677,6 +1681,7 @@ function deleteSelection() {
 
 // Extended mode: glyphs by code and range. Presets cover whole alphabets.
 const AG_PRESETS = [
+  ['latinBasic', 'U+0041-005A, U+0061-007A'], ['cyrillicBasic', 'U+0410-044F, U+0401, U+0451'], ['digits', 'U+0030-0039'],
   ['latin1', 'U+00C0-00FF'], ['latinExtA', 'U+0100-017F'], ['cyrillic', 'U+0400-045F'],
   ['cyrillicExt', 'U+0460-04FF'], ['greek', 'U+0391-03C9'], ['punctExt', 'U+2010-2027, U+2030-203A, U+20AC, U+2116, U+2122'],
 ];
@@ -1708,7 +1713,14 @@ async function addGlyphs() {
     title: t('addGlyph').replace('…', ''),
     body: `<label class="field">${esc(t('addGlyphHint'))}<input type="text" name="chars" ${app.extended ? '' : 'required'} maxlength="500" autocomplete="off"></label>
       ${app.extended ? `<label class="field">${esc(t('agCodes'))}<input type="text" name="codes" id="agCodes" maxlength="500" autocomplete="off" placeholder="U+0400-045F, uni0490, А-Я"></label>
-      <div class="ag-presets">${AG_PRESETS.map(([id, codes]) => `<button class="btn" type="button" data-ag="${codes}">${esc(t('ag_' + id))}</button>`).join('')}</div>` : ''}`,
+      <div class="ag-presets">${AG_PRESETS.map(([id, codes]) => {
+        // How many of the script's characters the font has: a full one is
+        // marked done, the others add only what is missing.
+        const list = parseCodes(codes) || [], have = list.filter((c) => glyphForCode(app.project, c.codePointAt(0))).length;
+        const done = have === list.length;
+        return `<button class="btn${done ? ' done' : ''}" type="button" data-ag="${codes}" data-tip="${esc(t(done ? 'agDone' : 'agMissing', { n: list.length - have }))}">
+          ${done ? icon('check', 13) : ''}<span>${esc(t('ag_' + id))}</span><em class="ag-count">${have}/${list.length}</em></button>`;
+      }).join('')}</div>` : ''}`,
     okLabel: t('add'),
     onOpen: (dlg) => dlg.querySelectorAll('[data-ag]').forEach((b) => b.addEventListener('click', () => {
       const f = dlg.querySelector('#agCodes');
@@ -1729,6 +1741,30 @@ async function addGlyphs() {
   if (app.mode === 'editor') showGrid();
   renderAll();
   $('glyphGrid').querySelector(`[data-name="${CSS.escape(added[0].name)}"]`)?.scrollIntoView({ block: 'center' });
+}
+
+// Extended mode: the whole font to another units-per-em (see upm.js).
+async function upmDialog() {
+  const cur = app.project.info.unitsPerEm;
+  const data = await showDialog({
+    title: t('upmTitle'),
+    body: `<label class="field">${esc(t('upmNew', { n: cur }))}<input type="number" name="upm" value="${cur === 1000 ? 2048 : 1000}" min="16" max="16384" step="1" required list="upmList"></label>
+      <datalist id="upmList"><option value="1000"><option value="1024"><option value="2048"><option value="4096"></datalist>
+      <p class="hint warn">${esc(t('upmNoUndo'))}</p>`,
+    okLabel: t('upmApply'),
+  });
+  if (!data) return;
+  const upm = Math.round(Number(data.get('upm')));
+  if (!(upm >= 16 && upm <= 16384) || upm === cur) return;
+  endTransform();
+  scaleProject(app.project, upm);
+  app.history.clear(); // the steps before hold the old size
+  refreshComponents(app.project);
+  markChanged();
+  renderAll();
+  if (app.mode === 'editor') { renderGlyphPanel(); editor.fit(); }
+  if (app.mode === 'kern') { kernView.render(); renderKernPanel(); }
+  toast(t('upmDone', { a: cur, b: upm }));
 }
 
 async function editFontInfo() {
@@ -2301,7 +2337,7 @@ function parseLine(text) {
       if (m && findGlyph(m[1])) { out.push(m[1]); i += m[0].length; continue; }
     }
     const ch = String.fromCodePoint(text.codePointAt(i));
-    const g = app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
+    const g = glyphForCode(app.project, ch.codePointAt(0));
     if (g) out.push(g.name);
     i += ch.length;
   }
@@ -2444,7 +2480,7 @@ function letterSample(g) {
     [/^[0-9]$/, '01', '0123456789'],
   ];
   const [, ctl, set] = kinds.find(([re]) => re.test(ch)) || [null, 'HO', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
-  const have = Array.from(set).filter((c) => app.project.glyphs.some((x) => x.unicode === c.codePointAt(0)));
+  const have = Array.from(set).filter((c) => glyphForCode(app.project, c.codePointAt(0)));
   const [a, b] = Array.from(ctl);
   return `${a}${a}${ch}${a}${a} ${b}${b}${ch}${b}${b} ${have.map((c) => ch + c).join('')}${ch}`;
 }
@@ -2825,7 +2861,7 @@ function parseGlyphList(text) {
   for (const token of String(text).trim().split(/\s+/).filter(Boolean)) {
     if (findGlyph(token)) { names.push(token); continue; }
     for (const ch of Array.from(token)) {
-      const g = app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
+      const g = glyphForCode(app.project, ch.codePointAt(0));
       if (g) names.push(g.name); else unknown.push(ch);
     }
   }
@@ -3793,10 +3829,10 @@ const NAME_RE = /^[A-Za-z_][A-Za-z0-9._-]{0,62}$/;
 
 // Renames a glyph and every place that refers to it: kerning, variants,
 // ligatures, components, metric keys.
-function renameGlyph(g, name) {
+function renameGlyph(g, name, quiet = false) {
   if (name === g.name) return true;
-  if (!NAME_RE.test(name)) { toast(t('rnBad'), 'error'); return false; }
-  if (findGlyph(name)) { toast(t('rnTaken', { name }), 'error'); return false; }
+  if (!NAME_RE.test(name)) { if (!quiet) toast(t('rnBad'), 'error'); return false; }
+  if (findGlyph(name)) { if (!quiet) toast(t('rnTaken', { name }), 'error'); return false; }
   const p = app.project, old = g.name;
   app.history.pushGroups(p);
   app.history.push(g);
@@ -3825,18 +3861,65 @@ function renameGlyph(g, name) {
   return true;
 }
 
+// "U+0041" or a character; in the extended mode a list ("U+0041, U+0410"):
+// the first is the glyph's own character, the others draw with it too.
 function setUnicode(g, text) {
-  if (!text) { app.history.push(g); delete g.unicode; markChanged(); renderGrid(); return true; }
-  const m = /^(?:U\+|0x)?([0-9a-f]{1,6})$/i.exec(text) || ([...text].length === 1 ? [null, text.codePointAt(0).toString(16)] : null);
-  const cp = m && parseInt(m[1], 16);
-  if (!cp || cp > 0x10ffff) { toast(t('ucBad'), 'error'); return false; }
-  const other = app.project.glyphs.find((x) => x !== g && x.unicode === cp);
-  if (other) { toast(t('ucTaken', { name: other.name }), 'error'); return false; }
+  const parts = String(text).split(/[,;\s]+/).filter(Boolean);
+  if (!parts.length) { app.history.push(g); delete g.unicode; delete g.unicodes; markChanged(); renderGrid(); return true; }
+  if (parts.length > (app.extended ? 33 : 1)) { toast(t('ucBad'), 'error'); return false; }
+  const cps = [];
+  for (const part of parts) {
+    const m = /^(?:U\+|0x|uni)?([0-9a-f]{1,6})$/i.exec(part) || ([...part].length === 1 ? [null, part.codePointAt(0).toString(16)] : null);
+    const cp = m && parseInt(m[1], 16);
+    if (!cp || cp > 0x10ffff) { toast(t('ucBad'), 'error'); return false; }
+    const other = app.project.glyphs.find((x) => x !== g && hasCode(x, cp));
+    if (other) { toast(t('ucTaken', { name: other.name }), 'error'); return false; }
+    if (!cps.includes(cp)) cps.push(cp);
+  }
   app.history.push(g);
-  g.unicode = cp;
+  g.unicode = cps[0];
+  if (cps.length > 1) g.unicodes = cps.slice(1); else delete g.unicodes;
   markChanged();
   renderGrid();
   return true;
+}
+
+// The glyph's characters as typed in the Unicode field.
+const codesText = (g) => [g.unicode, ...(g.unicodes || [])].filter(Boolean).map((u) => 'U+' + u.toString(16).toUpperCase().padStart(4, '0')).join(', ');
+
+// Extended mode: renames the selected glyphs (all when none is selected)
+// with find and replace, plain text or a regular expression ("$" + ".ss01"
+// adds a suffix). Kerning, rules, components and keys follow, as for one.
+async function renameManyDialog() {
+  const list = selectedGlyphs().length ? selectedGlyphs() : app.project.glyphs;
+  const plan = (find, repl, re) => {
+    let rx = null;
+    if (re) { try { rx = new RegExp(find, 'g'); } catch { return null; } }
+    return list.map((g) => ({ g, to: rx ? g.name.replace(rx, repl) : find ? g.name.split(find).join(repl) : g.name })).filter((x) => x.to !== x.g.name);
+  };
+  const show = (dlg) => {
+    const f = dlg.querySelector('[name=find]').value, r = dlg.querySelector('[name=repl]').value, re = dlg.querySelector('[name=regex]').checked;
+    const p = plan(f, r, re), out = dlg.querySelector('.rn-preview');
+    if (!p) { out.textContent = t('rnRegexBad'); return; }
+    out.innerHTML = p.length ? p.slice(0, 12).map((x) => `<div><code>${esc(x.g.name)}</code> → <code class="${NAME_RE.test(x.to) && !findGlyph(x.to) ? '' : 'bad'}">${esc(x.to)}</code></div>`).join('') + (p.length > 12 ? `<div class="hint">${esc(t('rnMore', { n: p.length - 12 }))}</div>` : '') : `<span class="hint">${esc(t('rnNothing'))}</span>`;
+  };
+  const data = await showDialog({
+    title: t('rnManyTitle', { n: list.length }),
+    body: `<div class="field-row">
+        <label class="field">${esc(t('rnFind'))}<input type="text" name="find" spellcheck="false" autocomplete="off"></label>
+        <label class="field">${esc(t('rnReplace'))}<input type="text" name="repl" spellcheck="false" autocomplete="off"></label>
+      </div>
+      <label class="check" data-tip="${esc(t('rnRegexTip'))}"><input type="checkbox" name="regex">${esc(t('rnRegex'))}</label>
+      <div class="rn-preview" aria-live="polite"></div>`,
+    okLabel: t('rnApply'),
+    onOpen: (dlg) => { dlg.addEventListener('input', () => show(dlg)); show(dlg); },
+  });
+  if (!data) return;
+  const p = plan(String(data.get('find') || ''), String(data.get('repl') || ''), !!data.get('regex'));
+  if (!p?.length) return;
+  let done = 0;
+  app.history.group(() => { for (const { g, to } of p) if (renameGlyph(g, to, true)) done++; });
+  toast(done === p.length ? t('rnDone', { n: done }) : t('rnPartly', { n: done, m: p.length - done }), done === p.length ? 'ok' : 'error');
 }
 
 function setTags(g, text) {
@@ -3846,7 +3929,7 @@ function setTags(g, text) {
 
 function infoFieldsHTML(g) {
   return `<label class="prop"><span>${esc(t('tc_name'))}</span><input type="text" data-info="name" value="${esc(g.name)}" spellcheck="false"></label>
-    <label class="prop"><span>Unicode</span><input type="text" data-info="unicode" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></label>
+    <label class="prop"><span>Unicode</span><input type="text" data-info="unicode" value="${codesText(g)}" placeholder="—" spellcheck="false"></label>
     <label class="prop"><span>${esc(t('tc_tags'))}</span><input type="text" data-info="tags" value="${esc((g.tags || []).join(', '))}" placeholder="${esc(t('tagsPh'))}" spellcheck="false"></label>
     <label class="prop"><span>${esc(t('tc_note'))}</span><input type="text" data-info="note" value="${esc(g.note || '')}"></label>
     <label class="check" data-tip="${esc(t(isPartGlyph(g) ? 'partNoExport' : 'exportTip'))}"><input type="checkbox" data-info="export" ${g.noExport || isPartGlyph(g) ? '' : 'checked'} ${isPartGlyph(g) ? 'disabled' : ''}>${esc(t('exportIn'))}</label>`;
@@ -3858,7 +3941,7 @@ function onInfoChange(e) {
   if (!k || !g) return false;
   const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value.trim();
   if (k === 'name') { if (!renameGlyph(g, v)) e.target.value = g.name; return true; }
-  if (k === 'unicode') { if (!setUnicode(g, v)) e.target.value = g.unicode ? 'U+' + hex(g) : ''; return true; }
+  if (k === 'unicode') { if (!setUnicode(g, v)) e.target.value = codesText(g); return true; }
   app.history.push(g);
   if (k === 'tags') setTags(g, v);
   if (k === 'note') { if (v) g.note = v; else delete g.note; }
@@ -5120,7 +5203,7 @@ function alignPoints() {
 
 // ================================================================ letters from parts
 
-const glyphByChar = (ch) => app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
+const glyphByChar = (ch) => glyphForCode(app.project, ch.codePointAt(0));
 const composeState = (g) => (g.compose ? 'auto' : g.composeOff ? 'manual' : 'none');
 
 // Й = И + ˘: tells how the letter is made and offers the other way.
@@ -5345,6 +5428,70 @@ function underlaySection(g) {
 
 const isFontFile = (f) => /\.(ttf|otf|ufoz|zip)$/i.test(f?.name || '');
 
+// A font file read into a project without opening it (for importing from).
+async function fontFileProject(file) {
+  const r = await fetch('/api/import-font', {
+    method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/octet-stream' }, body: file,
+  });
+  if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  return validateProject((await r.json()).project);
+}
+
+// Extended mode: sidebearings, widths, kerning and kerning groups taken
+// from another font (.sp, TTF, OTF, UFO). Glyphs match by character, then
+// by name; values are scaled when the two fonts differ in UPM.
+async function importMetricsFrom(file) {
+  let src;
+  try { src = isFontFile(file) ? await fontFileProject(file) : await readProjectFile(file); } catch (err) { toast(t('openError', { err: err.message }), 'error'); return; }
+  const p = app.project, k = p.info.unitsPerEm / (src.info.unitsPerEm || 1000);
+  const match = new Map(); // source name -> glyph here
+  for (const sg of src.glyphs) {
+    const g = (sg.unicode && glyphForCode(p, sg.unicode)) || findGlyph(sg.name);
+    if (g) match.set(sg.name, g);
+  }
+  const pairs = Object.values(src.kerning || {}).reduce((a, r) => a + Object.keys(r).length, 0);
+  const data = await showDialog({
+    title: t('imTitle', { name: src.info.familyName }),
+    body: `<p class="hint">${esc(t('imMatched', { n: match.size, total: src.glyphs.length }))}</p>
+      <label class="check"><input type="checkbox" name="sb" checked>${esc(t('imSidebearings'))}</label>
+      <label class="check"><input type="checkbox" name="kern" ${pairs ? 'checked' : 'disabled'}>${esc(t('imKerning', { n: pairs }))}</label>
+      <label class="check"><input type="checkbox" name="groups" checked>${esc(t('imGroups'))}</label>`,
+    okLabel: t('imApply'),
+  });
+  if (!data || !match.size) return;
+  const R = (v) => Math.round(v * k);
+  let changed = 0;
+  app.history.group(() => {
+    if (data.get('kern')) app.history.pushKerning(p);
+    if (data.get('groups')) app.history.pushGroups(p);
+    for (const [name, g] of match) {
+      if (g.locked) continue;
+      const sg = src.glyphs.find((x) => x.name === name);
+      app.history.push(g);
+      if (data.get('sb')) {
+        const box = glyphBox(sg);
+        if (box && glyphBox(g)) { setMetric(g, 'lsb', R(box.minX)); setMetric(g, 'rsb', R(sg.advance - box.maxX)); } else setMetric(g, 'advance', R(sg.advance));
+      }
+      if (data.get('groups')) for (const side of ['kernLeft', 'kernRight']) { if (sg[side]) g[side] = sg[side]; else delete g[side]; }
+      changed++;
+    }
+    if (data.get('kern')) {
+      // Glyph names become the names here; group keys ("@name") stay.
+      const key = (n) => (n.startsWith('@') ? n : match.get(n)?.name);
+      for (const [l, row] of Object.entries(src.kerning || {})) {
+        const kl = key(l);
+        if (!kl) continue;
+        for (const [r, v] of Object.entries(row)) { const kr = key(r); if (kr) (p.kerning[kl] ||= {})[kr] = R(v); }
+      }
+    }
+  });
+  markChanged();
+  renderAll();
+  if (app.mode === 'editor') { renderGlyphPanel(); editor.render(); }
+  if (app.mode === 'kern') { kernView.render(); renderKernPanel(); }
+  toast(t('imDone', { n: changed }));
+}
+
 // A ready font opens as a new project (not saved yet).
 async function openFontFile(file, ask = false) {
   if (ask && app.dirty && !(await confirmDialog(t('confirmNew'), t('ok'), false))) return;
@@ -5508,7 +5655,7 @@ async function openDialog() {
 function pickFiles(mode) {
   const input = $('fileInput');
   input.dataset.mode = mode;
-  input.accept = { svg: '.svg,image/svg+xml', image: 'image/png,image/jpeg,image/webp,image/gif', font: '.ttf,.otf,.ufoz,.zip' }[mode]
+  input.accept = { svg: '.svg,image/svg+xml', image: 'image/png,image/jpeg,image/webp,image/gif', font: '.ttf,.otf,.ufoz,.zip', metrics: '.sp,.json,.ttf,.otf,.ufoz,.zip' }[mode]
     || '.sp,.json,.ttf,.otf,.ufoz,.zip,application/json';
   input.multiple = mode === 'svg';
   input.click();
@@ -5521,6 +5668,7 @@ $('fileInput').addEventListener('change', async (e) => {
   const mode = e.target.dataset.mode;
   if (mode === 'svg') importSvgFiles(files);
   else if (mode === 'image') setUnderlay(underlayTarget(), files[0]);
+  else if (mode === 'metrics') importMetricsFrom(files[0]);
   else if (isFontFile(files[0])) openFontFile(files[0], mode === 'font');
   else if (mode === 'import') {
     try { mergeGlyphs((await readProjectFile(files[0])).glyphs); } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
@@ -5944,7 +6092,7 @@ function schedulePreview(delay = 500) {
 // of the time, and the site's limits are not reached.
 function previewBody(q) {
   const cps = new Set([...previewText()].map((c) => c.codePointAt(0)));
-  const glyphs = q.glyphs.filter((g) => !g.unicode || cps.has(g.unicode))
+  const glyphs = q.glyphs.filter((g) => !g.unicode || cps.has(g.unicode) || g.unicodes?.some((u) => cps.has(u)))
     .map(({ image, snapshots, background, note, layers, ...g }) => g);
   const { masters, axis, axis2, styles, activeMaster, ...rest } = q;
   return serialize({ ...rest, glyphs });
@@ -6047,7 +6195,7 @@ function renderPreviewText() {
   if (!app.project) return;
   renderPreviewFeatures();
   applyPreviewFeatures();
-  const drawn = new Set(app.project.glyphs.filter((g) => hasOutline(g) || g.unicode === 32).map((g) => g.unicode));
+  const drawn = new Set(app.project.glyphs.filter((g) => hasOutline(g) || g.unicode === 32).flatMap((g) => [g.unicode, ...(g.unicodes || [])]));
   const out = $('previewOut');
   out.textContent = '';
   let run = '', runMine = null;

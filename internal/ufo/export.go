@@ -327,8 +327,10 @@ func glif(g project.Glyph, masterID string) []byte {
 	f := func(v float64) string { return strconv.FormatFloat(math.Round(v*100)/100, 'f', -1, 64) }
 	fmt.Fprintf(&b, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<glyph name=\"%s\" format=\"2\">\n", esc(g.Name))
 	fmt.Fprintf(&b, "  <advance width=\"%s\"/>\n", f(advance))
-	if g.Unicode > 0 {
-		fmt.Fprintf(&b, "  <unicode hex=\"%04X\"/>\n", g.Unicode)
+	for _, u := range append([]int{g.Unicode}, g.Unicodes...) {
+		if u > 0 {
+			fmt.Fprintf(&b, "  <unicode hex=\"%04X\"/>\n", u)
+		}
 	}
 	if g.Note != "" {
 		fmt.Fprintf(&b, "  <note>%s</note>\n", esc(g.Note))

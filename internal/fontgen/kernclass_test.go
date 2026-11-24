@@ -137,3 +137,24 @@ func TestVariableClassKerning(t *testing.T) {
 		os.WriteFile(out+".plain.ttf", plain, 0o644)
 	}
 }
+
+// A glyph with more characters (Unicodes) is found by each of them.
+func TestExtraUnicodes(t *testing.T) {
+	p := testProject()
+	p.Glyphs[1].Unicodes = []int{0x410, 0x391} // Cyrillic А, Greek Α
+	data, err := Build(p, TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := sfnt.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf sfnt.Buffer
+	own, _ := f.GlyphIndex(&buf, rune(p.Glyphs[1].Unicode))
+	for _, r := range []rune{0x410, 0x391} {
+		if gi, err := f.GlyphIndex(&buf, r); err != nil || gi == 0 || gi != own {
+			t.Errorf("U+%04X maps to %d, want %d (%v)", r, gi, own, err)
+		}
+	}
+}

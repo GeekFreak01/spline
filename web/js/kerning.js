@@ -1,6 +1,6 @@
 // Kerning view: a line of text set with the font's own outlines. The cursor
 // sits between two letters; that pair is the one being kerned.
-import { tracePath, charOf, glyphBox, hasOutline, outline, flatten } from './model.js';
+import { tracePath, charOf, glyphBox, hasOutline, outline, flatten, glyphForCode } from './model.js';
 
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -138,7 +138,7 @@ export class KernView {
 
   glyphFor(ch) {
     const cp = ch.codePointAt(0);
-    return this.app.project.glyphs.find((g) => g.unicode === cp) || null;
+    return glyphForCode(this.app.project, cp);
   }
 
   // The pair at the cursor: { left, right } glyphs, or null.

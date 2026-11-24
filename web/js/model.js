@@ -21,9 +21,14 @@ export function newProject({ family = 'Мой шрифт', sets = ['latin', 'cyr
   return p;
 }
 
+// A glyph draws its own character and, in the extended mode, more of them
+// (unicodes: the Latin A also as the Cyrillic А).
+export const hasCode = (g, cp) => g.unicode === cp || !!g.unicodes?.includes(cp);
+export const glyphForCode = (p, cp) => p.glyphs.find((g) => g.unicode === cp) || p.glyphs.find((g) => g.unicodes?.includes(cp)) || null;
+
 export function addGlyphForChar(p, ch) {
   const cp = ch.codePointAt(0);
-  if (p.glyphs.some((g) => g.unicode === cp)) return null;
+  if (p.glyphs.some((g) => hasCode(g, cp))) return null;
   let name = glyphNameFor(ch);
   while (p.glyphs.some((g) => g.name === name)) name += '.alt';
   const g = { name, unicode: cp, advance: defaultAdvance(ch), contours: [] };
@@ -147,6 +152,8 @@ export function validateProject(p) {
     if (badContours(g.contours)) throw new Error(`the file is damaged: glyph "${g.name}"`);
     g.advance = Number.isFinite(g.advance) ? g.advance : 600;
     if (!(Number.isInteger(g.unicode) && g.unicode > 0 && g.unicode <= 0x10FFFF)) delete g.unicode;
+    if (Array.isArray(g.unicodes) && g.unicode) g.unicodes = [...new Set(g.unicodes.filter((u) => Number.isInteger(u) && u > 0 && u <= 0x10FFFF && u !== g.unicode))].slice(0, 32);
+    if (!g.unicodes?.length) delete g.unicodes;
     if (!COLORS.includes(g.color)) delete g.color;
     for (const k of ['kernLeft', 'kernRight']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];
     if (g.smart) {
