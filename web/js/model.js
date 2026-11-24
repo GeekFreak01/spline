@@ -21,9 +21,14 @@ export function newProject({ family = 'Мой шрифт', sets = ['latin', 'cyr
   return p;
 }
 
+// A glyph draws its own character and, in the extended mode, more of them
+// (unicodes: the Latin A also as the Cyrillic А).
+export const hasCode = (g, cp) => g.unicode === cp || !!g.unicodes?.includes(cp);
+export const glyphForCode = (p, cp) => p.glyphs.find((g) => g.unicode === cp) || p.glyphs.find((g) => g.unicodes?.includes(cp)) || null;
+
 export function addGlyphForChar(p, ch) {
   const cp = ch.codePointAt(0);
-  if (p.glyphs.some((g) => g.unicode === cp)) return null;
+  if (p.glyphs.some((g) => hasCode(g, cp))) return null;
   let name = glyphNameFor(ch);
   while (p.glyphs.some((g) => g.name === name)) name += '.alt';
   const g = { name, unicode: cp, advance: defaultAdvance(ch), contours: [] };
@@ -51,6 +56,20 @@ export function isDrawn(g) {
 const badPoint = (q) => !q || !Number.isFinite(q.x) || !Number.isFinite(q.y);
 const badContours = (cs) => !Array.isArray(cs) || cs.some((c) => !c || typeof c !== 'object' || (c.nodes !== undefined && !Array.isArray(c.nodes))
   || (c.nodes || []).some((n) => badPoint(n) || (n.in && badPoint(n.in)) || (n.out && badPoint(n.out))));
+
+// Ruler guides: horizontal (axis y at pos), vertical (axis x at pos) or, in
+// the extended mode, at an angle through a point (axis a); a name and a
+// lock are optional.
+function cleanGuides(list) {
+  return (Array.isArray(list) ? list : []).filter((g) => g && (((g.axis === 'x' || g.axis === 'y') && Number.isFinite(g.pos))
+    || (g.axis === 'a' && Number.isFinite(g.x) && Number.isFinite(g.y) && Number.isFinite(g.angle))))
+    .slice(0, 200)
+    .map((g) => ({
+      ...(g.axis === 'a' ? { axis: 'a', x: g.x, y: g.y, angle: g.angle } : { axis: g.axis, pos: g.pos }),
+      ...(typeof g.name === 'string' && g.name.trim() ? { name: g.name.trim().slice(0, 40) } : {}),
+      ...(g.locked === true ? { locked: true } : {}),
+    }));
+}
 
 // Accepts any parsed JSON and returns a clean project or throws.
 export function validateProject(p) {
@@ -86,8 +105,7 @@ export function validateProject(p) {
   p.ligatures = (Array.isArray(p.ligatures) ? p.ligatures : [])
     .filter((l) => l && typeof l.use === 'string' && l.use && names(l.glyphs).length >= 2)
     .map((l) => ({ glyphs: names(l.glyphs), use: l.use }));
-  p.guides = (Array.isArray(p.guides) ? p.guides : [])
-    .filter((g) => g && (g.axis === 'x' || g.axis === 'y') && Number.isFinite(g.pos));
+  p.guides = cleanGuides(p.guides);
   // Masters (extended mode): at least two, each with an id, a name and a
   // place on the axis; the file always holds the default one in contours.
   if (!(Array.isArray(p.masters) && p.masters.length > 1 && p.masters.every((m) => m && typeof m.id === 'string' && Number.isFinite(m.loc)))) {
@@ -134,6 +152,8 @@ export function validateProject(p) {
     if (badContours(g.contours)) throw new Error(`the file is damaged: glyph "${g.name}"`);
     g.advance = Number.isFinite(g.advance) ? g.advance : 600;
     if (!(Number.isInteger(g.unicode) && g.unicode > 0 && g.unicode <= 0x10FFFF)) delete g.unicode;
+    if (Array.isArray(g.unicodes) && g.unicode) g.unicodes = [...new Set(g.unicodes.filter((u) => Number.isInteger(u) && u > 0 && u <= 0x10FFFF && u !== g.unicode))].slice(0, 32);
+    if (!g.unicodes?.length) delete g.unicodes;
     if (!COLORS.includes(g.color)) delete g.color;
     for (const k of ['kernLeft', 'kernRight']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];
     if (g.smart) {
@@ -159,6 +179,16 @@ export function validateProject(p) {
     if (!g.tags?.length) delete g.tags;
     if (typeof g.note !== 'string' || !g.note) delete g.note;
     if (g.noExport !== true) delete g.noExport;
+    if (g.locked !== true) delete g.locked;
+    g.guides = cleanGuides(g.guides);
+    // Notes on the canvas (extended mode): never part of the font.
+    const NOTE = { text: ['x', 'y'], plus: ['x', 'y'], minus: ['x', 'y'], arrow: ['x', 'y', 'x2', 'y2'], circle: ['x', 'y', 'r'] };
+    g.annotations = (Array.isArray(g.annotations) ? g.annotations : [])
+      .filter((a) => a && NOTE[a.type] && NOTE[a.type].every((k) => Number.isFinite(a[k])) && (a.type !== 'text' || (typeof a.text === 'string' && a.text)))
+      .slice(0, 100)
+      .map((a) => ({ type: a.type, ...Object.fromEntries(NOTE[a.type].map((k) => [k, a[k]])), ...(a.type === 'text' ? { text: a.text.slice(0, 500) } : {}) }));
+    if (!g.annotations.length) delete g.annotations;
+    if (!g.guides.length) delete g.guides;
     if (Array.isArray(g.snapshots)) g.snapshots = g.snapshots.filter((x) => x && Array.isArray(x.contours) && Number.isFinite(x.advance)).slice(-20);
     if (!g.snapshots?.length) delete g.snapshots;
     for (const k of ['lsbKey', 'rsbKey', 'widthKey']) if (typeof g[k] !== 'string' || !g[k]) delete g[k];
@@ -168,6 +198,7 @@ export function validateProject(p) {
     for (const c of g.contours) {
       c.nodes = Array.isArray(c.nodes) ? c.nodes : [];
       if (c.closed === undefined) c.closed = true;
+      if (c.locked !== true) delete c.locked;
     }
   }
   return p;

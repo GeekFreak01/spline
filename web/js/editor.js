@@ -8,6 +8,7 @@ import { openCorner, reconnect, deleteSegment } from './corners.js';
 import { matchContour } from './masters.js';
 import { effectiveKern } from './kerning.js';
 import { addExtremesTo } from './simplify.js';
+import { tidyPlan, applyTidy, coincident } from './tidy.js';
 import { unite, subtract, removeOverlap, shapesOf, pathOperation, knifeCut } from './boolean.js';
 import { t } from './i18n.js';
 
@@ -51,6 +52,14 @@ function roundNode(n) {
   for (const h of ['in', 'out']) if (n[h]) n[h] = { x: Math.round(n[h].x), y: Math.round(n[h].y) };
 }
 
+// The nine points of a box a transform can turn around (see the picker in
+// the transform panel): corners, edge middles and the centre.
+export const ORIGINS = ['nw', 'n', 'ne', 'w', 'c', 'e', 'sw', 's', 'se'];
+export function originPoint(b, id) {
+  const i = Math.max(0, ORIGINS.indexOf(id)), col = i % 3, row = Math.floor(i / 3);
+  return { x: [b.minX, (b.minX + b.maxX) / 2, b.maxX][col], y: [b.maxY, (b.minY + b.maxY) / 2, b.minY][row] };
+}
+
 export class Editor {
   constructor(app, canvas) {
     this.app = app;
@@ -71,6 +80,9 @@ export class Editor {
     this.alignTo = 'selection'; // 'selection' (or key object) | 'frame'
     this.showRulers = false; // Ctrl+R
     this.showUserGuides = true;
+    this.showNotes = true;   // extended mode: annotations on the canvas
+    this.noteKind = 'text';  // what the Notes tool puts down
+    this.selNote = -1;
     this.view = { scale: 0.5, ox: 0, oy: 0 };
     this.sel = new Set(); // "contourIndex:nodeIndex"
     this.drag = null;
@@ -276,6 +288,7 @@ export class Editor {
   nodeAt(sx, sy) {
     const cs = this.glyph.contours;
     for (let ci = cs.length - 1; ci >= 0; ci--) {
+      if (cs[ci].locked) continue;
       for (let ni = 0; ni < cs[ci].nodes.length; ni++) {
         const s = this.toScreen(cs[ci].nodes[ni]);
         if (Math.hypot(s.x - sx, s.y - sy) <= HIT) return { ci, ni };
@@ -288,6 +301,7 @@ export class Editor {
     if (!this.showsPoints()) return null;
     const cs = this.glyph.contours;
     for (let ci = cs.length - 1; ci >= 0; ci--) {
+      if (cs[ci].locked) continue;
       for (let ni = 0; ni < cs[ci].nodes.length; ni++) {
         const n = cs[ci].nodes[ni];
         for (const which of ['in', 'out']) {
@@ -304,6 +318,7 @@ export class Editor {
     const p = this.toFont(sx, sy);
     const cs = this.glyph.contours;
     for (let ci = cs.length - 1; ci >= 0; ci--) {
+      if (cs[ci].locked) continue;
       const ctx = this.hitCtx;
       ctx.beginPath();
       tracePath(ctx, { contours: [{ ...cs[ci], closed: true }] });
@@ -315,6 +330,7 @@ export class Editor {
   segmentAt(sx, sy) {
     let best = null;
     this.glyph.contours.forEach((c, ci) => {
+      if (c.locked) return;
       for (const s of segments(c)) {
         for (let k = 1; k < 40; k++) {
           const tt = k / 40;
@@ -358,11 +374,35 @@ export class Editor {
         for (const c of list) if (Math.abs(v - c) <= tol && (best === null || Math.abs(v - c) < Math.abs(v - best))) best = c;
         return best;
       };
-      const ug = this.showUserGuides ? this.guides() : [];
+      const ug = this.showUserGuides ? this.allGuides() : [];
       const gy = near(y, [info.ascender, info.capHeight, info.xHeight, 0, info.descender, ...ug.filter((g) => g.axis === 'y').map((g) => g.pos)]);
       const gx = near(x, [0, this.glyph.advance, ...ug.filter((g) => g.axis === 'x').map((g) => g.pos)]);
       if (gy !== null) { y = gy; hy = true; }
       if (gx !== null) { x = gx; hx = true; }
+      // A guide at an angle: the point slides onto it.
+      if (!hx && !hy) {
+        for (const g of ug) {
+          if (g.axis !== 'a') continue;
+          const l = Editor.guideLine(g), k = (x - l.x) * l.dx + (y - l.y) * l.dy;
+          const qx = l.x + l.dx * k, qy = l.y + l.dy * k;
+          if (Math.hypot(qx - x, qy - y) <= tol) { x = qx; y = qy; hx = hy = true; break; }
+        }
+      }
+    }
+    // Extended mode: magnetic lines. The point lines up with the other
+    // points and handles of the glyph; a thin line shows which one.
+    this.smartLines = [];
+    if (this.extended && this.snapGuides && guides && this.glyph && (!hx || !hy)) {
+      const tol = 6 / this.view.scale;
+      let bx = null, by = null;
+      for (const q of this.smartPoints()) {
+        if (!hx && Math.abs(q.x - x) <= tol && (!bx || Math.abs(q.x - x) < Math.abs(bx.x - x))) bx = q;
+        if (!hy && Math.abs(q.y - y) <= tol && (!by || Math.abs(q.y - y) < Math.abs(by.y - y))) by = q;
+      }
+      if (bx) { x = bx.x; hx = true; }
+      if (by) { y = by.y; hy = true; }
+      if (bx) this.smartLines.push({ axis: 'x', from: bx });
+      if (by) this.smartLines.push({ axis: 'y', from: by });
     }
     if (this.snapGrid) {
       const st = this.gridStep;
@@ -371,6 +411,25 @@ export class Editor {
     }
     this.snapMark = hx || hy ? { x, y } : null;
     return { x, y };
+  }
+
+  // What a dragged point can line up with: the points and handles of the
+  // glyph and its components, minus what is being moved. Kept for the drag.
+  smartPoints() {
+    const d = this.drag;
+    if (d?.smart) return d.smart;
+    const moving = new Set();
+    if (d?.kind === 'move') for (const n of this.selectedNodes()) { moving.add(n); if (n.in) moving.add(n.in); if (n.out) moving.add(n.out); }
+    if (d?.kind === 'handle') { const n = this.glyph.contours[d.ci]?.nodes[d.ni]; if (n?.[d.which]) moving.add(n[d.which]); }
+    if (d?.kind === 'penHandle') { moving.add(d.node.in); moving.add(d.node.out); }
+    const out = [];
+    for (const c of [...this.glyph.contours, ...(this.glyph.refContours || [])]) {
+      for (const n of c.nodes) {
+        for (const q of [n, n.in, n.out]) if (q && !moving.has(q)) out.push(q);
+      }
+    }
+    if (d && ['move', 'handle', 'penHandle'].includes(d.kind)) d.smart = out;
+    return out;
   }
 
   onDown(e) {
@@ -388,8 +447,10 @@ export class Editor {
       // guide, the left one a vertical guide.
       const g = { axis: zone === 'top' ? 'y' : 'x', pos: zone === 'top' ? p.y : p.x };
       this.drag = { kind: 'guide', guide: g, isNew: true };
-    } else if (guide && e.button === 0) {
-      this.drag = { kind: 'guide', guide };
+    } else if (guide && e.button === 0 && !guide.locked) {
+      this.drag = { kind: 'guide', guide, start: p, from: { x: guide.x, y: guide.y } };
+    } else if (this.glyph.locked && !['hand', 'measure', 'text'].includes(tool)) {
+      this.app.onLocked?.();
     } else if (this.xform && tool !== 'hand') {
       this.downTransform(e, sx, sy, p);
     } else if (tool === 'hand') {
@@ -407,6 +468,8 @@ export class Editor {
       this.drag = { kind: 'measure' };
     } else if (tool === 'text') {
       this.downText(p);
+    } else if (tool === 'note') {
+      this.downNote(sx, sy, p);
     } else if (tool === 'select') {
       this.downSelect(e, sx, sy, p);
     } else if (tool === 'pen') {
@@ -548,6 +611,12 @@ export class Editor {
         this.measure.end = e.shiftKey ? snap45(this.measure.start, p) : this.snap(p);
         break;
       case 'guide': {
+        if (d.guide.axis === 'a') { // a guide at an angle moves by its point
+          d.guide.x = Math.round(d.from.x + p.x - d.start.x);
+          d.guide.y = Math.round(d.from.y + p.y - d.start.y);
+          d.overRuler = !!this.rulerZone(sx, sy) || sx < 0 || sy < 0;
+          break;
+        }
         let v = d.guide.axis === 'y' ? p.y : p.x;
         if (this.snapGrid) v = Math.round(v / this.gridStep) * this.gridStep;
         d.guide.pos = Math.round(v);
@@ -617,6 +686,20 @@ export class Editor {
         this.app.onAnchorsChanged?.();
         break;
       }
+      case 'noteMove': {
+        const a = this.glyph.annotations[d.i];
+        if (!a) break;
+        const dx = Math.round(p.x - d.start.x) - d.applied.x, dy = Math.round(p.y - d.start.y) - d.applied.y;
+        if (!d.moved && Math.hypot(p.x - d.start.x, p.y - d.start.y) * this.view.scale < 2) break;
+        if (!d.moved) { this.app.history.push(this.glyph); d.moved = true; }
+        a.x += dx; a.y += dy;
+        if (a.type === 'arrow') { a.x2 += dx; a.y2 += dy; }
+        d.applied = { x: d.applied.x + dx, y: d.applied.y + dy };
+        break;
+      }
+      case 'noteNew':
+        if (d.note.type === 'arrow') { d.note.x2 = Math.round(p.x); d.note.y2 = Math.round(p.y); } else d.note.r = Math.round(Math.hypot(p.x - d.note.x, p.y - d.note.y));
+        break;
       case 'marquee':
         d.end = { sx, sy };
         d.lasso?.push({ sx, sy });
@@ -678,9 +761,8 @@ export class Editor {
         this.commitPixels(d);
         break;
       case 'guide': {
-        const list = this.guides();
         // Dropping a guide back on a ruler removes it.
-        if (d.overRuler) { const i = list.indexOf(d.guide); if (i >= 0) list.splice(i, 1); }
+        if (d.overRuler) this.removeGuide(d.guide);
         if (d.added || !d.isNew) this.app.onGuidesChanged?.();
         break;
       }
@@ -718,12 +800,21 @@ export class Editor {
       case 'anchor':
         if (d.moved) this.afterEdit(false);
         break;
+      case 'noteMove':
+        if (d.moved) this.afterEdit(false);
+        break;
+      case 'noteNew': {
+        const n = d.note;
+        const size = n.type === 'arrow' ? Math.hypot(n.x2 - n.x, n.y2 - n.y) : n.r;
+        if (size * this.view.scale >= 6) this.addNote(n);
+        break;
+      }
       case 'marquee': {
         const x0 = Math.min(d.start.sx, d.end.sx), x1 = Math.max(d.start.sx, d.end.sx);
         const y0 = Math.min(d.start.sy, d.end.sy), y1 = Math.max(d.start.sy, d.end.sy);
         this.sel = new Set(d.base);
         const poly = d.lasso?.map((q) => ({ x: q.sx, y: q.sy }));
-        this.glyph.contours.forEach((c, ci) => c.nodes.forEach((n, ni) => {
+        this.glyph.contours.forEach((c, ci) => !c.locked && c.nodes.forEach((n, ni) => {
           const s = this.toScreen(n);
           const inside = poly ? poly.length > 2 && pointInPolygon(s, poly) : s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1;
           if (inside) this.sel.add(`${ci}:${ni}`);
@@ -807,6 +898,37 @@ export class Editor {
     return p.guides;
   }
 
+  // The font's guides and, in the extended mode, the open glyph's own ones
+  // (local guides, also lines at an angle).
+  allGuides() {
+    const own = this.extended && this.glyph?.guides?.length ? this.glyph.guides : [];
+    return own.length ? [...this.guides(), ...own] : this.guides();
+  }
+
+  // A point on the guide and its direction in font units.
+  static guideLine(g) {
+    if (g.axis === 'y') return { x: 0, y: g.pos, dx: 1, dy: 0 };
+    if (g.axis === 'x') return { x: g.pos, y: 0, dx: 0, dy: 1 };
+    const a = ((g.angle || 0) * Math.PI) / 180;
+    return { x: g.x, y: g.y, dx: Math.cos(a), dy: Math.sin(a) };
+  }
+
+  // Screen distance from (sx, sy) to the guide.
+  guideDistance(g, sx, sy) {
+    const l = Editor.guideLine(g), a = this.toScreen(l), b = this.toScreen({ x: l.x + l.dx * 1000, y: l.y + l.dy * 1000 });
+    const vx = b.x - a.x, vy = b.y - a.y, len = Math.hypot(vx, vy) || 1;
+    return Math.abs((sx - a.x) * vy - (sy - a.y) * vx) / len;
+  }
+
+  // Removes a guide from the font or from the glyph.
+  removeGuide(g) {
+    for (const list of [this.guides(), this.glyph?.guides || []]) {
+      const i = list.indexOf(g);
+      if (i >= 0) list.splice(i, 1);
+    }
+    if (this.glyph?.guides && !this.glyph.guides.length) delete this.glyph.guides;
+  }
+
   rulerZone(sx, sy) {
     if (!this.showRulers) return null;
     if (sx < RULER && sy < RULER) return 'corner';
@@ -818,8 +940,8 @@ export class Editor {
   guideAt(sx, sy) {
     if (!this.showUserGuides) return null;
     let best = null, bestD = 5;
-    for (const g of this.guides()) {
-      const d = g.axis === 'y' ? Math.abs(this.toScreen({ x: 0, y: g.pos }).y - sy) : Math.abs(this.toScreen({ x: g.pos, y: 0 }).x - sx);
+    for (const g of this.allGuides()) {
+      const d = this.guideDistance(g, sx, sy);
       if (d <= bestD) { best = g; bestD = d; }
     }
     return best;
@@ -827,25 +949,42 @@ export class Editor {
 
   drawUserGuides(colors) {
     const ctx = this.ctx;
-    const list = this.showUserGuides ? this.guides() : [];
+    const list = this.showUserGuides ? this.allGuides() : [];
     const dragging = this.drag?.kind === 'guide' ? this.drag.guide : null;
+    const own = new Set(this.glyph?.guides || []);
     ctx.lineWidth = 1;
     for (const g of [...list, ...(dragging && !list.includes(dragging) ? [dragging] : [])]) {
-      ctx.strokeStyle = g === dragging && this.drag.overRuler ? colors.text : colors.userGuide;
+      // The glyph's own guides in the accent colour; locked ones dashed.
+      ctx.strokeStyle = g === dragging && this.drag.overRuler ? colors.text : own.has(g) ? colors.accent : colors.userGuide;
+      ctx.setLineDash(g.locked ? [6, 4] : []);
       ctx.beginPath();
       if (g.axis === 'y') {
         const y = Math.round(this.toScreen({ x: 0, y: g.pos }).y) + 0.5;
         ctx.moveTo(0, y); ctx.lineTo(this.w, y);
-      } else {
+      } else if (g.axis === 'x') {
         const x = Math.round(this.toScreen({ x: g.pos, y: 0 }).x) + 0.5;
         ctx.moveTo(x, 0); ctx.lineTo(x, this.h);
+      } else {
+        const l = Editor.guideLine(g), a = this.toScreen(l), b = this.toScreen({ x: l.x + l.dx * 1000, y: l.y + l.dy * 1000 });
+        const vx = b.x - a.x, vy = b.y - a.y, len = Math.hypot(vx, vy) || 1, far = (this.w + this.h) * 2;
+        ctx.moveTo(a.x - (vx / len) * far, a.y - (vy / len) * far);
+        ctx.lineTo(a.x + (vx / len) * far, a.y + (vy / len) * far);
       }
       ctx.stroke();
+      ctx.setLineDash([]);
+      if (g.name) {
+        let at;
+        if (g.axis === 'y') at = { x: RULER + 8, y: this.toScreen({ x: 0, y: g.pos }).y - 14 };
+        else if (g.axis === 'x') at = { x: this.toScreen({ x: g.pos, y: 0 }).x + 6, y: RULER + 24 };
+        else { const q = this.toScreen({ x: g.x, y: g.y }); at = { x: q.x + 8, y: q.y - 14 }; }
+        this.label(g.name, at.x, at.y, colors);
+      }
     }
     if (dragging && !this.drag.overRuler) {
-      const s = this.toScreen({ x: dragging.pos, y: dragging.pos });
-      const at = dragging.axis === 'y' ? { x: RULER + 8, y: s.y + 6 } : { x: s.x + 6, y: RULER + 8 };
-      this.label(`${dragging.axis === 'y' ? 'Y' : 'X'} ${dragging.pos}`, at.x, at.y, colors);
+      const angled = dragging.axis === 'a';
+      const s = angled ? this.toScreen(dragging) : this.toScreen({ x: dragging.pos, y: dragging.pos });
+      const at = dragging.axis === 'y' ? { x: RULER + 8, y: s.y + 6 } : dragging.axis === 'x' ? { x: s.x + 6, y: RULER + 8 } : { x: s.x + 8, y: s.y + 8 };
+      this.label(angled ? `${dragging.x}, ${dragging.y}` : `${dragging.axis === 'y' ? 'Y' : 'X'} ${dragging.pos}`, at.x, at.y, colors);
     }
   }
 
@@ -956,11 +1095,21 @@ export class Editor {
       nodes,
       orig: nodes.map((n) => ({ x: n.x, y: n.y, in: n.in && { ...n.in }, out: n.out && { ...n.out } })),
       box,
-      c: { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 },
+      c: originPoint(box, this.app.xfOriginId?.() || 'c'),
       sx: 1, sy: 1, angle: 0, tx: 0, ty: 0,
     };
     this.render();
     return true;
+  }
+
+  // A new pivot for rotation and exact values during Ctrl+T; what is already
+  // transformed stays where it is.
+  setTransformOrigin(id) {
+    const x = this.xform;
+    if (!x) return;
+    const c = originPoint(x.box, id), w = this.xWorld(c);
+    x.c = c; x.tx = w.x - c.x; x.ty = w.y - c.y;
+    this.render();
   }
 
   xformStale() {
@@ -1339,6 +1488,12 @@ export class Editor {
       if (g) { this.app.onGuideEdit?.(g); return; }
     }
     if (!this.glyph) return;
+    if (this.tool === 'note') {
+      const { sx, sy } = this.eventPos(e);
+      const i = this.noteAt(sx, sy);
+      if (i >= 0 && this.glyph.annotations[i].type === 'text') this.app.onNoteText?.(this.glyph.annotations[i]);
+      return;
+    }
     if (this.tool === 'text' || this.tool === 'select') {
       const { sx, sy } = this.eventPos(e);
       const hit = !this.nodeAt(sx, sy) && !this.segmentAt(sx, sy) && this.contourAt(sx, sy) < 0 ? this.lineItemAt(sx, sy) : null;
@@ -1402,7 +1557,7 @@ export class Editor {
     if (zone) { this.canvas.style.cursor = zone === 'top' ? 'row-resize' : 'col-resize'; return; }
     if (this.activeTool() === 'select' && !this.xform) {
       const g = this.guideAt(sx, sy);
-      if (g && !this.nodeAt(sx, sy) && !this.handleAt(sx, sy)) { this.canvas.style.cursor = g.axis === 'y' ? 'row-resize' : 'col-resize'; return; }
+      if (g && !this.nodeAt(sx, sy) && !this.handleAt(sx, sy)) { this.canvas.style.cursor = g.locked ? 'not-allowed' : g.axis === 'y' ? 'row-resize' : g.axis === 'x' ? 'col-resize' : 'move'; return; }
     }
     const tool = this.activeTool();
     let cur = 'crosshair';
@@ -1414,6 +1569,7 @@ export class Editor {
     }
     if (tool === 'hand') cur = this.drag ? 'grabbing' : 'grab';
     else if (tool === 'text') cur = 'text';
+    else if (tool === 'note') cur = this.noteAt(sx, sy) >= 0 ? 'move' : this.noteKind === 'text' ? 'text' : 'crosshair';
     else if (tool === 'brush' || tool === 'eraser') cur = 'none';
     else if (tool === 'select') {
       if (this.handleAt(sx, sy) || this.nodeAt(sx, sy)) cur = 'pointer';
@@ -1473,13 +1629,22 @@ export class Editor {
 
   selectAll() {
     this.sel = new Set();
-    this.glyph.contours.forEach((c, ci) => c.nodes.forEach((_, ni) => this.sel.add(`${ci}:${ni}`)));
+    this.glyph.contours.forEach((c, ci) => !c.locked && c.nodes.forEach((_, ni) => this.sel.add(`${ci}:${ni}`)));
     if (this.tool !== 'select') (this.app.selectTool || ((id) => this.setTool(id)))('select');
     this.render();
   }
 
   deleteSelection() {
+    if (this.tool === 'note' && this.selNote >= 0 && this.glyph.annotations?.[this.selNote]) {
+      this.app.history.push(this.glyph);
+      this.glyph.annotations.splice(this.selNote, 1);
+      if (!this.glyph.annotations.length) delete this.glyph.annotations;
+      this.selNote = -1;
+      this.afterEdit(false);
+      return true;
+    }
     if (!this.sel.size) return false;
+    if (this.glyph.locked) { this.app.onLocked?.(); return true; }
     this.app.history.push(this.glyph);
     const byContour = new Map();
     for (const key of this.sel) {
@@ -1505,6 +1670,7 @@ export class Editor {
   nudge(dx, dy) {
     const nodes = this.selectedNodes();
     if (!nodes.length) return false;
+    if (this.glyph.locked) { this.app.onLocked?.(); return true; }
     this.app.history.push(this.glyph);
     for (const n of nodes) movePoint(n, dx, dy, true);
     this.afterEdit();
@@ -1530,7 +1696,7 @@ export class Editor {
 
   invertSelection() {
     const all = new Set();
-    this.glyph.contours.forEach((c, ci) => c.nodes.forEach((_, ni) => all.add(`${ci}:${ni}`)));
+    this.glyph.contours.forEach((c, ci) => !c.locked && c.nodes.forEach((_, ni) => all.add(`${ci}:${ni}`)));
     this.sel = new Set([...all].filter((k) => !this.sel.has(k)));
     if (this.tool !== 'select') (this.app.selectTool || ((id) => this.setTool(id)))('select');
     this.render();
@@ -1539,7 +1705,7 @@ export class Editor {
   // Contours with a selected point, or every contour.
   pickedContours() {
     const set = new Set([...this.sel].map((k) => Number(k.split(':')[0])));
-    return this.glyph.contours.filter((_, i) => !set.size || set.has(i));
+    return this.glyph.contours.filter((c, i) => !c.locked && (!set.size || set.has(i)));
   }
 
   // Adds points where a curve is horizontal or vertical (its extremes):
@@ -1554,6 +1720,146 @@ export class Editor {
     this.sel.clear();
     this.afterEdit(false);
     return added;
+  }
+
+  // ---------------------------------------------------------------- annotations
+
+  // Notes on the canvas (extended mode): text, an arrow, a circle, a plus or
+  // a minus. They are for the designer only and never go into the font.
+  noteAt(sx, sy) {
+    const list = this.showNotes ? this.glyph?.annotations || [] : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const a = list[i], s = this.toScreen(a);
+      if (a.type === 'text') {
+        const w = this.noteWidth(a);
+        if (sx >= s.x - 4 && sx <= s.x + w + 4 && sy >= s.y - 18 && sy <= s.y + 4) return i;
+      } else if (a.type === 'arrow') {
+        const b = this.toScreen({ x: a.x2, y: a.y2 }), vx = b.x - s.x, vy = b.y - s.y, l2 = vx * vx + vy * vy || 1;
+        const k = Math.max(0, Math.min(1, ((sx - s.x) * vx + (sy - s.y) * vy) / l2));
+        if (Math.hypot(s.x + vx * k - sx, s.y + vy * k - sy) <= 6) return i;
+      } else if (a.type === 'circle') {
+        if (Math.abs(Math.hypot(sx - s.x, sy - s.y) - a.r * this.view.scale) <= 6) return i;
+      } else if (Math.hypot(sx - s.x, sy - s.y) <= 11) return i;
+    }
+    return -1;
+  }
+
+  noteWidth(a) {
+    this.ctx.font = `12px ${css('--font-ui')}`;
+    return Math.max(...String(a.text || '').split('\n').map((l) => this.ctx.measureText(l).width), 8);
+  }
+
+  downNote(sx, sy, p) {
+    const i = this.noteAt(sx, sy);
+    if (i >= 0) {
+      this.selNote = i;
+      this.drag = { kind: 'noteMove', i, start: p, applied: { x: 0, y: 0 } };
+      return;
+    }
+    this.selNote = -1;
+    const at = { x: Math.round(p.x), y: Math.round(p.y) };
+    const kind = this.noteKind || 'text';
+    if (kind === 'text') { this.app.onNoteText?.(null, at); return; }
+    if (kind === 'plus' || kind === 'minus') { this.addNote({ type: kind, ...at }); return; }
+    this.drag = { kind: 'noteNew', note: kind === 'arrow' ? { type: 'arrow', ...at, x2: at.x, y2: at.y } : { type: 'circle', ...at, r: 0 } };
+  }
+
+  addNote(n) {
+    this.app.history.push(this.glyph);
+    (this.glyph.annotations ||= []).push(n);
+    this.selNote = this.glyph.annotations.length - 1;
+    this.afterEdit(false);
+  }
+
+  drawNotes(colors) {
+    const list = [...(this.showNotes ? this.glyph.annotations || [] : []), ...(this.drag?.kind === 'noteNew' ? [this.drag.note] : [])];
+    if (!list.length) return;
+    const ctx = this.ctx;
+    ctx.save();
+    list.forEach((a, i) => {
+      const s = this.toScreen(a), on = this.tool === 'note' && i === this.selNote;
+      ctx.strokeStyle = ctx.fillStyle = colors.note;
+      ctx.lineWidth = on ? 2.5 : 1.5;
+      if (a.type === 'text') {
+        ctx.font = `12px ${css('--font-ui')}`;
+        String(a.text || '').split('\n').forEach((l, k) => ctx.fillText(l, s.x, s.y + k * 15));
+        if (on) { ctx.setLineDash([3, 2]); ctx.strokeRect(s.x - 3, s.y - 15, this.noteWidth(a) + 6, 19 + 15 * (String(a.text || '').split('\n').length - 1)); ctx.setLineDash([]); }
+      } else if (a.type === 'arrow') {
+        const b = this.toScreen({ x: a.x2, y: a.y2 }), ang = Math.atan2(b.y - s.y, b.x - s.x);
+        ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(b.x, b.y);
+        ctx.lineTo(b.x - 11 * Math.cos(ang - 0.4), b.y - 11 * Math.sin(ang - 0.4));
+        ctx.lineTo(b.x - 11 * Math.cos(ang + 0.4), b.y - 11 * Math.sin(ang + 0.4));
+        ctx.closePath(); ctx.fill();
+      } else if (a.type === 'circle') {
+        ctx.beginPath(); ctx.arc(s.x, s.y, Math.max(1, a.r * this.view.scale), 0, Math.PI * 2); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(s.x, s.y, 9, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(s.x - 5, s.y); ctx.lineTo(s.x + 5, s.y);
+        if (a.type === 'plus') { ctx.moveTo(s.x, s.y - 5); ctx.lineTo(s.x, s.y + 5); }
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
+  }
+
+  // A guide of this glyph through the two selected points.
+  guideThroughPoints() {
+    const nodes = this.selectedNodes();
+    if (nodes.length !== 2) return null;
+    const [a, b] = nodes;
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 1) return null;
+    const angle = Math.round(((Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI) * 100) / 100;
+    let g;
+    if (Math.abs(a.y - b.y) < 0.5) g = { axis: 'y', pos: Math.round(a.y) };
+    else if (Math.abs(a.x - b.x) < 0.5) g = { axis: 'x', pos: Math.round(a.x) };
+    else g = { axis: 'a', x: Math.round(a.x), y: Math.round(a.y), angle };
+    (this.glyph.guides ||= []).push(g);
+    this.render();
+    return g;
+  }
+
+  // Locks the contours with a selected point: they can't be selected or
+  // moved until unlocked. Returns how many.
+  lockContours() {
+    const cis = [...new Set([...this.sel].map((k) => Number(k.split(':')[0])))];
+    if (!cis.length) return 0;
+    this.app.history.push(this.glyph);
+    for (const ci of cis) if (this.glyph.contours[ci]) this.glyph.contours[ci].locked = true;
+    this.sel.clear();
+    this.afterEdit(false);
+    return cis.length;
+  }
+
+  unlockContours() {
+    const locked = this.glyph.contours.filter((c) => c.locked);
+    if (!locked.length) return 0;
+    this.app.history.push(this.glyph);
+    for (const c of locked) delete c.locked;
+    this.afterEdit(false);
+    return locked.length;
+  }
+
+  // Tidy up the contours with a selected point, or all: see tidy.js. When
+  // all masters are edited together, only what every master can lose goes,
+  // so they stay compatible. Returns the number of steps.
+  tidyUp() {
+    const targets = new Set(this.pickedContours().map((c) => this.glyph.contours.indexOf(c)));
+    let total = 0;
+    for (let pass = 0; pass < 3; pass++) {
+      let plan = tidyPlan(this.glyph.contours, targets);
+      this.sync((cs) => { const there = new Set(tidyPlan(cs, targets)); plan = plan.filter((x) => x.startsWith('smooth') || there.has(x)); });
+      if (!plan.length) break;
+      if (!total) this.app.history.push(this.glyph);
+      const removing = plan.filter((x) => !x.startsWith('smooth'));
+      this.sync((cs) => applyTidy(cs, removing));
+      applyTidy(this.glyph.contours, plan);
+      total += plan.length;
+    }
+    if (!total) return 0;
+    this.sel.clear();
+    this.afterEdit(false);
+    return total;
   }
 
   // Makes the selected point the start of its contour.
@@ -1902,7 +2208,7 @@ export class Editor {
       guide: css('--canvas-guide'), handle: css('--canvas-handle'), bg: css('--canvas-bg'),
       grid: css('--canvas-grid'), gridMajor: css('--canvas-grid-major'), nodeFill: css('--canvas-node-fill'),
       userGuide: css('--canvas-user-guide'), rulerBg: css('--ruler-bg'), rulerLine: css('--ruler-line'), rulerText: css('--ruler-text'),
-      zone: css('--canvas-zone'), ok: css('--ok'), danger: css('--danger'),
+      zone: css('--canvas-zone'), ok: css('--ok'), danger: css('--danger'), note: css('--warn'),
     };
     const info = this.app.project.info;
     const S = (p) => this.toScreen(p);
@@ -2091,6 +2397,7 @@ export class Editor {
     }
 
     this.drawAnchors(colors);
+    if (this.extended) this.drawNotes(colors);
     this.drawUserGuides(colors);
     this.drawOverlay(colors);
 
@@ -2105,6 +2412,24 @@ export class Editor {
       ctx.moveTo(m.x - 7, m.y); ctx.lineTo(m.x + 7, m.y);
       ctx.moveTo(m.x, m.y - 7); ctx.lineTo(m.x, m.y + 7);
       ctx.stroke();
+    }
+    if (showMark && this.smartLines?.length) {
+      const m = S(this.snapMark);
+      ctx.save();
+      ctx.strokeStyle = colors.userGuide;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      for (const l of this.smartLines) {
+        const f = S(l.from);
+        ctx.beginPath();
+        ctx.moveTo(f.x, f.y);
+        ctx.lineTo(l.axis === 'x' ? f.x : m.x, l.axis === 'x' ? m.y : f.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(f.x, f.y, 3, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([4, 3]);
+      }
+      ctx.restore();
     }
     if (this.drag?.kind === 'move' && this.drag.moved && this.snapMark) {
       const m = S(this.snapMark);
@@ -2213,7 +2538,10 @@ export class Editor {
 
   drawPoints(colors) {
     const ctx = this.ctx;
+    // Extended mode: a point on top of another gets a red ring.
+    const stacked = this.app.extended ? coincident(this.glyph.contours) : () => false;
     this.glyph.contours.forEach((c, ci) => {
+      if (c.locked) return;
       c.nodes.forEach((n, ni) => {
         const s = this.toScreen(n);
         ctx.strokeStyle = colors.handle;
@@ -2241,6 +2569,13 @@ export class Editor {
           ctx.moveTo(s.x + r + 3, s.y - r - 3); ctx.lineTo(s.x + r + 9, s.y - r - 3); ctx.lineTo(s.x + r + 3, s.y - r - 9); ctx.closePath();
           ctx.fillStyle = colors.accent;
           ctx.fill();
+        }
+        if (stacked(n)) {
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, r + 7, 0, Math.PI * 2);
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = colors.danger;
+          ctx.stroke();
         }
         // On a font line or in its zone: a green ring; a few units off: an
         // orange dashed one (most likely a miss).

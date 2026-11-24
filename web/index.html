@@ -127,6 +127,11 @@
       </button>
       <input id="previewInput" spellcheck="false" aria-labelledby="previewTitle">
       <button class="btn ext-only" id="previewCurrent" type="button" data-i18n="previewCurrent" data-i18n-title="previewCurrentTip"></button>
+      <div class="preview-blind ext-only" role="group">
+        <button class="btn btn-icon" type="button" data-blind="blur" aria-pressed="false" data-i18n-title="pvBlur"><i data-icon="droplet" data-size="15"></i></button>
+        <button class="btn btn-icon" type="button" data-blind="invert" aria-pressed="false" data-i18n-title="pvInvert"><i data-icon="contrast" data-size="15"></i></button>
+        <button class="btn btn-icon" type="button" data-blind="flip" aria-pressed="false" data-i18n-title="pvFlip"><i data-icon="flipV" data-size="15"></i></button>
+      </div>
       <label class="preview-size"><span data-i18n="previewSize"></span>
         <input type="range" id="previewSize" min="12" max="160" value="48"><output id="previewSizeOut">48</output>
       </label>

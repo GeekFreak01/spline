@@ -50,10 +50,22 @@ func ParseFormat(s string) (Format, error) {
 	return 0, fmt.Errorf("unknown font format %q", s)
 }
 
+// codes: every character the glyph is mapped to.
+func (g glyphData) codes() []int {
+	var out []int
+	for _, u := range append([]int{g.unicode}, g.unicodes...) {
+		if u > 0 {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
 // glyphData is a glyph prepared for writing.
 type glyphData struct {
 	name     string // PostScript glyph name
 	unicode  int
+	unicodes []int // more characters for the same glyph
 	advance  int
 	contours []project.Contour
 	bbox     box // in rounded font units, empty glyph => zero box
@@ -234,8 +246,9 @@ func prepare(p *project.Project, f Format) *fontData {
 	usedNames := map[string]bool{}
 	for i, g := range src {
 		gd := glyphData{
-			unicode: g.Unicode,
-			advance: int(math.Round(g.Advance)),
+			unicode:  g.Unicode,
+			unicodes: g.Unicodes,
+			advance:  int(math.Round(g.Advance)),
 		}
 		if i == 0 {
 			gd.name = ".notdef"
@@ -500,10 +513,10 @@ func buildCmap(fd *fontData) []byte {
 	}
 	var bmp, all []m
 	for gid, g := range fd.glyphs {
-		if g.unicode > 0 {
-			all = append(all, m{g.unicode, gid})
-			if g.unicode <= 0xFFFF {
-				bmp = append(bmp, m{g.unicode, gid})
+		for _, u := range g.codes() {
+			all = append(all, m{u, gid})
+			if u <= 0xFFFF {
+				bmp = append(bmp, m{u, gid})
 			}
 		}
 	}
@@ -731,30 +744,28 @@ func buildOS2(fd *fontData) []byte {
 			sum += g.advance
 			cnt++
 		}
-		u := g.unicode
-		if u <= 0 {
-			continue
-		}
-		first = min(first, u)
-		last = max(last, u)
-		switch {
-		case u < 0x80:
-			ur[0] |= 1 << 0
-			cp[0] |= 1 << 0
-		case u < 0x100:
-			ur[0] |= 1 << 1
-			cp[0] |= 1 << 0
-		case u < 0x180:
-			ur[0] |= 1 << 2
-			cp[0] |= 1 << 1
-		case u >= 0x370 && u < 0x400:
-			ur[0] |= 1 << 7
-			cp[0] |= 1 << 3
-		case u >= 0x400 && u < 0x530:
-			ur[0] |= 1 << 9
-			cp[0] |= 1 << 2
-		case u > 0xFFFF:
-			ur[1] |= 1 << 25
+		for _, u := range g.codes() {
+			first = min(first, u)
+			last = max(last, u)
+			switch {
+			case u < 0x80:
+				ur[0] |= 1 << 0
+				cp[0] |= 1 << 0
+			case u < 0x100:
+				ur[0] |= 1 << 1
+				cp[0] |= 1 << 0
+			case u < 0x180:
+				ur[0] |= 1 << 2
+				cp[0] |= 1 << 1
+			case u >= 0x370 && u < 0x400:
+				ur[0] |= 1 << 7
+				cp[0] |= 1 << 3
+			case u >= 0x400 && u < 0x530:
+				ur[0] |= 1 << 9
+				cp[0] |= 1 << 2
+			case u > 0xFFFF:
+				ur[1] |= 1 << 25
+			}
 		}
 	}
 	if cp[0] == 0 {

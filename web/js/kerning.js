@@ -1,6 +1,6 @@
 // Kerning view: a line of text set with the font's own outlines. The cursor
 // sits between two letters; that pair is the one being kerned.
-import { tracePath, charOf, glyphBox, hasOutline } from './model.js';
+import { tracePath, charOf, glyphBox, hasOutline, outline, flatten, glyphForCode } from './model.js';
 
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -85,6 +85,38 @@ export class KernView {
     canvas.addEventListener('pointercancel', (e) => this.onUp(e));
     canvas.addEventListener('pointerleave', () => { if (this.hover !== null) { this.hover = null; this.render(); } });
     this.hover = null; // index of the letter whose kerning value is shown
+    // Extended mode: a horizontal measuring line at this height (font
+    // units) shows the white space between the letters there.
+    this.showMeasure = false;
+    this.measureY = null;
+  }
+
+  measureShown() { return !!(this.app.extended && this.showMeasure); }
+
+  // Height of the measuring line: the middle of the x-height by default.
+  measureAt() {
+    const info = this.app.project.info;
+    return this.measureY ?? Math.round((info.xHeight || 500) / 2);
+  }
+
+  // Screen y of the measuring line on the line of `it`.
+  measureScreenY(it) { return it.baseline - this.measureAt() * this.scale; }
+
+  // Where the outline of g crosses the height y: the leftmost and the
+  // rightmost x, or null when it does not reach there.
+  static crossings(g, y) {
+    let lo = Infinity, hi = -Infinity;
+    for (const c of outline(g)) {
+      const pts = flatten(c, 16);
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        if ((a.y > y) === (b.y > y)) continue;
+        const x = a.x + ((y - a.y) * (b.x - a.x)) / (b.y - a.y);
+        if (x < lo) lo = x;
+        if (x > hi) hi = x;
+      }
+    }
+    return lo <= hi ? { lo, hi } : null;
   }
 
   resize() {
@@ -106,7 +138,7 @@ export class KernView {
 
   glyphFor(ch) {
     const cp = ch.codePointAt(0);
-    return this.app.project.glyphs.find((g) => g.unicode === cp) || null;
+    return glyphForCode(this.app.project, cp);
   }
 
   // The pair at the cursor: { left, right } glyphs, or null.
@@ -179,6 +211,13 @@ export class KernView {
   onDown(e) {
     this.canvas.focus({ preventScroll: true });
     const { sx, sy } = this.eventPos(e);
+    // The measuring line is dragged up and down.
+    if (this.measureShown() && this.items.some((it) => Math.abs(this.measureScreenY(it) - sy) <= 5)) {
+      this.canvas.setPointerCapture(e.pointerId);
+      const it = this.items.reduce((a, b) => (Math.abs(this.measureScreenY(b) - sy) < Math.abs(this.measureScreenY(a) - sy) ? b : a));
+      this.drag = { measure: true, baseline: it.baseline };
+      return;
+    }
     this.cursor = this.boundaryAt(sx, sy);
     const pr = this.pair();
     // Dragging sets the kerning of the pair at the cursor.
@@ -193,10 +232,18 @@ export class KernView {
   onMove(e) {
     const { sx } = this.eventPos(e);
     const d = this.drag;
-    if (!d) {
-      this.canvas.style.cursor = this.items.length ? 'text' : 'default';
-      // Hovering a kerned gap shows its value.
+    if (d?.measure) {
       const { sy } = this.eventPos(e);
+      this.measureY = Math.round((d.baseline - sy) / this.scale);
+      this.app.onMeasureMoved?.(this.measureY);
+      this.render();
+      return;
+    }
+    if (!d) {
+      const { sy } = this.eventPos(e);
+      const onLine = this.measureShown() && this.items.some((it) => Math.abs(this.measureScreenY(it) - sy) <= 5);
+      this.canvas.style.cursor = onLine ? 'row-resize' : this.items.length ? 'text' : 'default';
+      // Hovering a kerned gap shows its value.
       const b = this.boundaryAt(sx, sy);
       const it = this.items[b];
       const hit = it?.kern && Math.abs(sx - it.x) < Math.max(8, Math.abs(it.kern) / 2 + 4) ? b : null;
@@ -269,6 +316,47 @@ export class KernView {
     this.render();
   }
 
+  // The measuring line: across every text line at the same height, with the
+  // white space at that height between the letters (sidebearing + kerning
+  // + sidebearing), and at the outer edges of the first and last letter.
+  drawMeasure(items) {
+    const { ctx } = this;
+    const s = this.scale, y = this.measureAt();
+    const col = css('--canvas-user-guide'), text = css('--text');
+    ctx.save();
+    ctx.font = `11px ${css('--font-mono')}`;
+    const lines = [...new Set(items.map((it) => it.baseline))];
+    for (const b of lines) {
+      const sy = Math.round(b - y * s) + 0.5;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(this.w, sy); ctx.stroke();
+      if (b === lines[0]) {
+        ctx.fillStyle = col;
+        ctx.fillText(`Y ${y}`, 6, sy - 5);
+      }
+      // The ink edges of each letter on this text line.
+      const row = items.filter((it) => it.baseline === b && it.g).map((it) => ({ it, c: KernView.crossings(it.g, y) }));
+      let prev = null;
+      for (const { it, c } of row) {
+        if (!c) { prev = null; continue; } // no ink at this height: no gap across it
+        const left = it.x + c.lo * s, right = it.x + c.hi * s;
+        ctx.fillStyle = col;
+        for (const x of [left, right]) ctx.fillRect(Math.round(x) - 1, sy - 4, 2, 8);
+        if (prev) {
+          const gap = Math.round((left - prev) / s);
+          const label = String(gap), tw = ctx.measureText(label).width, mid = (prev + left) / 2;
+          ctx.fillStyle = 'rgba(0,0,0,0.55)';
+          ctx.fillRect(mid - tw / 2 - 3, sy - 19, tw + 6, 14);
+          ctx.fillStyle = text;
+          ctx.fillText(label, mid - tw / 2, sy - 8);
+        }
+        prev = right;
+      }
+    }
+    ctx.restore();
+  }
+
   render() {
     if (this.raf) return;
     this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); });
@@ -315,7 +403,7 @@ export class KernView {
         ctx.fillStyle = muted;
         ctx.globalAlpha = 0.45;
         ctx.font = `${info.capHeight * s * 1.4}px ${css('--font-guide')}`;
-        ctx.fillText(charOf(it.g) || it.ch, it.x, it.baseline);
+        ctx.fillText((it.g && charOf(it.g)) || it.ch, it.x, it.baseline);
         ctx.globalAlpha = 1;
       }
     });
@@ -410,6 +498,8 @@ export class KernView {
         put(rsb, it.x + it.adv - ctx.measureText(rsb).width - 2, i === this.cursor - 1);
       });
     }
+
+    if (this.measureShown()) this.drawMeasure(items);
 
     // Cursor.
     const c = items[this.cursor] || items[this.cursor - 1];

@@ -384,9 +384,16 @@ func parseGlif(data []byte) (project.Glyph, error) {
 		return project.Glyph{}, err
 	}
 	g := project.Glyph{Advance: gx.Advance.Width, Note: strings.TrimSpace(gx.Note)}
-	if len(gx.Unicodes) > 0 {
-		if v, err := strconv.ParseInt(gx.Unicodes[0].Hex, 16, 32); err == nil && v > 0 && v <= 0x10FFFF {
+	// The first code is the glyph's own, the others draw with it too.
+	for _, u := range gx.Unicodes {
+		v, err := strconv.ParseInt(u.Hex, 16, 32)
+		if err != nil || v <= 0 || v > 0x10FFFF {
+			continue
+		}
+		if g.Unicode == 0 {
 			g.Unicode = int(v)
+		} else if len(g.Unicodes) < 32 {
+			g.Unicodes = append(g.Unicodes, int(v))
 		}
 	}
 	for _, a := range gx.Anchors {

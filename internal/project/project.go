@@ -68,8 +68,11 @@ type Contour struct {
 
 // Glyph is one character of the font.
 type Glyph struct {
-	Name     string    `json:"name"`
-	Unicode  int       `json:"unicode,omitempty"`
+	Name    string `json:"name"`
+	Unicode int    `json:"unicode,omitempty"`
+	// Unicodes are more characters drawn by the same glyph (extended
+	// mode), e.g. one glyph for the Latin A and the Cyrillic А.
+	Unicodes []int     `json:"unicodes,omitempty"`
 	Advance  float64   `json:"advance"`
 	Color    string    `json:"color,omitempty"`
 	Contours []Contour `json:"contours"`
@@ -226,10 +229,16 @@ type Info struct {
 }
 
 // Guide is a ruler guide shared by all glyphs: a horizontal line at
-// y = Pos (Axis "y") or a vertical line at x = Pos (Axis "x").
+// y = Pos (Axis "y"), a vertical line at x = Pos (Axis "x") or, in the
+// extended mode, a line through (X, Y) at Angle degrees (Axis "a").
 type Guide struct {
-	Axis string  `json:"axis"`
-	Pos  float64 `json:"pos"`
+	Axis   string  `json:"axis"`
+	Pos    float64 `json:"pos,omitempty"`
+	X      float64 `json:"x,omitempty"`
+	Y      float64 `json:"y,omitempty"`
+	Angle  float64 `json:"angle,omitempty"`
+	Name   string  `json:"name,omitempty"`
+	Locked bool    `json:"locked,omitempty"`
 }
 
 // Project is the root object of a .sp file.
@@ -372,7 +381,9 @@ func (p *Project) Validate() error {
 		}
 	}
 	for _, g := range p.Guides {
-		if (g.Axis != "x" && g.Axis != "y") || !okCoord(g.Pos) {
+		ok := (g.Axis == "x" || g.Axis == "y") && okCoord(g.Pos) ||
+			g.Axis == "a" && okCoord(g.X) && okCoord(g.Y) && g.Angle >= -360 && g.Angle <= 360
+		if !ok || len(g.Name) > 200 {
 			return errors.New("invalid guide")
 		}
 	}
@@ -415,11 +426,20 @@ func (p *Project) Validate() error {
 		if g.Unicode < 0 || g.Unicode > 0x10FFFF {
 			return fmt.Errorf("glyph %q has invalid unicode %d", g.Name, g.Unicode)
 		}
-		if g.Unicode != 0 {
-			if other, ok := seenUni[g.Unicode]; ok {
-				return fmt.Errorf("glyphs %q and %q have the same unicode U+%04X", other, g.Name, g.Unicode)
+		if len(g.Unicodes) > 32 {
+			return fmt.Errorf("glyph %q has too many unicodes", g.Name)
+		}
+		for _, u := range append([]int{g.Unicode}, g.Unicodes...) {
+			if u == 0 {
+				continue
 			}
-			seenUni[g.Unicode] = g.Name
+			if u < 0 || u > 0x10FFFF {
+				return fmt.Errorf("glyph %q has invalid unicode %d", g.Name, u)
+			}
+			if other, ok := seenUni[u]; ok {
+				return fmt.Errorf("glyphs %q and %q have the same unicode U+%04X", other, g.Name, u)
+			}
+			seenUni[u] = g.Name
 		}
 		if !finite(g.Advance) || g.Advance < 0 || g.Advance > maxCoord {
 			return fmt.Errorf("glyph %q has invalid width", g.Name)

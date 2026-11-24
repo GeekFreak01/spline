@@ -571,6 +571,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .tile[data-color] .label, .tile[data-color] .label .code { color: var(--text); opacity: 0.85; }
 .grid-section { grid-column: 1 / -1; margin: 10px 0 4px; font-size: var(--fs-xl); font-weight: 400; color: var(--text); }
 .grid-section:first-child { margin-top: 0; }
+.tile .lock-badge { position: absolute; top: 4px; left: 4px; color: var(--warn); line-height: 0; }
 .tile .mark { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
 .grid-empty { padding: 40px; text-align: center; color: var(--text-3); }
 
@@ -585,6 +586,16 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .title-row { display: flex; align-items: baseline; gap: 8px; }
 .title-row b { font-size: var(--fs-xl); }
 .title-row small { color: var(--text-3); }
+.origin-pick { display: grid; grid-template-columns: repeat(3, 16px); gap: 3px; width: max-content; padding: 4px; margin-bottom: 6px;
+  border: 1px solid var(--line-soft); border-radius: var(--radius-s); background: var(--bg-input); }
+.origin-pick button { width: 16px; height: 16px; padding: 0; border: 1px solid var(--line-soft); border-radius: var(--radius-xs); background: var(--bg-panel); cursor: pointer; }
+.origin-pick button:hover { border-color: var(--text-3); }
+.origin-pick button[aria-checked="true"] { background: var(--accent-fill); border-color: var(--accent-fill); }
+.origin-pick button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+#optionsBar .origin-pick { margin: 0; padding: 2px; grid-template-columns: repeat(3, 12px); gap: 2px; }
+#optionsBar .origin-pick button { width: 12px; height: 12px; }
+.title-row .lock-btn { margin-left: auto; align-self: center; }
+.title-row .lock-btn[aria-pressed="true"] { color: var(--warn); }
 .hint { color: var(--text-3); margin: 0; }
 .btn-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
 .compose-note { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--bg-input); }
@@ -639,6 +650,12 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .preview-out .mine { font-family: var(--preview-font), var(--font-guide); }
 .preview-out .missing { font-family: var(--font-guide); color: var(--text-3); }
 .preview-msg { margin: 0; color: var(--text-3); }
+.preview-blind { display: flex; gap: 2px; flex: none; }
+.preview-blind .btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); }
+.preview-body.pv-blur .preview-out { filter: blur(3px); }
+.preview-body.pv-invert { background: var(--text); }
+.preview-body.pv-invert .preview-out { color: var(--bg-app); }
+.preview-body.pv-flip .preview-out { transform: rotate(180deg); }
 .preview-msg:empty { display: none; }
 
 /* ------------------------------------------------------------- status bar */
@@ -669,6 +686,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .dialog .body:empty { display: none; }
 .dialog .field { display: flex; flex-direction: column; gap: 4px; color: var(--text-2); }
 .dialog .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.dialog .field-row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .dialog h3 { margin: 6px 0 0; font-size: var(--fs-s); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); }
 .dialog .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
 .dialog .actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line-soft); }
@@ -762,6 +780,13 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .cm-users .btn { min-width: 32px; padding: 0 8px; }
 
 .ag-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.ag-presets .btn { gap: 6px; }
+.rn-preview { display: grid; gap: 2px; margin-top: 8px; max-height: 220px; overflow: auto; font-size: var(--fs-s); }
+.rn-preview code { font-family: var(--font-mono); }
+.rn-preview code.bad { color: var(--danger); text-decoration: line-through; }
+.ag-presets .ag-count { font-style: normal; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); }
+.ag-presets .btn.done { color: var(--text-2); }
+.ag-presets .btn.done .icon { color: var(--ok); }
 
 .an-name { font: 600 var(--fs-s) var(--font-mono, monospace); color: var(--dot-orange); overflow: hidden; text-overflow: ellipsis; }
 

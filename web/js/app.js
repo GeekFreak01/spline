@@ -3,9 +3,10 @@ import { icon, fillIcons } from './icons.js';
 import { CATEGORIES, COLORS } from './glyphsets.js';
 import {
   newProject, validateProject, serialize, addGlyphForChar, charOf, isDrawn, svgPath, glyphBox,
-  translateGlyph, normalizeDirections, hasOutline, rectContour, ellipseContour,
+  translateGlyph, normalizeDirections, hasOutline, rectContour, ellipseContour, polyBox, glyphForCode, hasCode,
 } from './model.js';
 import { refreshComponents, usedBy, decompose } from './components.js';
+import { scaleProject } from './upm.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
 import { isSmart, editingState, editState, saveSmart, addProp, removeProp, smartProblems } from './smart.js';
 import { hasMasters, activeId, defaultId, switchMaster, saveForm, addMaster, deleteMaster, problems, instanceAt, matchContour, setWidthAxis, layerOf,
@@ -14,9 +15,9 @@ import { makeZip } from './zip.js';
 import { offsetContours, roundCorners, strokeContours, fitCurves } from './filters.js';
 import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
-import { History, KERNING, GROUPS, MANY, GLYPHS } from './history.js';
+import { History, KERNING, GROUPS, MANY, GLYPHS, LockedError } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
-import { Editor } from './editor.js';
+import { Editor, ORIGINS, originPoint } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
 import { proposeGroups, letterKind, pairGap } from './shape.js';
 import { setDefaults, keyLabel, comboOf, comboLabel, actionFor, assign, resetAll, bindings, isCustom, BROWSER_RESERVED, TAKEN } from './keys.js';
@@ -67,11 +68,11 @@ const MOD = isMac ? '⌘' : 'Ctrl+';
 setDefaults({
   simplify: [], new: [], open: ['Ctrl+O'], save: ['Ctrl+S'], saveAs: ['Ctrl+Shift+S'], importSvg: [], exportTTF: [], exportOTF: [], exportWOFF: [], exportWOFF2: [], specialForm: [],
   undo: ['Ctrl+Z'], redo: ['Ctrl+Shift+Z', 'Ctrl+Y'], selectAll: ['Ctrl+A'], freeTransform: ['Ctrl+T'],
-  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], openCorner: [], reconnect: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
+  invertSelection: ['Ctrl+Shift+I'], addExtremes: ['Ctrl+Shift+E'], tidyUp: [], lockContours: ['Ctrl+L'], makeFirst: [], alignPoints: ['Ctrl+Shift+A'], breakContour: [], joinContours: [], openCorner: [], reconnect: [], bgCopy: [], updateMetrics: ['Ctrl+Alt+M'],
   zoomIn: ['=', 'Shift+=', 'Num +'], zoomOut: ['-', 'Num -'], zoomFit: ['0', 'Num 0'],
   viewKerning: ['Ctrl+K'], rulers: ['Ctrl+R'], userGuides: ['Ctrl+;'], showGuide: [], showGrid: [],
   snapGrid: ['F9'], snapGuides: ['F10'], prev: ['PageUp'], next: ['PageDown'],
-  'tool.measure': ['M'], selShapeCycle: ['Shift+V'], 'tool.pixel': ['G'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
+  'tool.measure': ['M'], selShapeCycle: ['Shift+V'], 'tool.pixel': ['G'], 'tool.note': ['N'], 'tool.select': ['V'], 'tool.pen': ['P'], 'tool.brush': ['B'], 'tool.eraser': ['E'],
   'tool.rect': ['R'], 'tool.ellipse': ['O'], 'tool.knife': ['K'], 'tool.hand': ['H'], 'tool.text': ['T'],
   'op.unite': ['Ctrl+Alt+U'], 'op.subtract': ['Ctrl+Alt+M'], 'op.intersect': ['Ctrl+Alt+I'],
   'op.exclude': ['Ctrl+Alt+E'], 'op.divide': ['Ctrl+Alt+D'], 'op.removeOverlap': ['Ctrl+Alt+O'],
@@ -91,6 +92,7 @@ const TOOLS = [
   { id: 'text', icon: 'type', key: 'T' },
   { id: 'measure', icon: 'ruler', key: 'M', ext: true },
   { id: 'pixel', icon: 'pixel', key: 'G', ext: true },
+  { id: 'note', icon: 'note', key: 'N', ext: true },
 ];
 const visibleTools = () => TOOLS.filter((tl) => !tl.ext || app.extended);
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
@@ -336,6 +338,13 @@ app.commitGlyph = (g) => {
   else if (app.extended && g?.anchors?.length) renderGlyphPanel();
 };
 app.onGlyphMetricsChanged = () => updateMetricInputs();
+app.onLocked = () => toast(t('lockedGlyph'), 'error');
+// An edit of a locked glyph stops at its first history step (see history.js).
+for (const ev of ['error', 'unhandledrejection']) {
+  window.addEventListener(ev, (e) => {
+    if ((e.error || e.reason) instanceof LockedError) { e.preventDefault(); app.onLocked(); }
+  });
+}
 app.onCursor = (p) => { $('statusPos').textContent = p ? `X ${Math.round(p.x)}   Y ${Math.round(p.y)}` : ''; };
 app.onZoom = (s) => { $('statusZoom').textContent = `${Math.round(s * 100)}%`; };
 
@@ -386,6 +395,8 @@ function menuDefs() {
       { label: 'saveAs', key: keyLabel('saveAs'), run: () => save(true) },
       '-',
       { label: 'fontInfo', key: keyLabel('fontInfo'), run: editFontInfo },
+      { label: 'upmMenu', run: upmDialog, ext: true },
+      { label: 'imMenu', run: () => pickFiles('metrics'), ext: true },
       { label: 'famMenu', run: familyDialog },
       '-',
       { label: 'exportTTF', key: keyLabel('exportTTF'), run: () => exportFont('ttf') },
@@ -426,6 +437,8 @@ function menuDefs() {
       { label: 'rulers', key: keyLabel('rulers'), check: editor.showRulers, run: () => toggleView('showRulers') },
       { label: 'userGuides', key: keyLabel('userGuides'), check: editor.showUserGuides, run: () => toggleView('showUserGuides') },
       { label: 'clearGuides', run: clearGuides, enabled: (app.project?.guides?.length || 0) > 0 },
+      { label: 'guideThrough', run: guideThroughPoints, enabled: inEditor && editor.sel.size === 2, ext: true },
+      { label: 'showNotes', check: editor.showNotes, run: () => { editor.showNotes = !editor.showNotes; store.set('spline.showNotes', editor.showNotes ? '1' : '0'); editor.render(); renderMenus(); }, ext: true },
       '-',
       { label: 'showGuide', key: keyLabel('showGuide'), check: editor.showGuide, run: () => toggleView('showGuide') },
       { label: 'showGrid', key: keyLabel('showGrid'), check: editor.showGrid, run: () => toggleView('showGrid') },
@@ -444,6 +457,7 @@ function menuDefs() {
       { label: 'addGlyph', run: addGlyphs },
       { label: 'drawGlyph', key: 'Enter', run: () => openEditor([...app.selected][0]), enabled: !inEditor && app.selected.size === 1 },
       { label: 'deleteGlyph', run: deleteSelectedGlyphs, enabled: !inEditor && app.selected.size > 0 },
+      { label: 'rnManyMenu', run: renameManyDialog, enabled: !inEditor, ext: true },
       '-',
       { label: 'autoSpacing', key: keyLabel('autoSpacing'), run: () => glyphAction('spacing'), enabled: inEditor || app.selected.size > 0 },
       { label: 'simplify', key: keyLabel('simplify'), run: simplifyGlyphs, enabled: inEditor || app.selected.size > 0 },
@@ -453,6 +467,10 @@ function menuDefs() {
       { label: 'ulMenu', run: () => pickFiles('image'), enabled: inEditor || app.selected.size === 1 },
       '-',
       { label: 'addExtremes', key: keyLabel('addExtremes'), run: addExtremes, enabled: inEditor, ext: true },
+      { label: 'tidyUp', key: keyLabel('tidyUp'), run: tidyUp, enabled: inEditor, ext: true },
+      { label: 'lockContours', key: keyLabel('lockContours'), run: lockContours, enabled: inEditor && editor.sel.size > 0, ext: true },
+      { label: 'unlockContours', run: unlockContours, enabled: inEditor && !!app.current?.contours.some((c) => c.locked), ext: true },
+      { label: 'lockGlyph', check: !!app.current?.locked, run: toggleGlyphLock, enabled: inEditor || app.selected.size > 0, ext: true },
       { label: 'makeFirst', key: keyLabel('makeFirst'), run: makeFirst, enabled: inEditor && editor.sel.size === 1, ext: true },
       { label: 'alignPoints', key: keyLabel('alignPoints'), run: alignPoints, enabled: inEditor && editor.sel.size > 1, ext: true },
       { label: 'breakContour', key: keyLabel('breakContour'), run: breakContour, enabled: inEditor && editor.sel.size === 1, ext: true },
@@ -809,7 +827,7 @@ function tileHTML(g) {
   return `<button type="button" class="tile${drawn ? ' drawn' : ''}" role="option" data-name="${esc(g.name)}"
       ${g.color ? `data-color="${esc(g.color)}"` : ''} aria-selected="${app.selected.has(g.name)}"
       tabindex="${g.name === app.focusName ? 0 : -1}" aria-label="${esc(label)}">
-      ${body}<span class="label"><span>${esc(tileName(g))}</span><span class="code">${hex(g)}</span></span></button>`;
+      ${body}${g.locked ? `<span class="lock-badge" aria-hidden="true">${icon('lock', 11)}</span>` : ''}<span class="label"><span>${esc(tileName(g))}</span><span class="code">${hex(g)}</span></span></button>`;
 }
 
 function setGridView(v) {
@@ -839,7 +857,7 @@ function tableHTML(list) {
     return `<tr class="trow" data-name="${esc(g.name)}" aria-selected="${app.selected.has(g.name)}">
       <td class="tg">${hasOutline(g) ? glyphSVG(g, 'tglyph') : `<span class="ghost">${esc(charOf(g))}</span>`}</td>
       <td><input type="text" data-cell="name" aria-label="${esc(t('tc_name'))} ${esc(g.name)}" value="${esc(g.name)}" spellcheck="false"></td>
-      <td><input type="text" data-cell="unicode" aria-label="Unicode ${esc(g.name)}" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></td>
+      <td><input type="text" data-cell="unicode" aria-label="Unicode ${esc(g.name)}" value="${codesText(g)}" placeholder="—" spellcheck="false"></td>
       <td>${num(g, 'advance', g.advance)}</td><td>${num(g, 'lsb', sd.lsb)}</td><td>${num(g, 'rsb', sd.rsb)}</td>
       <td><input type="text" data-cell="tags" aria-label="${esc(t('tc_tags'))} ${esc(g.name)}" value="${esc((g.tags || []).join(', '))}" spellcheck="false"></td>
       <td><input type="text" data-cell="note" aria-label="${esc(t('tc_note'))} ${esc(g.name)}" value="${esc(g.note || '')}"></td>
@@ -856,7 +874,7 @@ function onTableChange(e) {
   if (!cell || !g) return;
   const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value.trim();
   if (cell === 'name') { if (!renameGlyph(g, v)) e.target.value = g.name; return; }
-  if (cell === 'unicode') { if (!setUnicode(g, v)) e.target.value = g.unicode ? 'U+' + hex(g) : ''; return; }
+  if (cell === 'unicode') { if (!setUnicode(g, v)) e.target.value = codesText(g); return; }
   app.history.push(g);
   if (cell === 'tags') setTags(g, v);
   if (cell === 'note') { if (v) g.note = v; else delete g.note; }
@@ -1045,11 +1063,34 @@ function section(id, title, body, open = true, tip = '') {
   return `<details data-sec="${id}" ${isOpen ? 'open' : ''}><summary${tip ? ` data-tip="${esc(tip)}"` : ''}>${esc(title)}</summary><div class="section">${body}</div></details>`;
 }
 
+// Extended mode: the point that scale, rotation and flips turn around. The
+// simple mode always uses the centre.
+app.xfOrigin = store.get('spline.xfOrigin') || 'c';
+const xfOriginId = () => (app.extended ? app.xfOrigin : 'c');
+app.xfOriginId = xfOriginId;
+
+function originPicker() {
+  if (!app.extended) return '';
+  return `<div class="origin-pick" role="radiogroup" aria-label="${esc(t('xfOrigin'))}" data-tip="${esc(t('xfOrigin'))}">${ORIGINS.map((id) =>
+    `<button type="button" role="radio" data-origin="${id}" aria-checked="${id === app.xfOrigin}" aria-label="${esc(t('xfOrigin_' + id))}"></button>`).join('')}</div>`;
+}
+
+function setOrigin(id) {
+  if (!ORIGINS.includes(id)) return;
+  app.xfOrigin = id;
+  store.set('spline.xfOrigin', id);
+  xf = null; // a new session turns around the new point
+  document.querySelectorAll('[data-origin]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.origin === id)));
+  if (editor.xform) editor.setTransformOrigin(id);
+}
+document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-origin]'); if (b) setOrigin(b.dataset.origin); });
+
 function transformSection() {
   const v = xfValues();
   const num = (k, unit, min, max) => `<label class="prop"><span>${esc(t(k))}</span><span class="with-unit">
     <input type="number" data-tf="${k}" value="${v[k]}" step="1" min="${min}" max="${max}"><em>${unit}</em></span></label>`;
   return section('transform', t('transform'), `
+    ${originPicker()}
     ${num('scale', '%', XF_LIMITS.scale[0], XF_LIMITS.scale[1])}
     ${num('rotate', '°', XF_LIMITS.rotate[0], XF_LIMITS.rotate[1])}
     ${num('slant', '°', XF_LIMITS.slant[0], XF_LIMITS.slant[1])}
@@ -1090,7 +1131,7 @@ function renderInspectorBody() {
   const g = sel[0];
   const head = sel.length === 1
     ? `<div class="big-glyph">${hasOutline(g) ? glyphSVG(g) : `<span class="ghost">${esc(charOf(g))}</span>`}</div>
-       <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>`
+       <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small>${lockButton(g)}</div>`
     : `<div class="title-row"><b>${sel.length}</b><small>${esc(t('glyphs'))}: ${esc(sel.slice(0, 24).map((x) => charOf(x) || x.name).join(' '))}</small></div>`;
   // One section for everything about the glyph (in the extended mode also
   // its name, code, tags, note and export).
@@ -1117,11 +1158,17 @@ function renderGlyphPanel() {
   if (app.mode === 'editor') layoutPanels();
 }
 
+function lockButton(g) {
+  if (!app.extended && !g.locked) return '';
+  const label = esc(t(g.locked ? 'unlockGlyph' : 'lockGlyph'));
+  return `<button class="btn btn-icon lock-btn" type="button" data-cmd="lockGlyph" aria-pressed="${!!g.locked}" data-tip="${label}" aria-label="${label}">${icon(g.locked ? 'lock' : 'lockOpen', 15)}</button>`;
+}
+
 function renderGlyphPanelBody() {
   const g = app.current;
   if (!g) return;
   $('glyphPanel').innerHTML = section('glyph', t('glyph'), `
-      <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small></div>
+      <div class="title-row"><b>${markHTML(g)}</b><small>${esc(g.name)}${g.unicode ? ` · U+${hex(g)}` : ''}</small>${lockButton(g)}</div>
       ${composeNoteHTML(g)}
       ${metricInputs(g)}
       <div class="prop"><span>${esc(t('color'))}</span>${colorPicker(g.color)}</div>
@@ -1447,8 +1494,7 @@ function applyTransform(kind, value = 0) {
   if (!Number.isFinite(value)) return;
   const targets = transformTargets();
   for (const { g, nodes } of targets) {
-    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
-    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const { x: cx, y: cy } = originPoint(polyBox(nodes), xfOriginId());
     const a = (value * Math.PI) / 180;
     const fn = {
       scale: (p) => ({ x: cx + (p.x - cx) * (value / 100), y: cy + (p.y - cy) * (value / 100) }),
@@ -1504,11 +1550,11 @@ function xfValues() {
 
 function xfStart() {
   const items = transformTargets().map(({ g, nodes }) => {
-    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+    const o = originPoint(polyBox(nodes), xfOriginId());
     return {
       g, nodes,
       base: nodes.map((n) => ({ x: n.x, y: n.y, in: n.in && { ...n.in }, out: n.out && { ...n.out } })),
-      cx: (Math.min(...xs) + Math.max(...xs)) / 2, cy: (Math.min(...ys) + Math.max(...ys)) / 2,
+      cx: o.x, cy: o.y,
     };
   });
   if (!items.length) return null;
@@ -1635,6 +1681,7 @@ function deleteSelection() {
 
 // Extended mode: glyphs by code and range. Presets cover whole alphabets.
 const AG_PRESETS = [
+  ['latinBasic', 'U+0041-005A, U+0061-007A'], ['cyrillicBasic', 'U+0410-044F, U+0401, U+0451'], ['digits', 'U+0030-0039'],
   ['latin1', 'U+00C0-00FF'], ['latinExtA', 'U+0100-017F'], ['cyrillic', 'U+0400-045F'],
   ['cyrillicExt', 'U+0460-04FF'], ['greek', 'U+0391-03C9'], ['punctExt', 'U+2010-2027, U+2030-203A, U+20AC, U+2116, U+2122'],
 ];
@@ -1666,7 +1713,14 @@ async function addGlyphs() {
     title: t('addGlyph').replace('…', ''),
     body: `<label class="field">${esc(t('addGlyphHint'))}<input type="text" name="chars" ${app.extended ? '' : 'required'} maxlength="500" autocomplete="off"></label>
       ${app.extended ? `<label class="field">${esc(t('agCodes'))}<input type="text" name="codes" id="agCodes" maxlength="500" autocomplete="off" placeholder="U+0400-045F, uni0490, А-Я"></label>
-      <div class="ag-presets">${AG_PRESETS.map(([id, codes]) => `<button class="btn" type="button" data-ag="${codes}">${esc(t('ag_' + id))}</button>`).join('')}</div>` : ''}`,
+      <div class="ag-presets">${AG_PRESETS.map(([id, codes]) => {
+        // How many of the script's characters the font has: a full one is
+        // marked done, the others add only what is missing.
+        const list = parseCodes(codes) || [], have = list.filter((c) => glyphForCode(app.project, c.codePointAt(0))).length;
+        const done = have === list.length;
+        return `<button class="btn${done ? ' done' : ''}" type="button" data-ag="${codes}" data-tip="${esc(t(done ? 'agDone' : 'agMissing', { n: list.length - have }))}">
+          ${done ? icon('check', 13) : ''}<span>${esc(t('ag_' + id))}</span><em class="ag-count">${have}/${list.length}</em></button>`;
+      }).join('')}</div>` : ''}`,
     okLabel: t('add'),
     onOpen: (dlg) => dlg.querySelectorAll('[data-ag]').forEach((b) => b.addEventListener('click', () => {
       const f = dlg.querySelector('#agCodes');
@@ -1687,6 +1741,30 @@ async function addGlyphs() {
   if (app.mode === 'editor') showGrid();
   renderAll();
   $('glyphGrid').querySelector(`[data-name="${CSS.escape(added[0].name)}"]`)?.scrollIntoView({ block: 'center' });
+}
+
+// Extended mode: the whole font to another units-per-em (see upm.js).
+async function upmDialog() {
+  const cur = app.project.info.unitsPerEm;
+  const data = await showDialog({
+    title: t('upmTitle'),
+    body: `<label class="field">${esc(t('upmNew', { n: cur }))}<input type="number" name="upm" value="${cur === 1000 ? 2048 : 1000}" min="16" max="16384" step="1" required list="upmList"></label>
+      <datalist id="upmList"><option value="1000"><option value="1024"><option value="2048"><option value="4096"></datalist>
+      <p class="hint warn">${esc(t('upmNoUndo'))}</p>`,
+    okLabel: t('upmApply'),
+  });
+  if (!data) return;
+  const upm = Math.round(Number(data.get('upm')));
+  if (!(upm >= 16 && upm <= 16384) || upm === cur) return;
+  endTransform();
+  scaleProject(app.project, upm);
+  app.history.clear(); // the steps before hold the old size
+  refreshComponents(app.project);
+  markChanged();
+  renderAll();
+  if (app.mode === 'editor') { renderGlyphPanel(); editor.fit(); }
+  if (app.mode === 'kern') { kernView.render(); renderKernPanel(); }
+  toast(t('upmDone', { a: cur, b: upm }));
 }
 
 async function editFontInfo() {
@@ -1789,7 +1867,7 @@ const KEY_GROUPS = [
   ['viewKerning', ['viewKerning', 'kernShowGroups', 'kernNextSample', 'kernPrevSample']],
   ['menuView', ['zoomIn', 'zoomOut', 'zoomFit', 'rulers', 'userGuides', 'showGuide', 'showGrid', 'snapGrid', 'snapGuides', 'prev', 'next']],
   ['menuGlyph', [...PATH_OPS.map((op) => `op.${op.id}`), 'autoSpacing', 'simplify', 'flipH', 'flipV', 'newVariant', 'newLigature', 'groups', 'shapeGroups']],
-  ['extTools', ['tool.measure', 'tool.pixel', 'selShapeCycle', 'invertSelection', 'addExtremes', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'openCorner', 'reconnect', 'bgCopy', 'updateMetrics']],
+  ['extTools', ['tool.measure', 'tool.pixel', 'tool.note', 'selShapeCycle', 'invertSelection', 'addExtremes', 'tidyUp', 'lockContours', 'makeFirst', 'alignPoints', 'breakContour', 'joinContours', 'openCorner', 'reconnect', 'bgCopy', 'updateMetrics']],
   ['menuHelp', ['shortcuts']],
 ];
 const actionLabel = (id) => ACTIONS[id]?.label?.() || t(id);
@@ -1882,7 +1960,9 @@ document.documentElement.dataset.mode = app.extended ? 'extended' : 'simple';
 editor.showGuide = store.get('spline.showGuide', '1') === '1';
 editor.showGrid = store.get('spline.showGrid', '1') === '1';
 editor.brushRadius = Number(store.get('spline.brush', '40')) || 40;
-editor.tool = store.get('spline.tool', 'brush');
+// A tool of the extended mode does not stay active in the simple one.
+const usableTool = (id) => { const tl = TOOLS.find((x) => x.id === id); return tl && (!tl.ext || app.extended) ? id : 'brush'; };
+editor.tool = usableTool(store.get('spline.tool', 'brush'));
 editor.showRulers = store.get('spline.showRulers', '0') === '1';
 editor.showUserGuides = store.get('spline.showUserGuides', '1') === '1';
 editor.gridStep = Math.max(1, Number(store.get('spline.gridStep', '50')) || 50);
@@ -1916,6 +1996,7 @@ function renderTransformOptions() {
       <label>${esc(t('h'))}<input type="number" data-xf="h" step="1" value="${v.h.toFixed(1)}">%</label>
       <label>∠<input type="number" data-xf="angle" step="1" value="${v.angle.toFixed(1)}">°</label>
     </div>
+    ${app.extended ? `<div class="sep"></div>${originPicker()}` : ''}
     <div class="sep"></div>
     <div class="group">
       <button class="btn btn-primary" type="button" data-cmd="xfApply">${icon('check', 15)}<span>${esc(t('apply'))}</span></button>
@@ -1945,19 +2026,61 @@ app.onKnifeMiss = () => toast(t('knifeMiss'), 'error');
 // Ruler guides belong to the whole font and are saved in the .sp file.
 app.onGuidesChanged = () => { markChanged(); renderMenus(); };
 app.onGuideEdit = async (g) => {
+  if (!app.extended) {
+    const data = await showDialog({
+      title: t('guidePosition'),
+      body: `<label class="field">${esc(g.axis === 'y' ? t('guideHorizontal') : t('guideVertical'))}
+        <input type="number" name="pos" value="${g.pos}" step="1" required></label>
+        <label class="check"><input type="checkbox" name="remove">${esc(t('removeGuide'))}</label>`,
+    });
+    if (!data) return;
+    if (data.get('remove')) editor.removeGuide(g);
+    else g.pos = Math.round(Number(data.get('pos')));
+    app.onGuidesChanged();
+    editor.render();
+    return;
+  }
+  // Extended mode: name, a point and an angle, the glyph's own or the
+  // font's, locked or not.
+  const local = !!app.current?.guides?.includes(g);
+  const x = g.axis === 'a' ? g.x : g.axis === 'x' ? g.pos : 0;
+  const y = g.axis === 'a' ? g.y : g.axis === 'y' ? g.pos : 0;
+  const angle = g.axis === 'a' ? g.angle : g.axis === 'x' ? 90 : 0;
   const data = await showDialog({
-    title: t('guidePosition'),
-    body: `<label class="field">${esc(g.axis === 'y' ? t('guideHorizontal') : t('guideVertical'))}
-      <input type="number" name="pos" value="${g.pos}" step="1" required></label>
+    title: t('guideTitle'),
+    body: `<label class="field">${esc(t('guideName'))}<input type="text" name="name" value="${esc(g.name || '')}" maxlength="40" spellcheck="false"></label>
+      <div class="field-row three">
+        <label class="field">X<input type="number" name="x" value="${Math.round(x)}" step="1" required></label>
+        <label class="field">Y<input type="number" name="y" value="${Math.round(y)}" step="1" required></label>
+        <label class="field">${esc(t('guideAngle'))}<input type="number" name="angle" value="${angle}" step="1" min="-180" max="180" required></label>
+      </div>
+      <label class="check"${app.current ? '' : ' hidden'}><input type="checkbox" name="local" ${local ? 'checked' : ''}>${esc(t('guideLocal'))}</label>
+      <label class="check"><input type="checkbox" name="locked" ${g.locked ? 'checked' : ''}>${esc(t('guideLocked'))}</label>
       <label class="check"><input type="checkbox" name="remove">${esc(t('removeGuide'))}</label>`,
   });
   if (!data) return;
-  const list = app.project.guides;
-  if (data.get('remove')) list.splice(list.indexOf(g), 1);
-  else g.pos = Math.round(Number(data.get('pos')));
+  editor.removeGuide(g);
+  if (!data.get('remove')) {
+    const nx = Math.round(Number(data.get('x')) || 0), ny = Math.round(Number(data.get('y')) || 0);
+    let a = ((Number(data.get('angle')) || 0) % 180 + 180) % 180;
+    a = Math.round(a * 100) / 100;
+    const out = a === 0 ? { axis: 'y', pos: ny } : a === 90 ? { axis: 'x', pos: nx } : { axis: 'a', x: nx, y: ny, angle: a };
+    const name = String(data.get('name') || '').trim().slice(0, 40);
+    if (name) out.name = name;
+    if (data.get('locked')) out.locked = true;
+    if (data.get('local') && app.current) (app.current.guides ||= []).push(out);
+    else app.project.guides.push(out);
+  }
   app.onGuidesChanged();
   editor.render();
 };
+
+// Extended mode: a guide of the open glyph through the two selected points.
+function guideThroughPoints() {
+  endTransform();
+  if (app.mode !== 'editor') return;
+  if (editor.guideThroughPoints()) { app.onGuidesChanged(); toast(t('guideAdded')); } else toast(t('guideTwoPoints'), 'error');
+}
 
 async function clearGuides() {
   if (!app.project.guides?.length || !(await confirmDialog(t('confirmClearGuides'), t('clearGuides')))) return;
@@ -1992,6 +2115,35 @@ function renderEditorOptions() {
   }
 }
 
+// Extended mode: the kinds of notes the Notes tool puts on the canvas.
+const NOTE_KINDS = ['text', 'arrow', 'circle', 'plus', 'minus'];
+editor.noteKind = NOTE_KINDS.includes(store.get('spline.noteKind')) ? store.get('spline.noteKind') : 'text';
+editor.showNotes = store.get('spline.showNotes') !== '0';
+$('optionsBar').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-note-kind]');
+  if (!b) return;
+  editor.noteKind = b.dataset.noteKind;
+  store.set('spline.noteKind', editor.noteKind);
+  renderEditorOptions();
+});
+
+// Text of a note: a new one at `at`, or the note to change.
+app.onNoteText = async (note, at) => {
+  const g = app.current;
+  if (!g) return;
+  const data = await showDialog({
+    title: t(note ? 'noteEdit' : 'noteNew'),
+    body: `<label class="field">${esc(t('noteText'))}<textarea name="text" rows="3" maxlength="500" spellcheck="true">${esc(note?.text || '')}</textarea></label>
+      ${note ? `<label class="check"><input type="checkbox" name="remove">${esc(t('noteRemove'))}</label>` : ''}`,
+  });
+  if (!data) return;
+  const text = String(data.get('text') || '').trim().slice(0, 500);
+  if (!note) { if (text) editor.addNote({ type: 'text', x: at.x, y: at.y, text }); return; }
+  app.history.push(g);
+  if (data.get('remove') || !text) { g.annotations.splice(g.annotations.indexOf(note), 1); if (!g.annotations.length) delete g.annotations; } else note.text = text;
+  editor.afterEdit(false);
+};
+
 function drawEditorOptions() {
   const g = app.current;
   if (!g) return;
@@ -2013,6 +2165,9 @@ function drawEditorOptions() {
       <div class="seg" role="radiogroup">
         <button type="button" role="radio" data-cmd="pxDraw" aria-checked="${!editor.pixelErase}">${esc(t('pxDraw'))}</button>
         <button type="button" role="radio" data-cmd="pxErase" aria-checked="${editor.pixelErase}" data-tip="${esc(t('pxEraseTip'))}">${esc(t('pxErase'))}</button>
+      </div></div><div class="sep"></div>` : ''}
+    ${editor.tool === 'note' ? `<div class="group"><div class="seg" role="radiogroup" aria-label="${esc(t('toolNote'))}">
+      ${NOTE_KINDS.map((k) => `<button type="button" role="radio" data-note-kind="${k}" aria-checked="${editor.noteKind === k}">${esc(t('note_' + k))}</button>`).join('')}
       </div></div><div class="sep"></div>` : ''}
     ${masterBarHTML()}
     <div class="group">
@@ -2184,7 +2339,7 @@ function parseLine(text) {
       if (m && findGlyph(m[1])) { out.push(m[1]); i += m[0].length; continue; }
     }
     const ch = String.fromCodePoint(text.codePointAt(i));
-    const g = app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
+    const g = glyphForCode(app.project, ch.codePointAt(0));
     if (g) out.push(g.name);
     i += ch.length;
   }
@@ -2294,6 +2449,7 @@ window.addEventListener('popstate', (e) => {
 const kernView = new KernView(app, $('kernCanvas'));
 kernView.showGroupMembers = store.get('spline.kernShowGroups') === '1';
 kernView.showMetrics = store.get('spline.kernShowMetrics') === '1';
+kernView.showMeasure = store.get('spline.kernMeasure') === '1';
 
 function toggleKernGroups(on = !kernView.showGroupMembers) {
   kernView.showGroupMembers = on;
@@ -2326,7 +2482,7 @@ function letterSample(g) {
     [/^[0-9]$/, '01', '0123456789'],
   ];
   const [, ctl, set] = kinds.find(([re]) => re.test(ch)) || [null, 'HO', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
-  const have = Array.from(set).filter((c) => app.project.glyphs.some((x) => x.unicode === c.codePointAt(0)));
+  const have = Array.from(set).filter((c) => glyphForCode(app.project, c.codePointAt(0)));
   const [a, b] = Array.from(ctl);
   return `${a}${a}${ch}${a}${a} ${b}${b}${ch}${b}${b} ${have.map((c) => ch + c).join('')}${ch}`;
 }
@@ -2343,6 +2499,23 @@ function previewAroundCurrent() {
   renderPreviewText();
 }
 $('previewCurrent').addEventListener('click', previewAroundCurrent);
+
+// Extended mode: looking at the preview "blind" (blurred, inverted, upside
+// down) shows the rhythm and colour of the text rather than the shapes.
+const BLIND = ['blur', 'invert', 'flip'];
+function applyBlind() {
+  for (const k of BLIND) {
+    const on = app.extended && store.get('spline.pv.' + k) === '1';
+    $('previewBody').classList.toggle('pv-' + k, on);
+    document.querySelector(`[data-blind="${k}"]`)?.setAttribute('aria-pressed', String(on));
+  }
+}
+document.querySelectorAll('[data-blind]').forEach((b) => b.addEventListener('click', () => {
+  const k = b.dataset.blind;
+  store.set('spline.pv.' + k, store.get('spline.pv.' + k) === '1' ? '0' : '1');
+  applyBlind();
+}));
+applyBlind();
 $('previewFeats').addEventListener('input', (e) => {
   if (e.target.dataset.pfAxis === undefined) return;
   if (e.target.dataset.pfAxis === '2') app.previewLoc2 = Number(e.target.value);
@@ -2413,7 +2586,8 @@ function renderKernOptions() {
       ${[...Object.keys(KERN_SAMPLES), 'letter'].map((k) => `<option value="${k}" ${kernView.sample === k ? 'selected' : ''}>${esc(t('sample_' + k))}</option>`).join('')}
     </select></label></div>
     <label class="check" data-tip="${esc(t('kernShowGroupsTip'))}" data-key="${esc(keyLabel('kernShowGroups'))}"><input type="checkbox" id="kernShowGroups" ${kernView.showGroupMembers ? 'checked' : ''}>${esc(t('kernShowGroups'))}</label>
-    ${app.extended ? `<label class="check" data-tip="${esc(t('kernShowMetricsTip'))}"><input type="checkbox" id="kernShowMetrics" ${kernView.showMetrics ? 'checked' : ''}>${esc(t('kernShowMetrics'))}</label>` : ''}
+    ${app.extended ? `<label class="check" data-tip="${esc(t('kernShowMetricsTip'))}"><input type="checkbox" id="kernShowMetrics" ${kernView.showMetrics ? 'checked' : ''}>${esc(t('kernShowMetrics'))}</label>
+      <label class="check" data-tip="${esc(t('kernMeasureTip'))}"><input type="checkbox" id="kernMeasure" ${kernView.showMeasure ? 'checked' : ''}>${esc(t('kernMeasure'))}</label>` : ''}
     <div class="glyph-nav"><label>${esc(t('previewSize'))}<input type="range" id="kernSize" min="40" max="400" value="${kernView.size}"></label></div>`;
 }
 
@@ -2689,7 +2863,7 @@ function parseGlyphList(text) {
   for (const token of String(text).trim().split(/\s+/).filter(Boolean)) {
     if (findGlyph(token)) { names.push(token); continue; }
     for (const ch of Array.from(token)) {
-      const g = app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
+      const g = glyphForCode(app.project, ch.codePointAt(0));
       if (g) names.push(g.name); else unknown.push(ch);
     }
   }
@@ -3446,6 +3620,11 @@ $('optionsBar').addEventListener('input', (e) => {
 $('optionsBar').addEventListener('change', (e) => {
   if (e.target.id === 'kernSample' && e.target.value) setKernSample(e.target.value);
   if (e.target.id === 'kernShowGroups') toggleKernGroups(e.target.checked);
+  if (e.target.id === 'kernMeasure') {
+    kernView.showMeasure = e.target.checked;
+    store.set('spline.kernMeasure', e.target.checked ? '1' : '0');
+    kernView.render();
+  }
   if (e.target.id === 'kernShowMetrics') {
     kernView.showMetrics = e.target.checked;
     store.set('spline.kernShowMetrics', e.target.checked ? '1' : '0');
@@ -3652,10 +3831,10 @@ const NAME_RE = /^[A-Za-z_][A-Za-z0-9._-]{0,62}$/;
 
 // Renames a glyph and every place that refers to it: kerning, variants,
 // ligatures, components, metric keys.
-function renameGlyph(g, name) {
+function renameGlyph(g, name, quiet = false) {
   if (name === g.name) return true;
-  if (!NAME_RE.test(name)) { toast(t('rnBad'), 'error'); return false; }
-  if (findGlyph(name)) { toast(t('rnTaken', { name }), 'error'); return false; }
+  if (!NAME_RE.test(name)) { if (!quiet) toast(t('rnBad'), 'error'); return false; }
+  if (findGlyph(name)) { if (!quiet) toast(t('rnTaken', { name }), 'error'); return false; }
   const p = app.project, old = g.name;
   app.history.pushGroups(p);
   app.history.push(g);
@@ -3684,18 +3863,65 @@ function renameGlyph(g, name) {
   return true;
 }
 
+// "U+0041" or a character; in the extended mode a list ("U+0041, U+0410"):
+// the first is the glyph's own character, the others draw with it too.
 function setUnicode(g, text) {
-  if (!text) { app.history.push(g); delete g.unicode; markChanged(); renderGrid(); return true; }
-  const m = /^(?:U\+|0x)?([0-9a-f]{1,6})$/i.exec(text) || ([...text].length === 1 ? [null, text.codePointAt(0).toString(16)] : null);
-  const cp = m && parseInt(m[1], 16);
-  if (!cp || cp > 0x10ffff) { toast(t('ucBad'), 'error'); return false; }
-  const other = app.project.glyphs.find((x) => x !== g && x.unicode === cp);
-  if (other) { toast(t('ucTaken', { name: other.name }), 'error'); return false; }
+  const parts = String(text).split(/[,;\s]+/).filter(Boolean);
+  if (!parts.length) { app.history.push(g); delete g.unicode; delete g.unicodes; markChanged(); renderGrid(); return true; }
+  if (parts.length > (app.extended ? 33 : 1)) { toast(t('ucBad'), 'error'); return false; }
+  const cps = [];
+  for (const part of parts) {
+    const m = /^(?:U\+|0x|uni)?([0-9a-f]{1,6})$/i.exec(part) || ([...part].length === 1 ? [null, part.codePointAt(0).toString(16)] : null);
+    const cp = m && parseInt(m[1], 16);
+    if (!cp || cp > 0x10ffff) { toast(t('ucBad'), 'error'); return false; }
+    const other = app.project.glyphs.find((x) => x !== g && hasCode(x, cp));
+    if (other) { toast(t('ucTaken', { name: other.name }), 'error'); return false; }
+    if (!cps.includes(cp)) cps.push(cp);
+  }
   app.history.push(g);
-  g.unicode = cp;
+  g.unicode = cps[0];
+  if (cps.length > 1) g.unicodes = cps.slice(1); else delete g.unicodes;
   markChanged();
   renderGrid();
   return true;
+}
+
+// The glyph's characters as typed in the Unicode field.
+const codesText = (g) => [g.unicode, ...(g.unicodes || [])].filter(Boolean).map((u) => 'U+' + u.toString(16).toUpperCase().padStart(4, '0')).join(', ');
+
+// Extended mode: renames the selected glyphs (all when none is selected)
+// with find and replace, plain text or a regular expression ("$" + ".ss01"
+// adds a suffix). Kerning, rules, components and keys follow, as for one.
+async function renameManyDialog() {
+  const list = selectedGlyphs().length ? selectedGlyphs() : app.project.glyphs;
+  const plan = (find, repl, re) => {
+    let rx = null;
+    if (re) { try { rx = new RegExp(find, 'g'); } catch { return null; } }
+    return list.map((g) => ({ g, to: rx ? g.name.replace(rx, repl) : find ? g.name.split(find).join(repl) : g.name })).filter((x) => x.to !== x.g.name);
+  };
+  const show = (dlg) => {
+    const f = dlg.querySelector('[name=find]').value, r = dlg.querySelector('[name=repl]').value, re = dlg.querySelector('[name=regex]').checked;
+    const p = plan(f, r, re), out = dlg.querySelector('.rn-preview');
+    if (!p) { out.textContent = t('rnRegexBad'); return; }
+    out.innerHTML = p.length ? p.slice(0, 12).map((x) => `<div><code>${esc(x.g.name)}</code> → <code class="${NAME_RE.test(x.to) && !findGlyph(x.to) ? '' : 'bad'}">${esc(x.to)}</code></div>`).join('') + (p.length > 12 ? `<div class="hint">${esc(t('rnMore', { n: p.length - 12 }))}</div>` : '') : `<span class="hint">${esc(t('rnNothing'))}</span>`;
+  };
+  const data = await showDialog({
+    title: t('rnManyTitle', { n: list.length }),
+    body: `<div class="field-row">
+        <label class="field">${esc(t('rnFind'))}<input type="text" name="find" spellcheck="false" autocomplete="off"></label>
+        <label class="field">${esc(t('rnReplace'))}<input type="text" name="repl" spellcheck="false" autocomplete="off"></label>
+      </div>
+      <label class="check" data-tip="${esc(t('rnRegexTip'))}"><input type="checkbox" name="regex">${esc(t('rnRegex'))}</label>
+      <div class="rn-preview" aria-live="polite"></div>`,
+    okLabel: t('rnApply'),
+    onOpen: (dlg) => { dlg.addEventListener('input', () => show(dlg)); show(dlg); },
+  });
+  if (!data) return;
+  const p = plan(String(data.get('find') || ''), String(data.get('repl') || ''), !!data.get('regex'));
+  if (!p?.length) return;
+  let done = 0;
+  app.history.group(() => { for (const { g, to } of p) if (renameGlyph(g, to, true)) done++; });
+  toast(done === p.length ? t('rnDone', { n: done }) : t('rnPartly', { n: done, m: p.length - done }), done === p.length ? 'ok' : 'error');
 }
 
 function setTags(g, text) {
@@ -3705,7 +3931,7 @@ function setTags(g, text) {
 
 function infoFieldsHTML(g) {
   return `<label class="prop"><span>${esc(t('tc_name'))}</span><input type="text" data-info="name" value="${esc(g.name)}" spellcheck="false"></label>
-    <label class="prop"><span>Unicode</span><input type="text" data-info="unicode" value="${g.unicode ? 'U+' + hex(g) : ''}" placeholder="—" spellcheck="false"></label>
+    <label class="prop"><span>Unicode</span><input type="text" data-info="unicode" value="${codesText(g)}" placeholder="—" spellcheck="false"></label>
     <label class="prop"><span>${esc(t('tc_tags'))}</span><input type="text" data-info="tags" value="${esc((g.tags || []).join(', '))}" placeholder="${esc(t('tagsPh'))}" spellcheck="false"></label>
     <label class="prop"><span>${esc(t('tc_note'))}</span><input type="text" data-info="note" value="${esc(g.note || '')}"></label>
     <label class="check" data-tip="${esc(t(isPartGlyph(g) ? 'partNoExport' : 'exportTip'))}"><input type="checkbox" data-info="export" ${g.noExport || isPartGlyph(g) ? '' : 'checked'} ${isPartGlyph(g) ? 'disabled' : ''}>${esc(t('exportIn'))}</label>`;
@@ -3717,7 +3943,7 @@ function onInfoChange(e) {
   if (!k || !g) return false;
   const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value.trim();
   if (k === 'name') { if (!renameGlyph(g, v)) e.target.value = g.name; return true; }
-  if (k === 'unicode') { if (!setUnicode(g, v)) e.target.value = g.unicode ? 'U+' + hex(g) : ''; return true; }
+  if (k === 'unicode') { if (!setUnicode(g, v)) e.target.value = codesText(g); return true; }
   app.history.push(g);
   if (k === 'tags') setTags(g, v);
   if (k === 'note') { if (v) g.note = v; else delete g.note; }
@@ -3801,9 +4027,11 @@ function setExtended(on) {
   document.documentElement.dataset.mode = on ? 'extended' : 'simple';
   renderAll();
   if (app.mode === 'grid') renderGridOptions();
+  if (usableTool(editor.tool) !== editor.tool) { editor.setTool('select'); store.set('spline.tool', 'select'); }
   if (app.mode === 'editor') { renderToolbar(); renderEditorOptions(); renderGlyphPanel(); editor.render(); }
   if (app.mode === 'kern') { renderKernOptions(); renderKernPanel(); kernView.render(); }
   renderPreviewText();
+  applyBlind();
   toast(t(on ? 'extOn' : 'extOff'));
 }
 
@@ -3843,7 +4071,8 @@ function pointsSection() {
     <div class="btn-row">${b('ptBreak', 'breakContour', 'breakContour')}${b('ptJoin', 'joinContours', 'joinContours')}</div>
     <div class="btn-row">${b('ptOpenCorner', 'openCorner', 'openCorner')}${b('ptReconnect', 'reconnect', 'reconnect')}</div>
     <div class="btn-row">${b('ptEven', 'evenHandles', 'evenHandles')}${b('ptFirst', 'makeFirst', 'makeFirst')}</div>
-    <div class="btn-row">${b('ptInvert', 'invertSelection', 'invertSelection')}</div>
+    <div class="btn-row">${b('ptInvert', 'invertSelection', 'invertSelection')}${b('ptTidy', 'tidyUp', 'tidyUp')}</div>
+    <div class="btn-row">${b('ptLock', 'lockContours', 'lockContours')}${b('ptUnlock', 'unlockContours')}</div>
     <div class="parts">${partsHTML()}</div>`, true, t('ptHint'));
 }
 
@@ -4930,6 +5159,41 @@ function addExtremes() {
   toast(n ? t('extremesAdded', { n }) : t('extremesNone'));
 }
 
+function tidyUp() {
+  endTransform();
+  if (app.mode !== 'editor') return;
+  const n = editor.tidyUp();
+  toast(n ? t('tidyDone', { n }) : t('tidyNone'));
+  renderGlyphPanel();
+}
+
+function lockContours() {
+  endTransform();
+  if (app.mode !== 'editor') return;
+  const n = editor.lockContours();
+  if (n) toast(t('contoursLocked', { n })); else toast(t('lockContoursHint'), 'error');
+  renderGlyphPanel();
+}
+
+function unlockContours() {
+  if (app.mode !== 'editor') return;
+  const n = editor.unlockContours();
+  if (n) toast(t('contoursUnlocked', { n }));
+}
+
+// Locks or unlocks the open glyph, or the selected ones in the list. Not an
+// undo step: the lock itself is not an edit of the glyph.
+function toggleGlyphLock() {
+  const list = app.mode === 'editor' ? [app.current].filter(Boolean) : selectedGlyphs();
+  if (!list.length) return;
+  const on = !list.every((g) => g.locked);
+  for (const g of list) { if (on) g.locked = true; else delete g.locked; updateTile(g); }
+  if (on && app.mode === 'editor') { endTransform(); editor.sel.clear(); editor.render(); }
+  markChanged();
+  if (app.mode === 'editor') renderGlyphPanel(); else renderInspector();
+  toast(t(on ? 'glyphLocked' : 'glyphUnlocked'));
+}
+
 function makeFirst() {
   endTransform();
   if (app.mode === 'editor' && !editor.makeFirst()) toast(t('makeFirstHint'), 'error');
@@ -4942,7 +5206,7 @@ function alignPoints() {
 
 // ================================================================ letters from parts
 
-const glyphByChar = (ch) => app.project.glyphs.find((x) => x.unicode === ch.codePointAt(0));
+const glyphByChar = (ch) => glyphForCode(app.project, ch.codePointAt(0));
 const composeState = (g) => (g.compose ? 'auto' : g.composeOff ? 'manual' : 'none');
 
 // Й = И + ˘: tells how the letter is made and offers the other way.
@@ -5167,6 +5431,70 @@ function underlaySection(g) {
 
 const isFontFile = (f) => /\.(ttf|otf|ufoz|zip)$/i.test(f?.name || '');
 
+// A font file read into a project without opening it (for importing from).
+async function fontFileProject(file) {
+  const r = await fetch('/api/import-font', {
+    method: 'POST', headers: { 'X-Spline': '1', 'Content-Type': 'application/octet-stream' }, body: file,
+  });
+  if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  return validateProject((await r.json()).project);
+}
+
+// Extended mode: sidebearings, widths, kerning and kerning groups taken
+// from another font (.sp, TTF, OTF, UFO). Glyphs match by character, then
+// by name; values are scaled when the two fonts differ in UPM.
+async function importMetricsFrom(file) {
+  let src;
+  try { src = isFontFile(file) ? await fontFileProject(file) : await readProjectFile(file); } catch (err) { toast(t('openError', { err: err.message }), 'error'); return; }
+  const p = app.project, k = p.info.unitsPerEm / (src.info.unitsPerEm || 1000);
+  const match = new Map(); // source name -> glyph here
+  for (const sg of src.glyphs) {
+    const g = (sg.unicode && glyphForCode(p, sg.unicode)) || findGlyph(sg.name);
+    if (g) match.set(sg.name, g);
+  }
+  const pairs = Object.values(src.kerning || {}).reduce((a, r) => a + Object.keys(r).length, 0);
+  const data = await showDialog({
+    title: t('imTitle', { name: src.info.familyName }),
+    body: `<p class="hint">${esc(t('imMatched', { n: match.size, total: src.glyphs.length }))}</p>
+      <label class="check"><input type="checkbox" name="sb" checked>${esc(t('imSidebearings'))}</label>
+      <label class="check"><input type="checkbox" name="kern" ${pairs ? 'checked' : 'disabled'}>${esc(t('imKerning', { n: pairs }))}</label>
+      <label class="check"><input type="checkbox" name="groups" checked>${esc(t('imGroups'))}</label>`,
+    okLabel: t('imApply'),
+  });
+  if (!data || !match.size) return;
+  const R = (v) => Math.round(v * k);
+  let changed = 0;
+  app.history.group(() => {
+    if (data.get('kern')) app.history.pushKerning(p);
+    if (data.get('groups')) app.history.pushGroups(p);
+    for (const [name, g] of match) {
+      if (g.locked) continue;
+      const sg = src.glyphs.find((x) => x.name === name);
+      app.history.push(g);
+      if (data.get('sb')) {
+        const box = glyphBox(sg);
+        if (box && glyphBox(g)) { setMetric(g, 'lsb', R(box.minX)); setMetric(g, 'rsb', R(sg.advance - box.maxX)); } else setMetric(g, 'advance', R(sg.advance));
+      }
+      if (data.get('groups')) for (const side of ['kernLeft', 'kernRight']) { if (sg[side]) g[side] = sg[side]; else delete g[side]; }
+      changed++;
+    }
+    if (data.get('kern')) {
+      // Glyph names become the names here; group keys ("@name") stay.
+      const key = (n) => (n.startsWith('@') ? n : match.get(n)?.name);
+      for (const [l, row] of Object.entries(src.kerning || {})) {
+        const kl = key(l);
+        if (!kl) continue;
+        for (const [r, v] of Object.entries(row)) { const kr = key(r); if (kr) (p.kerning[kl] ||= {})[kr] = R(v); }
+      }
+    }
+  });
+  markChanged();
+  renderAll();
+  if (app.mode === 'editor') { renderGlyphPanel(); editor.render(); }
+  if (app.mode === 'kern') { kernView.render(); renderKernPanel(); }
+  toast(t('imDone', { n: changed }));
+}
+
 // A ready font opens as a new project (not saved yet).
 async function openFontFile(file, ask = false) {
   if (ask && app.dirty && !(await confirmDialog(t('confirmNew'), t('ok'), false))) return;
@@ -5330,7 +5658,7 @@ async function openDialog() {
 function pickFiles(mode) {
   const input = $('fileInput');
   input.dataset.mode = mode;
-  input.accept = { svg: '.svg,image/svg+xml', image: 'image/png,image/jpeg,image/webp,image/gif', font: '.ttf,.otf,.ufoz,.zip' }[mode]
+  input.accept = { svg: '.svg,image/svg+xml', image: 'image/png,image/jpeg,image/webp,image/gif', font: '.ttf,.otf,.ufoz,.zip', metrics: '.sp,.json,.ttf,.otf,.ufoz,.zip' }[mode]
     || '.sp,.json,.ttf,.otf,.ufoz,.zip,application/json';
   input.multiple = mode === 'svg';
   input.click();
@@ -5343,6 +5671,7 @@ $('fileInput').addEventListener('change', async (e) => {
   const mode = e.target.dataset.mode;
   if (mode === 'svg') importSvgFiles(files);
   else if (mode === 'image') setUnderlay(underlayTarget(), files[0]);
+  else if (mode === 'metrics') importMetricsFrom(files[0]);
   else if (isFontFile(files[0])) openFontFile(files[0], mode === 'font');
   else if (mode === 'import') {
     try { mergeGlyphs((await readProjectFile(files[0])).glyphs); } catch (err) { toast(t('openError', { err: err.message }), 'error'); }
@@ -5585,7 +5914,7 @@ const COMMANDS = {
   xfReset, xfApply: () => editor.commitTransform(), xfCancel: () => editor.cancelTransform(),
   simplify: simplifyGlyphs, composeOff: () => setComposed(false), composeOn: () => setComposed(true), fillMasters,
   ulLoad: () => pickFiles('image'), ulRemove: removeUnderlay,
-  ptExtremes: addExtremes, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
+  ptExtremes: addExtremes, ptTidy: tidyUp, lockGlyph: toggleGlyphLock, ptLock: lockContours, ptUnlock: unlockContours, ptFirst: makeFirst, ptAlign: alignPoints, ptInvert: () => editor.invertSelection(),
   ptBreak: breakContour, ptJoin: joinContours,
   msShowAll: () => toggleMastersView('spline.showAllMasters', 'showAllMasters'),
   msEditAll: () => toggleMastersView('spline.editAllMasters', 'editAllMasters'),
@@ -5644,6 +5973,8 @@ const ACTIONS = {
   invertSelection: { run: () => editor.invertSelection(), when: () => app.extended && inEditorMode() },
   selShapeCycle: { run: () => { setSelectShape(editor.selectShape === 'lasso' ? 'rect' : 'lasso'); setTool('select'); }, when: () => app.extended && inEditorMode() },
   addExtremes: { run: addExtremes, when: () => app.extended && inEditorMode() },
+  tidyUp: { run: tidyUp, when: () => app.extended && inEditorMode() },
+  lockContours: { run: lockContours, when: () => app.extended && inEditorMode() },
   makeFirst: { run: makeFirst, when: () => app.extended && inEditorMode() },
   alignPoints: { run: alignPoints, when: () => app.extended && inEditorMode() },
   updateMetrics: { run: updateAllMetrics, when: () => app.extended },
@@ -5764,7 +6095,7 @@ function schedulePreview(delay = 500) {
 // of the time, and the site's limits are not reached.
 function previewBody(q) {
   const cps = new Set([...previewText()].map((c) => c.codePointAt(0)));
-  const glyphs = q.glyphs.filter((g) => !g.unicode || cps.has(g.unicode))
+  const glyphs = q.glyphs.filter((g) => !g.unicode || cps.has(g.unicode) || g.unicodes?.some((u) => cps.has(u)))
     .map(({ image, snapshots, background, note, layers, ...g }) => g);
   const { masters, axis, axis2, styles, activeMaster, ...rest } = q;
   return serialize({ ...rest, glyphs });
@@ -5867,7 +6198,7 @@ function renderPreviewText() {
   if (!app.project) return;
   renderPreviewFeatures();
   applyPreviewFeatures();
-  const drawn = new Set(app.project.glyphs.filter((g) => hasOutline(g) || g.unicode === 32).map((g) => g.unicode));
+  const drawn = new Set(app.project.glyphs.filter((g) => hasOutline(g) || g.unicode === 32).flatMap((g) => [g.unicode, ...(g.unicodes || [])]));
   const out = $('previewOut');
   out.textContent = '';
   let run = '', runMine = null;
