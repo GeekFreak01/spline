@@ -52,6 +52,14 @@ function roundNode(n) {
   for (const h of ['in', 'out']) if (n[h]) n[h] = { x: Math.round(n[h].x), y: Math.round(n[h].y) };
 }
 
+// The nine points of a box a transform can turn around (see the picker in
+// the transform panel): corners, edge middles and the centre.
+export const ORIGINS = ['nw', 'n', 'ne', 'w', 'c', 'e', 'sw', 's', 'se'];
+export function originPoint(b, id) {
+  const i = Math.max(0, ORIGINS.indexOf(id)), col = i % 3, row = Math.floor(i / 3);
+  return { x: [b.minX, (b.minX + b.maxX) / 2, b.maxX][col], y: [b.maxY, (b.minY + b.maxY) / 2, b.minY][row] };
+}
+
 export class Editor {
   constructor(app, canvas) {
     this.app = app;
@@ -963,11 +971,21 @@ export class Editor {
       nodes,
       orig: nodes.map((n) => ({ x: n.x, y: n.y, in: n.in && { ...n.in }, out: n.out && { ...n.out } })),
       box,
-      c: { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 },
+      c: originPoint(box, this.app.xfOriginId?.() || 'c'),
       sx: 1, sy: 1, angle: 0, tx: 0, ty: 0,
     };
     this.render();
     return true;
+  }
+
+  // A new pivot for rotation and exact values during Ctrl+T; what is already
+  // transformed stays where it is.
+  setTransformOrigin(id) {
+    const x = this.xform;
+    if (!x) return;
+    const c = originPoint(x.box, id), w = this.xWorld(c);
+    x.c = c; x.tx = w.x - c.x; x.ty = w.y - c.y;
+    this.render();
   }
 
   xformStale() {

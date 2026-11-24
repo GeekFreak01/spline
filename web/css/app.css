@@ -586,6 +586,14 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .title-row { display: flex; align-items: baseline; gap: 8px; }
 .title-row b { font-size: var(--fs-xl); }
 .title-row small { color: var(--text-3); }
+.origin-pick { display: grid; grid-template-columns: repeat(3, 16px); gap: 3px; width: max-content; padding: 4px; margin-bottom: 6px;
+  border: 1px solid var(--line-soft); border-radius: var(--radius-s); background: var(--bg-input); }
+.origin-pick button { width: 16px; height: 16px; padding: 0; border: 1px solid var(--line-soft); border-radius: var(--radius-xs); background: var(--bg-panel); cursor: pointer; }
+.origin-pick button:hover { border-color: var(--text-3); }
+.origin-pick button[aria-checked="true"] { background: var(--accent-fill); border-color: var(--accent-fill); }
+.origin-pick button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+#optionsBar .origin-pick { margin: 0; padding: 2px; grid-template-columns: repeat(3, 12px); gap: 2px; }
+#optionsBar .origin-pick button { width: 12px; height: 12px; }
 .title-row .lock-btn { margin-left: auto; align-self: center; }
 .title-row .lock-btn[aria-pressed="true"] { color: var(--warn); }
 .hint { color: var(--text-3); margin: 0; }

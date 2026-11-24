@@ -3,7 +3,7 @@ import { icon, fillIcons } from './icons.js';
 import { CATEGORIES, COLORS } from './glyphsets.js';
 import {
   newProject, validateProject, serialize, addGlyphForChar, charOf, isDrawn, svgPath, glyphBox,
-  translateGlyph, normalizeDirections, hasOutline, rectContour, ellipseContour,
+  translateGlyph, normalizeDirections, hasOutline, rectContour, ellipseContour, polyBox,
 } from './model.js';
 import { refreshComponents, usedBy, decompose } from './components.js';
 import { isCornerGlyph, isBrushGlyph } from './parts.js';
@@ -16,7 +16,7 @@ import { removeOverlap, shapesOf } from './boolean.js';
 import { suggestedAnchors, defaultAnchor, attachOffset, anchorOf, isMarkGlyph } from './anchors.js';
 import { History, KERNING, GROUPS, MANY, GLYPHS, LockedError } from './history.js';
 import { KernView, setKern, deleteKern, kernPairs, effectiveKern, isGroup, groupKey, groupMembers, isOverkern } from './kerning.js';
-import { Editor } from './editor.js';
+import { Editor, ORIGINS, originPoint } from './editor.js';
 import { importSVG, looksLikeSVG } from './svg.js';
 import { proposeGroups, letterKind, pairGap } from './shape.js';
 import { setDefaults, keyLabel, comboOf, comboLabel, actionFor, assign, resetAll, bindings, isCustom, BROWSER_RESERVED, TAKEN } from './keys.js';
@@ -1056,11 +1056,34 @@ function section(id, title, body, open = true, tip = '') {
   return `<details data-sec="${id}" ${isOpen ? 'open' : ''}><summary${tip ? ` data-tip="${esc(tip)}"` : ''}>${esc(title)}</summary><div class="section">${body}</div></details>`;
 }
 
+// Extended mode: the point that scale, rotation and flips turn around. The
+// simple mode always uses the centre.
+app.xfOrigin = store.get('spline.xfOrigin') || 'c';
+const xfOriginId = () => (app.extended ? app.xfOrigin : 'c');
+app.xfOriginId = xfOriginId;
+
+function originPicker() {
+  if (!app.extended) return '';
+  return `<div class="origin-pick" role="radiogroup" aria-label="${esc(t('xfOrigin'))}" data-tip="${esc(t('xfOrigin'))}">${ORIGINS.map((id) =>
+    `<button type="button" role="radio" data-origin="${id}" aria-checked="${id === app.xfOrigin}" aria-label="${esc(t('xfOrigin_' + id))}"></button>`).join('')}</div>`;
+}
+
+function setOrigin(id) {
+  if (!ORIGINS.includes(id)) return;
+  app.xfOrigin = id;
+  store.set('spline.xfOrigin', id);
+  xf = null; // a new session turns around the new point
+  document.querySelectorAll('[data-origin]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.origin === id)));
+  if (editor.xform) editor.setTransformOrigin(id);
+}
+document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-origin]'); if (b) setOrigin(b.dataset.origin); });
+
 function transformSection() {
   const v = xfValues();
   const num = (k, unit, min, max) => `<label class="prop"><span>${esc(t(k))}</span><span class="with-unit">
     <input type="number" data-tf="${k}" value="${v[k]}" step="1" min="${min}" max="${max}"><em>${unit}</em></span></label>`;
   return section('transform', t('transform'), `
+    ${originPicker()}
     ${num('scale', '%', XF_LIMITS.scale[0], XF_LIMITS.scale[1])}
     ${num('rotate', '°', XF_LIMITS.rotate[0], XF_LIMITS.rotate[1])}
     ${num('slant', '°', XF_LIMITS.slant[0], XF_LIMITS.slant[1])}
@@ -1464,8 +1487,7 @@ function applyTransform(kind, value = 0) {
   if (!Number.isFinite(value)) return;
   const targets = transformTargets();
   for (const { g, nodes } of targets) {
-    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
-    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const { x: cx, y: cy } = originPoint(polyBox(nodes), xfOriginId());
     const a = (value * Math.PI) / 180;
     const fn = {
       scale: (p) => ({ x: cx + (p.x - cx) * (value / 100), y: cy + (p.y - cy) * (value / 100) }),
@@ -1521,11 +1543,11 @@ function xfValues() {
 
 function xfStart() {
   const items = transformTargets().map(({ g, nodes }) => {
-    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+    const o = originPoint(polyBox(nodes), xfOriginId());
     return {
       g, nodes,
       base: nodes.map((n) => ({ x: n.x, y: n.y, in: n.in && { ...n.in }, out: n.out && { ...n.out } })),
-      cx: (Math.min(...xs) + Math.max(...xs)) / 2, cy: (Math.min(...ys) + Math.max(...ys)) / 2,
+      cx: o.x, cy: o.y,
     };
   });
   if (!items.length) return null;
@@ -1933,6 +1955,7 @@ function renderTransformOptions() {
       <label>${esc(t('h'))}<input type="number" data-xf="h" step="1" value="${v.h.toFixed(1)}">%</label>
       <label>∠<input type="number" data-xf="angle" step="1" value="${v.angle.toFixed(1)}">°</label>
     </div>
+    ${app.extended ? `<div class="sep"></div>${originPicker()}` : ''}
     <div class="sep"></div>
     <div class="group">
       <button class="btn btn-primary" type="button" data-cmd="xfApply">${icon('check', 15)}<span>${esc(t('apply'))}</span></button>
